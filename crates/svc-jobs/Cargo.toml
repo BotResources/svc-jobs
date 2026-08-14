@@ -31,11 +31,17 @@ tracing.workspace = true
 br-util-nats-fabric.workspace = true
 
 [dev-dependencies]
-# The e2e smoke suite: it spawns the real binary by `CARGO_BIN_EXE_svc-jobs`,
-# provisions its database through the shared harness, and drives the edge over
-# HTTP. Extend this list as the suite grows real scenarios.
-br-test-harness.workspace = true
+# The e2e suite: it spawns the real binary by `CARGO_BIN_EXE_svc-jobs`, provisions
+# its database and its NATS through the shared harness, plays the producer over
+# the fabric and a runner instance over the runner transport, and drives the
+# admin edge over HTTP + SSE.
+br-test-harness = { workspace = true, features = ["graphql", "sse", "nats", "nats-fabric"] }
 # Inherits the workspace reqwest (rustls + json).
 reqwest.workspace = true
 tokio.workspace = true
 async-graphql.workspace = true
+br-core-auth.workspace = true
+br-core-integration.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
