@@ -1,7 +1,9 @@
+use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::ids::{JobId, ManualRetryId, ResolutionId, RunId};
 use crate::domain::job::Job;
+use crate::domain::job::parenting::ParentContext;
 use crate::domain::references::KnownUser;
 use crate::domain::run::origin::RunOrigin;
 use crate::error::JobsError;
@@ -31,7 +33,7 @@ pub enum ManualRetryOutcome {
 
 pub fn manual_retry(
     predecessor: &Job,
-    parent: Option<&Job>,
+    parent: ParentContext<'_>,
     active_for_source: Option<&Job>,
     command: ManualRetryJob,
 ) -> Result<ManualRetryOutcome, JobsError> {
@@ -52,7 +54,7 @@ pub fn manual_retry(
         });
     }
     guard_current_failure(predecessor, command.failed_resolution_id)?;
-    guard_source_free(predecessor, active_for_source)?;
+    guard_source_free(predecessor.source(), active_for_source)?;
     Ok(ManualRetryOutcome::Started(Box::new(ManualRetryPlan {
         predecessor: CommandResult::from_event(JobEvent::ManualRetryStarted(ManualRetryStarted {
             job_id: predecessor.id(),
@@ -86,18 +88,6 @@ pub fn manual_retry(
             }),
         ]),
     })))
-}
-
-fn guard_source_free(predecessor: &Job, active_for_source: Option<&Job>) -> Result<(), JobsError> {
-    if predecessor.source().is_none() {
-        return Ok(());
-    }
-    match active_for_source.filter(|active| !active.is_terminal()) {
-        Some(active) => Err(JobsError::SourceAlreadyActive {
-            active_job_id: active.id().as_uuid(),
-        }),
-        None => Ok(()),
-    }
 }
 
 fn guard_current_failure(

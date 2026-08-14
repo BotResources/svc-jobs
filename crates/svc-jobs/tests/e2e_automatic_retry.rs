@@ -16,6 +16,7 @@ use support::{
 
 const BASE_DELAY_SECONDS: i64 = 2;
 const HINT_SECONDS: i64 = 8;
+const SHORT_HINT_SECONDS: i64 = 1;
 
 #[tokio::test]
 async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
@@ -195,6 +196,95 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         2,
         "the retry budget is a ceiling on dispatches, not on failures",
     );
+
+    // When: another job's runner asks to come back sooner than the backoff it earned
+    let impatient_type = wire::unique_runner_type("impatient");
+    let mut impatient = FakeRunner::new(fixture.nats(), &impatient_type, "instance-b");
+    impatient.connect().await;
+    let stubborn = JobDeclaration::new(&impatient_type).with_max_attempts(3);
+    let stubborn_id = stubborn.job_id;
+    producer.declare(&stubborn).await;
+    events
+        .expect_one(wire::FACT_QUEUED, stubborn_id, LONG)
+        .await;
+
+    let first_attempt = impatient.next_trigger(LONG).await;
+    impatient.start_run(&first_attempt).await;
+    impatient
+        .fail_run(&first_attempt, "TRANSIENT", "provider_timeout", None)
+        .await;
+    let second_attempt = impatient.next_trigger(LONG).await;
+    assert_eq!(runner::attempt_number(&second_attempt), 2);
+    let second_attempt_run = runner::run_id(&second_attempt);
+    impatient.start_run(&second_attempt).await;
+
+    let mut stubborn_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(stubborn_id)).await;
+    stream::snapshot(&mut stubborn_watch, JOB_CHANGED, SHORT).await;
+
+    let second_failed_at = Utc::now();
+    impatient
+        .fail_run(
+            &second_attempt,
+            "TRANSIENT",
+            "provider_timeout",
+            Some(SHORT_HINT_SECONDS),
+        )
+        .await;
+
+    // Then: the too-short hint is ignored — the stored due time is the backoff, never the hint
+    let hinted = stream::await_delta(
+        &mut stubborn_watch,
+        JOB_CHANGED,
+        wire::EVT_RETRY_SCHEDULED,
+        LONG,
+    )
+    .await;
+    let hinted_scheduling = delta::event_of(&hinted, wire::EVT_RETRY_SCHEDULED, stubborn_id);
+    assert_eq!(
+        hinted_scheduling["failedRunId"],
+        json!(second_attempt_run.to_string())
+    );
+    let hinted_due = delta::instant(&hinted_scheduling["dueAt"]);
+    assert!(
+        hinted_due - second_failed_at >= chrono::Duration::seconds(BASE_DELAY_SECONDS),
+        "a runner retry-after hint may lengthen the delay but never shorten it: this second \
+         failure earned an exponential backoff of at least the {BASE_DELAY_SECONDS}s base, and a \
+         hint of {SHORT_HINT_SECONDS}s must not pull the attempt forward — obeying it is exactly \
+         the retry storm the rule exists to forbid. Due {hinted_due}, failed {second_failed_at}",
+    );
+    let hinted_projection = delta::projection(&hinted, stubborn_id, "IN_PROGRESS");
+    assert_eq!(
+        delta::instant(&hinted_projection["nextAttemptAt"]),
+        hinted_due,
+        "the pushed projection carries the recorded time, not the hint: {hinted}",
+    );
+
+    let quiet_until = (hinted_due - Utc::now() - chrono::Duration::milliseconds(500))
+        .to_std()
+        .expect("the recorded due time is still ahead of the assertion window");
+    impatient.expect_no_trigger(quiet_until).await;
+    assert_eq!(
+        delta::instant(&gql::job(&client, admin, stubborn_id).await["nextAttemptAt"]),
+        hinted_due,
+        "the read answers the same recorded due time as the stream",
+    );
+
+    let third_attempt = impatient.next_trigger(LONG).await;
+    assert_eq!(runner::attempt_number(&third_attempt), 3);
+    assert!(
+        Utc::now() >= hinted_due,
+        "the third attempt was dispatched before its recorded due time",
+    );
+    durable
+        .assert_count(
+            db::RETRY_SCHEDULES_OF_JOB,
+            stubborn_id,
+            2,
+            "one stored due time per transient failure, each computed once — a due time recomputed \
+             from the hint on read would move under the administrator's eyes",
+        )
+        .await;
 
     durable
         .assert_all(

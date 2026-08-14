@@ -61,8 +61,8 @@ query($bc: String!, $entityId: UUID!) {
 "#;
 
 pub const JOB_LOGS: &str = r#"
-query($jobId: UUID!, $runId: UUID, $first: Int) {
-  jobsLogs(jobId: $jobId, runId: $runId, first: $first) {
+query($jobId: UUID!, $runId: UUID, $first: Int, $after: String, $last: Int, $before: String) {
+  jobsLogs(jobId: $jobId, runId: $runId, first: $first, after: $after, last: $last, before: $before) {
     edges { cursor node { id jobId runId stepIndex level message loggedAt } }
     pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
   }

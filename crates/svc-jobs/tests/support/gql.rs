@@ -158,26 +158,52 @@ async fn log_lines(
     job_id: Uuid,
     run_id: Option<Uuid>,
 ) -> Vec<Value> {
-    let response = gql
-        .query(
+    edges_of(
+        &log_page(
+            gql,
             passport,
-            JOB_LOGS,
+            job_id,
             json!({
-                "jobId": job_id.to_string(),
                 "runId": run_id.map(|id| id.to_string()),
                 "first": 200,
             }),
         )
-        .await;
-    data_of(&response, "jobsLogs")["edges"]
-        .as_array()
-        .expect("a log connection carries an edge list")
-        .iter()
-        .map(|edge| edge["node"].clone())
-        .collect()
+        .await,
+    )
+    .iter()
+    .map(|edge| edge["node"].clone())
+    .collect()
+}
+
+pub async fn log_page(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    job_id: Uuid,
+    window: Value,
+) -> Value {
+    let mut variables = json!({ "jobId": job_id.to_string() });
+    let fields = variables
+        .as_object_mut()
+        .expect("the log query variables are an object");
+    for (key, value) in window
+        .as_object()
+        .expect("a log window is an object of connection arguments")
+    {
+        fields.insert(key.clone(), value.clone());
+    }
+    let response = gql.query(passport, JOB_LOGS, variables).await;
+    data_of(&response, "jobsLogs")
 }
 
 pub async fn fleet_of(gql: &GraphqlClient, passport: &Passport, runner_type: &str) -> Vec<Value> {
+    fleet(gql, passport, json!(runner_type)).await
+}
+
+pub async fn fleet_of_every_type(gql: &GraphqlClient, passport: &Passport) -> Vec<Value> {
+    fleet(gql, passport, Value::Null).await
+}
+
+async fn fleet(gql: &GraphqlClient, passport: &Passport, runner_type: Value) -> Vec<Value> {
     let response = gql
         .query(passport, FLEET, json!({ "runnerType": runner_type }))
         .await;

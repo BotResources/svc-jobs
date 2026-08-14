@@ -31,7 +31,7 @@ impl Job {
             });
         }
         let attempt_number = AttemptNumber::new(self.attempt_count().saturating_add(1))?;
-        let budget = self.budget(limits);
+        let budget = self.budget(limits)?;
         if !budget.allows(attempt_number) {
             return Err(JobsError::RetryBudgetExhausted {
                 attempts: self.attempt_count(),

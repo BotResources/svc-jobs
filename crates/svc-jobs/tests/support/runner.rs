@@ -1,17 +1,21 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use br_test_harness::{TestNats, wait_until};
 use chrono::Utc;
 use serde_json::{Value, json};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::wire;
+use super::{infra, wire};
 
 pub struct FakeRunner<'a> {
     nats: &'a TestNats,
     pub runner_type: String,
     pub instance_key: String,
     pub version: String,
+    status: Arc<Mutex<String>>,
+    heartbeat: Option<JoinHandle<()>>,
     cursor: u64,
 }
 
@@ -22,48 +26,98 @@ impl<'a> FakeRunner<'a> {
             runner_type: runner_type.to_string(),
             instance_key: instance_key.to_string(),
             version: "0.1.0".to_string(),
+            status: Arc::new(Mutex::new("IDLE".to_string())),
+            heartbeat: None,
             cursor: 1,
         }
     }
 
-    pub async fn connect(&self) {
+    pub async fn connect(&mut self) {
         self.announce("IDLE").await;
+        self.start_refreshing().await;
     }
 
     pub async fn announce(&self, status: &str) {
-        let store = self.nats.create_kv(wire::PRESENCE_BUCKET).await;
-        let value = json!({
-            "runner_type": self.runner_type,
-            "instance_key": self.instance_key,
-            "version": self.version,
-            "status": status,
-            "observed_at": Utc::now().to_rfc3339(),
-        });
+        self.set_status(status);
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::PRESENCE_BUCKET)
+            .await
+            .expect("the presence bucket is declared before the service boots");
         store
-            .put(
-                wire::presence_key(&self.runner_type, &self.instance_key),
-                serde_json::to_vec(&value)
-                    .expect("presence value serializes")
-                    .into(),
-            )
+            .put(self.presence_key(), self.presence_value().into())
             .await
             .expect("writing the presence entry");
     }
 
-    pub async fn disconnect(&self) {
-        let store = self.nats.create_kv(wire::PRESENCE_BUCKET).await;
+    pub async fn disconnect(&mut self) {
+        self.stop_refreshing();
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::PRESENCE_BUCKET)
+            .await
+            .expect("the presence bucket is declared before the service boots");
         store
-            .delete(wire::presence_key(&self.runner_type, &self.instance_key))
+            .delete(self.presence_key())
             .await
             .expect("removing the presence entry");
     }
 
-    pub async fn crash(&self) {
-        let store = self.nats.create_kv(wire::PRESENCE_BUCKET).await;
-        store
-            .purge(wire::presence_key(&self.runner_type, &self.instance_key))
+    pub fn crash(&mut self) {
+        self.stop_refreshing();
+    }
+
+    async fn start_refreshing(&mut self) {
+        self.stop_refreshing();
+        let key = self.presence_key();
+        let status = Arc::clone(&self.status);
+        let runner_type = self.runner_type.clone();
+        let instance_key = self.instance_key.clone();
+        let version = self.version.clone();
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::PRESENCE_BUCKET)
             .await
-            .expect("evicting the presence entry");
+            .expect("the presence bucket is declared before the service boots");
+        self.heartbeat = Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(infra::PRESENCE_REFRESH).await;
+                let current = current_status(&status);
+                let value = presence_value(&runner_type, &instance_key, &version, &current);
+                if store.put(key.clone(), value.into()).await.is_err() {
+                    return;
+                }
+            }
+        }));
+    }
+
+    fn stop_refreshing(&mut self) {
+        if let Some(handle) = self.heartbeat.take() {
+            handle.abort();
+        }
+    }
+
+    fn set_status(&self, status: &str) {
+        *self
+            .status
+            .lock()
+            .expect("the announced status is writable") = status.to_string();
+    }
+
+    fn presence_key(&self) -> String {
+        wire::presence_key(&self.runner_type, &self.instance_key)
+    }
+
+    fn presence_value(&self) -> Vec<u8> {
+        presence_value(
+            &self.runner_type,
+            &self.instance_key,
+            &self.version,
+            &current_status(&self.status),
+        )
     }
 
     pub async fn next_trigger(&mut self, timeout: Duration) -> Value {
@@ -271,7 +325,12 @@ impl<'a> FakeRunner<'a> {
     }
 
     pub async fn cancel_entry(&self, run: Uuid) -> Option<Value> {
-        let store = self.nats.create_kv(wire::CANCEL_BUCKET).await;
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::CANCEL_BUCKET)
+            .await
+            .expect("the cancel bucket is declared before the service boots");
         let entry = store
             .get(wire::cancel_key(run))
             .await
@@ -318,6 +377,24 @@ impl<'a> FakeRunner<'a> {
             "no cancel entry may be written for run {run}"
         );
     }
+}
+
+fn current_status(status: &Arc<Mutex<String>>) -> String {
+    status
+        .lock()
+        .expect("the announced status is readable")
+        .clone()
+}
+
+fn presence_value(runner_type: &str, instance_key: &str, version: &str, status: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "runner_type": runner_type,
+        "instance_key": instance_key,
+        "version": version,
+        "status": status,
+        "observed_at": Utc::now().to_rfc3339(),
+    }))
+    .expect("presence value serializes")
 }
 
 pub fn run_id(trigger: &Value) -> Uuid {

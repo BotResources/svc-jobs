@@ -4,12 +4,7 @@ use br_test_harness::SseSubscription;
 use serde_json::{Value, json};
 
 pub async fn snapshot(watch: &mut SseSubscription, field: &str, timeout: Duration) -> Value {
-    let event = watch.expect_event(field, timeout).await;
-    let message = event[field].clone();
-    assert!(
-        !message.is_null(),
-        "the first subscription message must carry '{field}': {event}"
-    );
+    let message = watch.expect_event_on(field, timeout).await;
     let kind = message["__typename"].as_str().unwrap_or_default();
     assert!(
         kind.ends_with("Snapshot"),

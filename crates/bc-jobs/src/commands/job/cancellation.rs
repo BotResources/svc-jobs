@@ -2,6 +2,7 @@ use crate::commands::job::withdrawal::{CANCELLED_BY_JOB, RunWithdrawal};
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::{JobId, ResolutionId};
 use crate::domain::job::Job;
+use crate::domain::job::resolution::JobResolutionKind;
 use crate::domain::keys::ReasonCode;
 use crate::domain::ownership::CancelRequester;
 use crate::domain::references::KnownUser;
@@ -34,7 +35,11 @@ impl CancelRequester {
 
 impl Job {
     pub fn cancel(&self, command: CancelJob) -> Result<JobCommandResult, JobsError> {
-        if let Some(absorbed) = self.already_resolved_by(command.resolution_id, "cancel") {
+        if let Some(absorbed) = self.already_resolved_by(
+            command.resolution_id,
+            JobResolutionKind::Cancelled,
+            "cancel",
+        )? {
             return Ok(absorbed);
         }
         self.guard_cancel()?;
@@ -204,6 +209,27 @@ mod tests {
             .unwrap();
         // Then: nothing is recorded twice
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn a_cancellation_reusing_a_completion_resolution_id_is_rejected_not_acknowledged() {
+        // Given: a job completed under a known resolution id
+        let resolution = resolution_id();
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution, ts(30)))
+            .build();
+        // When: a cancellation arrives carrying that very id
+        let result = job.cancel(CancelJob {
+            resolution_id: resolution,
+            requester: by_administrator(),
+        });
+        // Then: absorption pins the command that produced the resolution, so this is a refusal
+        assert_eq!(
+            result,
+            Err(JobsError::JobAlreadyTerminal {
+                status: "COMPLETED"
+            })
+        );
     }
 
     #[test]

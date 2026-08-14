@@ -117,8 +117,12 @@ impl RunBuilder {
         self
     }
 
-    pub fn started(mut self, at: DateTime<Utc>) -> Self {
-        self.state.start = Some(RunStart::new(instance(), at));
+    pub fn started(self, at: DateTime<Utc>) -> Self {
+        self.started_on(instance(), at)
+    }
+
+    pub fn started_on(mut self, instance: RunnerInstanceReference, at: DateTime<Utc>) -> Self {
+        self.state.start = Some(RunStart::new(instance, at));
         self
     }
 
@@ -203,6 +207,11 @@ impl JobBuilder {
         self
     }
 
+    pub fn with_runner_type(mut self, key: &str) -> Self {
+        self.state.runner_type = RunnerTypeKey::new(key).expect("valid runner type");
+        self
+    }
+
     pub fn with_config(mut self, config: RunnerConfig) -> Self {
         self.state.config = Some(config);
         self
@@ -247,7 +256,11 @@ impl JobBuilder {
         self
     }
 
-    pub fn manually_retried_by(self, successor_job_id: JobId, successor_is_terminal: bool) -> Self {
+    pub fn manually_retried_by(
+        self,
+        successor_job_id: JobId,
+        successor_settled_at_load: bool,
+    ) -> Self {
         let failed_resolution_id = self
             .state
             .resolution
@@ -259,7 +272,7 @@ impl JobBuilder {
             successor_job_id,
             user(),
             ts(60),
-            successor_is_terminal,
+            successor_settled_at_load,
         ))
     }
 

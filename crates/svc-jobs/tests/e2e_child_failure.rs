@@ -327,3 +327,134 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     events.stop().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_report() {
+    // Given: a running parent whose child has just failed permanently
+    let fixture = JobsFixture::start().await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let parent_type = wire::unique_runner_type("orchestrator");
+    let child_type = wire::unique_runner_type("worker");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let owner = Producer::new(fixture.fabric(), "jobs");
+    let mut orchestrator = FakeRunner::new(fixture.nats(), &parent_type, "orchestrator-a");
+    let mut worker = FakeRunner::new(fixture.nats(), &child_type, "worker-a");
+    orchestrator.connect().await;
+    worker.connect().await;
+
+    let parent = JobDeclaration::new(&parent_type);
+    let parent_id = parent.job_id;
+    producer.declare(&parent).await;
+    events.expect_one(wire::FACT_QUEUED, parent_id, LONG).await;
+    let parent_trigger = orchestrator.next_trigger(LONG).await;
+    orchestrator.start_run(&parent_trigger).await;
+    gql::wait_for_status(&client, admin, parent_id, "IN_PROGRESS", LONG).await;
+
+    let child = JobDeclaration::new(&child_type).with_parent(parent_id);
+    let child_id = child.job_id;
+    owner.declare(&child).await;
+    events.expect_one(wire::FACT_QUEUED, child_id, LONG).await;
+    let child_trigger = worker.next_trigger(LONG).await;
+    worker.start_run(&child_trigger).await;
+    worker
+        .fail_run(&child_trigger, "PERMANENT", "provider_refused", None)
+        .await;
+    let report = events.expect_one(wire::FACT_FAILED, child_id, LONG).await;
+    assert_eq!(
+        report.payload()["failure_cause"],
+        json!("TERMINAL_RUN_FAILURE")
+    );
+
+    let mut watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(parent_id)).await;
+    let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    assert_eq!(
+        opening["job"]["status"],
+        json!("IN_PROGRESS"),
+        "a child's failure leaves the parent's fate to its Owner: {opening}",
+    );
+    let mut listing = SseSubscription::open(
+        fixture.url(),
+        admin,
+        &subs::jobs_changed_for(&[&parent_type]),
+    )
+    .await;
+    stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
+
+    // When: the parent's Owner judges the report unrecoverable and fails its own job on the bus
+    let resolution_id = Uuid::now_v7();
+    producer.fail(parent_id, resolution_id).await;
+
+    // Then: the failure is published as declared, carrying no run report the parent never produced
+    let declared = events.expect_one(wire::FACT_FAILED, parent_id, LONG).await;
+    let payload = declared.payload();
+    assert_eq!(
+        payload["failure_cause"],
+        json!("DECLARED_BY_OWNER"),
+        "an Owner-declared failure names its own cause, never the cause of a run: {payload}",
+    );
+    assert!(
+        payload["failure_report"].is_null(),
+        "no run of this job failed, so there is no report to escalate — a copied child report \
+         would tell the producer a run failed here when none did: {payload}",
+    );
+
+    let failed = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
+    let pushed = delta::event_of(&failed, wire::EVT_JOB_FAILED, parent_id);
+    assert_eq!(pushed["failureCause"], json!("DECLARED_BY_OWNER"));
+    assert_eq!(pushed["resolutionId"], json!(resolution_id.to_string()));
+    delta::projection(&failed, parent_id, "FAILED");
+    delta::assert_failed_affordances(&failed);
+    delta::assert_failed_affordances(&delta::assert_upserted_summary(
+        &stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_JOB_FAILED, LONG).await,
+        parent_id,
+        "FAILED",
+    ));
+
+    let view = gql::job_view(&client, admin, parent_id).await;
+    let resolution = view["job"]["resolution"].clone();
+    assert_eq!(resolution["id"], json!(resolution_id.to_string()));
+    assert_eq!(resolution["kind"], json!("FAILED"));
+    assert_eq!(resolution["failureCause"], json!("DECLARED_BY_OWNER"));
+    assert!(
+        resolution["causedByRunId"].is_null(),
+        "no run caused this failure — the Owner did: {resolution}",
+    );
+    delta::assert_failed_affordances(&view);
+
+    // Then: a late fact from the parent's own runner cannot revive it
+    orchestrator.complete_run(&parent_trigger).await;
+    events
+        .expect_none(wire::FACT_COMPLETED, parent_id, QUIET)
+        .await;
+    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, QUIET).await;
+    assert_eq!(
+        gql::status_of(&client, admin, parent_id).await,
+        "FAILED",
+        "a status fact for a run whose job is already terminal is acknowledged and discarded",
+    );
+    events
+        .expect_exactly(wire::FACT_FAILED, parent_id, 1, QUIET)
+        .await;
+
+    durable
+        .assert_all(
+            parent_id,
+            &[
+                (db::RUNS_OF_JOB, 1, "the parent's single dispatch"),
+                (
+                    db::RESOLUTIONS_OF_JOB,
+                    1,
+                    "one immutable Owner-declared resolution",
+                ),
+            ],
+        )
+        .await;
+
+    durable.close().await;
+    events.stop().await;
+    fixture.shutdown().await;
+}

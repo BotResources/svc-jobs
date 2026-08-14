@@ -40,10 +40,10 @@ impl Default for ServiceLimits {
 }
 
 impl ServiceLimits {
-    pub fn budget(&self, declared: Option<MaxAttempts>) -> MaxAttempts {
+    pub fn budget(&self, declared: Option<MaxAttempts>) -> Result<MaxAttempts, JobsError> {
         declared
             .unwrap_or(self.default_max_attempts)
-            .min(self.max_attempts_ceiling)
+            .guard_under_ceiling(self.max_attempts_ceiling)
     }
 }
 

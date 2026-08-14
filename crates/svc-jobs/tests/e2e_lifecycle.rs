@@ -378,6 +378,37 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     );
     assert_eq!(gql::logs_of(&client, admin, job_id).await.len(), 2);
 
+    // Then: the default reads hide the deleted job, and the deliberate ones surface it
+    gql::assert_lists_exactly(
+        &gql::list_page(
+            &client,
+            admin,
+            json!({ "runnerTypes": [&runner_type], "deleted": "ONLY_DELETED" }),
+            50,
+            None,
+        )
+        .await,
+        &[job_id],
+        "listing only the deleted jobs of this type",
+    );
+    gql::assert_lists_none_of(
+        &gql::list_page(&client, admin, json!(null), 50, None).await,
+        &[job_id],
+        "the administrator's unfiltered list leaves deleted jobs out by default — an audit record \
+         must be asked for, never volunteered into every page",
+    );
+    let whole_fleet = gql::fleet_of_every_type(&client, admin).await;
+    assert!(
+        whole_fleet
+            .iter()
+            .any(|view| view["runnerType"]["typeKey"] == json!(runner_type)),
+        "reading the fleet without naming a type answers with every type the platform knows: \
+         {whole_fleet:?}",
+    );
+    for view in &whole_fleet {
+        gql::assert_affordances_well_formed(view, "the unfiltered fleet read");
+    }
+
     // Then: the soft deletion stays an administrative decision — no producer hears about it
     events
         .expect_none(wire::FACT_CANCELLED, job_id, QUIET)

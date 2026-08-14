@@ -94,7 +94,7 @@ impl Job {
         })];
         let next_attempt_number = AttemptNumber::new(failed_attempt.get().saturating_add(1))?;
         let retryable =
-            fact.report.kind().is_retryable() && self.budget(limits).allows(next_attempt_number);
+            fact.report.kind().is_retryable() && self.budget(limits)?.allows(next_attempt_number);
         if retryable {
             events.push(JobEvent::RetryScheduled(RetryScheduled {
                 job_id: self.id(),

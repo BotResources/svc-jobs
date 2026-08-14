@@ -1,6 +1,5 @@
 use crate::domain::ids::{JobId, RunId};
 use crate::domain::job::Job;
-use crate::domain::run::Run;
 use crate::domain::run::parts::RunnerInstanceReference;
 use crate::event::job::JobEvent;
 
@@ -60,18 +59,13 @@ pub fn runs_lost_with_instance(
         .filter(|job| !job.is_terminal())
         .filter_map(|job| {
             job.active_run()
-                .filter(|run| run_belongs_to(run, instance))
+                .filter(|run| run.is_executed_by(instance))
                 .map(|run| RunLostWithInstance {
                     job_id: job.id(),
                     run_id: run.id(),
                 })
         })
         .collect()
-}
-
-fn run_belongs_to(run: &Run, instance: &RunnerInstanceReference) -> bool {
-    run.start()
-        .is_some_and(|start| start.instance() == instance)
 }
 
 #[cfg(test)]

@@ -5,14 +5,14 @@ use std::time::Duration;
 use br_core_auth::Passport;
 use br_test_harness::{
     E2eDatabase, FabricTestNats, GraphqlClient, PassportBuilder, SpawnedProcess, TestNats,
-    recreate_stream,
 };
 use uuid::Uuid;
 
-use super::wire;
+use super::infra;
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_svc-jobs");
 pub const APP_ROLE: &str = "jobs_app";
+pub const APP_PASSWORD: &str = "jobsapproleforeveryworktree";
 pub const BOOT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Knobs {
@@ -57,13 +57,14 @@ impl JobsFixture {
     pub async fn start_cluster(instance_count: usize, knobs: Knobs) -> Self {
         require_provisioned_infrastructure();
 
-        let db = E2eDatabase::create(true, &[]).await;
-        let app_password = db.db_name().replace('_', "");
-        let db = db.with_app_role(APP_ROLE, &app_password).await;
+        let db = E2eDatabase::create(true, &[])
+            .await
+            .with_app_role(APP_ROLE, APP_PASSWORD)
+            .await;
 
         let fabric = FabricTestNats::start().await;
         let nats = TestNats::setup_on(&fabric.url()).await;
-        provision_runner_transport(&nats).await;
+        infra::provision_runner_transport(&nats).await;
 
         let mut instances = Vec::new();
         let mut urls = Vec::new();
@@ -193,15 +194,6 @@ pub fn machine_caller() -> Passport {
         .user_id(Uuid::now_v7())
         .super_admin(true)
         .build_service()
-}
-
-async fn provision_runner_transport(nats: &TestNats) {
-    let js = nats.jetstream();
-    recreate_stream(js, wire::TRIGGER_STREAM, &[wire::TRIGGER_BIND]).await;
-    recreate_stream(js, wire::STATUS_STREAM, &[wire::STATUS_BIND]).await;
-    recreate_stream(js, wire::LOG_STREAM, &[wire::LOG_BIND]).await;
-    nats.create_kv(wire::CANCEL_BUCKET).await;
-    nats.create_kv(wire::PRESENCE_BUCKET).await;
 }
 
 async fn spawn_instance(

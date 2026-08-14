@@ -8,8 +8,8 @@ use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
-    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, stream,
-    subs, wire,
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, codes, delta, gql,
+    stream, subs, wire,
 };
 use uuid::Uuid;
 
@@ -102,6 +102,55 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     );
     delta::assert_failed_affordances(&failed_view);
 
+    // When: the client-minted ids are offered in a shape this domain never mints
+    let mut malformed_refusals = Vec::new();
+    for (intervention, successor, what) in [
+        (
+            Uuid::new_v4(),
+            Uuid::now_v7(),
+            "an intervention id that is not a UUIDv7",
+        ),
+        (
+            Uuid::now_v7(),
+            Uuid::new_v4(),
+            "a successor job id that is not a UUIDv7",
+        ),
+    ] {
+        let refused = gql::manual_retry_job(
+            &client,
+            admin,
+            intervention,
+            predecessor_id,
+            successor,
+            failed_resolution_id,
+        )
+        .await;
+        malformed_refusals.push((what, verdict::expect_code_shaped(&refused, what)));
+        events
+            .expect_none(wire::FACT_QUEUED, successor, QUIET)
+            .await;
+        durable
+            .assert_count(
+                db::JOBS_WITH_ID,
+                successor,
+                0,
+                "a refused intervention creates no successor job — an id the service forwarded \
+                 unchecked would surface as a database constraint violation instead of a stable \
+                 code the caller can branch on",
+            )
+            .await;
+    }
+    instance.expect_no_trigger(QUIET).await;
+    watch
+        .expect_silence("a refused intervention pushes nothing", QUIET)
+        .await;
+    let untouched = gql::job_view(&client, admin, predecessor_id).await;
+    assert!(
+        untouched["job"]["manualRetry"].is_null(),
+        "a refused intervention records nothing: {untouched}",
+    );
+    gql::assert_allowed(&untouched, wire::ACTION_MANUAL_RETRY);
+
     // When: the administrator retries it as a fresh successor job
     let intervention_id = Uuid::now_v7();
     let successor_id = Uuid::now_v7();
@@ -150,6 +199,40 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     gql::assert_blocked(&intervention, wire::ACTION_CANCEL);
     gql::assert_blocked(&intervention, wire::ACTION_MANUAL_RETRY);
     gql::assert_blocked(&intervention, wire::ACTION_DELETE);
+
+    // When: the administrator tries the deletion that affordance just refused
+    let chained = gql::delete_job(&client, admin, predecessor_id).await;
+    let chained_code = verdict::expect_code_shaped(
+        &chained,
+        "deleting a predecessor whose manual-retry successor is still non-terminal",
+    );
+    let non_terminal = gql::delete_job(&client, admin, successor_id).await;
+    let non_terminal_code =
+        verdict::expect_code_shaped(&non_terminal, "deleting a non-terminal successor");
+    codes::assert_pairwise_distinct(&[
+        (
+            "deleting a predecessor whose successor is still running",
+            chained_code,
+        ),
+        ("deleting a non-terminal job", non_terminal_code),
+    ]);
+    watch
+        .expect_silence("a refused deletion pushes nothing", QUIET)
+        .await;
+    durable
+        .assert_count(
+            db::DELETIONS_OF_JOB,
+            predecessor_id,
+            0,
+            "the predecessor is terminal, so the ordinary 'not terminal yet' guard does not cover \
+             it: a deletion accepted here breaks the audited retry chain and orphans the \
+             successor's link back",
+        )
+        .await;
+    let kept = gql::job_view(&client, admin, predecessor_id).await;
+    assert_eq!(kept["job"]["isDeleted"], json!(false));
+    assert!(kept["job"]["deletion"].is_null());
+    gql::assert_blocked(&kept, wire::ACTION_DELETE);
 
     // Then: exactly one successor, at attempt one, followed live
     events
@@ -333,6 +416,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     .await;
     verdict::expect_ack(&absorbed, "an identical redelivery of the intervention");
 
+    let mut state_refusals = Vec::new();
     for (intervention, candidate, resolution, what) in [
         (
             intervention_id,
@@ -368,11 +452,19 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
             resolution,
         )
         .await;
-        verdict::expect_code_shaped(&refused, what);
+        state_refusals.push(verdict::expect_code_shaped(&refused, what));
         assert_eq!(
             gql::job(&client, admin, predecessor_id).await["manualRetry"]["id"],
             json!(intervention_id.to_string()),
             "{what} leaves the recorded intervention untouched",
+        );
+    }
+    for (what, code) in &malformed_refusals {
+        assert!(
+            !state_refusals.contains(code),
+            "{what} must answer its own code: a malformed id answered by a state-conflict code \
+             tells the caller to fix the wrong thing — {code} is already how a conflicting reuse \
+             is refused",
         );
     }
     watch

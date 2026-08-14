@@ -35,7 +35,7 @@ pub struct ManualRetryRecord {
     successor_job_id: JobId,
     requested_by: KnownUser,
     requested_at: DateTime<Utc>,
-    successor_is_terminal: bool,
+    successor_settled_at_load: bool,
 }
 
 impl ManualRetryRecord {
@@ -45,7 +45,7 @@ impl ManualRetryRecord {
         successor_job_id: JobId,
         requested_by: KnownUser,
         requested_at: DateTime<Utc>,
-        successor_is_terminal: bool,
+        successor_settled_at_load: bool,
     ) -> Self {
         Self {
             id,
@@ -53,7 +53,7 @@ impl ManualRetryRecord {
             successor_job_id,
             requested_by,
             requested_at,
-            successor_is_terminal,
+            successor_settled_at_load,
         }
     }
 
@@ -77,8 +77,8 @@ impl ManualRetryRecord {
         self.requested_at
     }
 
-    pub fn successor_is_terminal(&self) -> bool {
-        self.successor_is_terminal
+    pub fn successor_settled_at_load(&self) -> bool {
+        self.successor_settled_at_load
     }
 
     pub fn matches(&self, id: ManualRetryId, successor_job_id: JobId) -> bool {
@@ -86,7 +86,7 @@ impl ManualRetryRecord {
     }
 
     pub fn guard_successor_settled(&self) -> Result<(), JobsError> {
-        if self.successor_is_terminal {
+        if self.successor_settled_at_load {
             Ok(())
         } else {
             Err(JobsError::SuccessorStillActive {
@@ -111,14 +111,14 @@ mod tests {
         .unwrap()
     }
 
-    fn record(successor_is_terminal: bool) -> ManualRetryRecord {
+    fn record(successor_settled_at_load: bool) -> ManualRetryRecord {
         ManualRetryRecord::new(
             ManualRetryId::new(Uuid::now_v7()).unwrap(),
             ResolutionId::new(Uuid::now_v7()).unwrap(),
             JobId::new(Uuid::now_v7()).unwrap(),
             user(),
             DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-            successor_is_terminal,
+            successor_settled_at_load,
         )
     }
 

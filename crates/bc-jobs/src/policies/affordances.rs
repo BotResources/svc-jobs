@@ -97,7 +97,7 @@ mod tests {
         let parent = failed(None);
         let child = failed(Some(&parent));
         // When: the parent settles
-        let pushed = descendant_affordances_changed(&parent, &[child.clone()]);
+        let pushed = descendant_affordances_changed(&parent, std::slice::from_ref(&child));
         // Then: the child is told its retry closed, without any state change of its own
         match pushed.as_slice() {
             [JobEvent::JobAffordancesChanged(fact)] => {

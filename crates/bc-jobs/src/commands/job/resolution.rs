@@ -1,7 +1,7 @@
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::ResolutionId;
 use crate::domain::job::Job;
-use crate::domain::job::resolution::JobFailureCause;
+use crate::domain::job::resolution::{JobFailureCause, JobResolutionKind};
 use crate::domain::ownership::Caller;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -23,17 +23,31 @@ impl Job {
     pub(crate) fn already_resolved_by(
         &self,
         resolution_id: ResolutionId,
+        kind: JobResolutionKind,
         command: &'static str,
-    ) -> Option<JobCommandResult> {
-        self.resolution()
+    ) -> Result<Option<JobCommandResult>, JobsError> {
+        let Some(resolution) = self
+            .resolution()
             .filter(|resolution| resolution.id() == resolution_id)
-            .map(|_| {
-                CommandResult::nothing_happened(CommandWarning::CommandAlreadyApplied { command })
-            })
+        else {
+            return Ok(None);
+        };
+        if resolution.kind() != kind {
+            return Err(JobsError::JobAlreadyTerminal {
+                status: self.status().as_db_str(),
+            });
+        }
+        Ok(Some(CommandResult::nothing_happened(
+            CommandWarning::CommandAlreadyApplied { command },
+        )))
     }
 
     pub fn finish(&self, command: FinishJob) -> Result<JobCommandResult, JobsError> {
-        if let Some(absorbed) = self.already_resolved_by(command.resolution_id, "finish") {
+        if let Some(absorbed) = self.already_resolved_by(
+            command.resolution_id,
+            JobResolutionKind::Completed,
+            "finish",
+        )? {
             return Ok(absorbed);
         }
         self.guard_not_deleted()?;
@@ -46,7 +60,9 @@ impl Job {
     }
 
     pub fn declare_failed(&self, command: FailJob) -> Result<JobCommandResult, JobsError> {
-        if let Some(absorbed) = self.already_resolved_by(command.resolution_id, "fail") {
+        if let Some(absorbed) =
+            self.already_resolved_by(command.resolution_id, JobResolutionKind::Failed, "fail")?
+        {
             return Ok(absorbed);
         }
         self.guard_not_deleted()?;

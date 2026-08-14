@@ -6,6 +6,7 @@ use crate::fixtures::{
 };
 use serde_json::json;
 
+mod guards;
 mod parenting;
 
 fn config() -> RunnerConfig {

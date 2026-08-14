@@ -102,11 +102,33 @@ impl JobEvent {
     pub fn changes_job_state(&self) -> bool {
         !matches!(self, Self::JobAffordancesChanged(_))
     }
+
+    pub fn reaches_client(&self) -> bool {
+        match self {
+            Self::JobQueued(_)
+            | Self::RunDispatched(_)
+            | Self::RunStarted(_)
+            | Self::RunPlanDeclared(_)
+            | Self::RunStepStarted(_)
+            | Self::RunCompleted(_)
+            | Self::RunFailed(_)
+            | Self::RunCancelled(_)
+            | Self::RetryScheduled(_)
+            | Self::JobCompleted(_)
+            | Self::JobFailed(_)
+            | Self::JobCancelled(_)
+            | Self::ManualRetryStarted(_)
+            | Self::JobDeleted(_)
+            | Self::JobAffordancesChanged(_) => true,
+            Self::RunCancellationRequested(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::keys::ReasonCode;
     use crate::fixtures::{job_id, resolution_id, run_id};
 
     #[test]
@@ -139,6 +161,25 @@ mod tests {
         // Then: the attempt number travels with it
         assert_eq!(event.event_type(), "RunCompleted");
         assert_eq!(payload["attempt_number"], 1);
+    }
+
+    #[test]
+    fn the_stop_request_is_the_only_fact_the_client_never_sees() {
+        // Given: the internal stop request and a fact of the same run's lifecycle
+        let internal = JobEvent::RunCancellationRequested(RunCancellationRequested {
+            job_id: job_id(),
+            run_id: run_id(),
+            reason_code: ReasonCode::new("job_cancelled").unwrap(),
+            requested_by: None,
+            originating_job_id: None,
+        });
+        let published = JobEvent::RunCancelled(RunCancelled {
+            job_id: job_id(),
+            run_id: run_id(),
+        });
+        // When/Then: only the orchestration fact is held back, and the domain owns that rule
+        assert!(!internal.reaches_client());
+        assert!(published.reaches_client());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod instance;
+pub mod view;
 
 use chrono::{DateTime, Utc};
 

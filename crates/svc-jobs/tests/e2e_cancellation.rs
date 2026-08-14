@@ -8,8 +8,8 @@ use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
-    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, stream,
-    subs, wire,
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, codes, delta, gql,
+    stream, subs, wire,
 };
 use uuid::Uuid;
 
@@ -112,6 +112,35 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     let mut fleet_watch =
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&running_type)).await;
     stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+
+    // When: an unbound client-supplied id is offered to the mutation
+    let before = gql::job_view(&client, admin, parent_id).await;
+    let malformed = gql::cancel_job(&client, admin, Uuid::new_v4(), parent_id).await;
+    let malformed_code = verdict::expect_code_shaped(
+        &malformed,
+        "a cancellation resolution id that is not a UUIDv7",
+    );
+    events
+        .expect_none(wire::FACT_CANCELLED, parent_id, QUIET)
+        .await;
+    watch
+        .expect_silence("a refused cancellation reaches no job subscriber", QUIET)
+        .await;
+    root.expect_no_cancel_entry(parent_run, QUIET).await;
+    durable
+        .assert_count(
+            db::RESOLUTIONS_OF_JOB,
+            parent_id,
+            0,
+            "a client-minted id the service never validated would reach the database as a domain \
+             violation, so a refused cancellation writes no resolution at all",
+        )
+        .await;
+    assert_eq!(
+        gql::job_view(&client, admin, parent_id).await,
+        before,
+        "a refused cancellation leaves the administrator's snapshot and affordances identical",
+    );
 
     // When: the administrator cancels the root
     let resolution_id = Uuid::now_v7();
@@ -283,7 +312,11 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     busy.await_no_cancel_entry(running_child_run, LONG).await;
 
     let repeat = gql::cancel_job(&client, admin, Uuid::now_v7(), parent_id).await;
-    verdict::expect_code_shaped(&repeat, "cancelling an already terminal job");
+    let terminal_code = verdict::expect_code_shaped(&repeat, "cancelling an already terminal job");
+    codes::assert_pairwise_distinct(&[
+        ("a resolution id that is not a UUIDv7", malformed_code),
+        ("cancelling an already terminal job", terminal_code),
+    ]);
     events
         .expect_exactly(wire::FACT_CANCELLED, parent_id, 1, QUIET)
         .await;
@@ -323,6 +356,183 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
             )
             .await;
     }
+
+    durable.close().await;
+    events.stop().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
+    // Given: a tree with one run in flight, one trigger in line and one job still waiting
+    let fixture = JobsFixture::start().await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let root_type = wire::unique_runner_type("bus_root");
+    let running_type = wire::unique_runner_type("bus_running");
+    let unclaimed_type = wire::unique_runner_type("bus_unclaimed");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let owner = Producer::new(fixture.fabric(), "jobs");
+    let mut root = FakeRunner::new(fixture.nats(), &root_type, "root-a");
+    let mut busy = FakeRunner::new(fixture.nats(), &running_type, "busy-a");
+    let mut idler = FakeRunner::new(fixture.nats(), &unclaimed_type, "idle-a");
+    root.connect().await;
+    busy.connect().await;
+    idler.connect().await;
+
+    let parent = JobDeclaration::new(&root_type);
+    let parent_id = parent.job_id;
+    producer.declare(&parent).await;
+    events.expect_one(wire::FACT_QUEUED, parent_id, LONG).await;
+    let parent_trigger = root.next_trigger(LONG).await;
+    let parent_run = runner::run_id(&parent_trigger);
+    root.start_run(&parent_trigger).await;
+    gql::wait_for_status(&client, admin, parent_id, "IN_PROGRESS", LONG).await;
+
+    let running_child = JobDeclaration::new(&running_type).with_parent(parent_id);
+    let running_child_id = running_child.job_id;
+    owner.declare(&running_child).await;
+    let running_trigger = busy.next_trigger(LONG).await;
+    let running_child_run = runner::run_id(&running_trigger);
+    busy.start_run(&running_trigger).await;
+    gql::wait_for_status(&client, admin, running_child_id, "IN_PROGRESS", LONG).await;
+
+    let unclaimed_child = JobDeclaration::new(&unclaimed_type).with_parent(parent_id);
+    let unclaimed_child_id = unclaimed_child.job_id;
+    owner.declare(&unclaimed_child).await;
+    events
+        .expect_one(wire::FACT_QUEUED, unclaimed_child_id, LONG)
+        .await;
+    let unclaimed_trigger = idler.next_trigger(LONG).await;
+    let unclaimed_run = runner::run_id(&unclaimed_trigger);
+    assert_eq!(
+        idler.trigger_count().await,
+        1,
+        "the third job's trigger is in line, waiting for an instance to claim it",
+    );
+
+    let mut watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(parent_id)).await;
+    stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    let mut listing =
+        SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&running_type)).await;
+    stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
+
+    // When: the producer that owns the root cancels it over the bus, not through the edge
+    let resolution_id = Uuid::now_v7();
+    producer.cancel(parent_id, resolution_id).await;
+
+    // Then: the same downward cancellation the administrator's mutation performs
+    for job_id in [parent_id, running_child_id, unclaimed_child_id] {
+        let cancelled = events.expect_one(wire::FACT_CANCELLED, job_id, LONG).await;
+        assert_eq!(
+            cancelled.payload()["job_id"],
+            json!(job_id.to_string()),
+            "cancellation travels downward, one event per cancelled job under its own id — a \
+             producer watching its own descendant must hear it under that descendant's id",
+        );
+        gql::wait_for_status(&client, admin, job_id, "CANCELLED", LONG).await;
+    }
+
+    let root_cancelled =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, LONG).await;
+    assert_eq!(
+        delta::event_of(&root_cancelled, wire::EVT_JOB_CANCELLED, parent_id)["resolutionId"],
+        json!(resolution_id.to_string()),
+        "the root carries the resolution id the producer minted, exactly as the edge path does",
+    );
+    let cancelled_tree = delta::projection(&root_cancelled, parent_id, "CANCELLED");
+    delta::assert_cancelled_affordances(&root_cancelled);
+    for child_id in [running_child_id, unclaimed_child_id] {
+        let child = gql::child_of(&cancelled_tree, child_id);
+        assert_eq!(child["job"]["status"], json!("CANCELLED"));
+        delta::assert_cancelled_affordances(&child);
+    }
+    delta::assert_cancelled_affordances(&delta::assert_upserted_summary(
+        &stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_JOB_CANCELLED, LONG).await,
+        running_child_id,
+        "CANCELLED",
+    ));
+
+    let run_cancelled =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_CANCELLED, LONG).await;
+    assert_eq!(
+        delta::event_of(&run_cancelled, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
+        json!(parent_run.to_string()),
+        "the root's in-flight run is terminated by its own event on the bus path too",
+    );
+
+    let read_back = gql::job_view(&client, admin, parent_id).await;
+    assert_eq!(
+        read_back["job"]["resolution"]["id"],
+        json!(resolution_id.to_string()),
+        "the read answers with the producer's own resolution id: {read_back}",
+    );
+    delta::assert_cancelled_affordances(&read_back);
+    delta::assert_cancelled_affordances(&gql::child_of(&read_back["job"], running_child_id));
+
+    // Then: the transport carries the stop request where a run is in flight, and nowhere else
+    root.await_cancel_entry(parent_run, LONG).await;
+    busy.await_cancel_entry(running_child_run, LONG).await;
+    idler.expect_no_cancel_entry(unclaimed_run, QUIET).await;
+    assert_eq!(
+        idler.trigger_count().await,
+        0,
+        "cancelling queued work withdraws its undelivered trigger, whoever asked for the \
+         cancellation",
+    );
+
+    // When: both instances answer with a success that raced the stop request
+    root.complete_run(&parent_trigger).await;
+    busy.complete_run(&running_trigger).await;
+    root.await_no_cancel_entry(parent_run, LONG).await;
+    busy.await_no_cancel_entry(running_child_run, LONG).await;
+    for job_id in [parent_id, running_child_id] {
+        events
+            .expect_none(wire::FACT_COMPLETED, job_id, QUIET)
+            .await;
+    }
+
+    let repeat = Uuid::now_v7();
+    producer.cancel(parent_id, repeat).await;
+    events
+        .expect_exactly(wire::FACT_CANCELLED, parent_id, 1, QUIET)
+        .await;
+    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, QUIET).await;
+
+    for job_id in [parent_id, running_child_id, unclaimed_child_id] {
+        durable
+            .assert_count(
+                db::RESOLUTIONS_OF_JOB,
+                job_id,
+                1,
+                "one cancellation resolution per job, whether the order came from the edge or the \
+                 bus",
+            )
+            .await;
+    }
+    for job_id in [parent_id, running_child_id] {
+        durable
+            .assert_count(
+                db::CANCEL_REQUESTS_OF_JOB,
+                job_id,
+                1,
+                "the in-flight run carries its durable stop request, so the bucket entry survives \
+                 a restart of the service that wrote it",
+            )
+            .await;
+    }
+    durable
+        .assert_count(
+            db::CANCEL_REQUESTS_OF_JOB,
+            unclaimed_child_id,
+            0,
+            "work nobody claimed is withdrawn, never stopped — a stop request for a run no \
+             instance owns would linger in the bucket until its expiry",
+        )
+        .await;
 
     durable.close().await;
     events.stop().await;

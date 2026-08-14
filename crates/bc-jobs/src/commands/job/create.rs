@@ -1,9 +1,10 @@
+use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
-use crate::domain::actions::job::guard_parent_admits_work;
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{JobId, SourceEntityId};
 use crate::domain::job::Job;
+use crate::domain::job::parenting::guard_parent_admits_work;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
 use crate::domain::policy::ServiceLimits;
@@ -55,6 +56,11 @@ pub fn create_job(
     limits: &ServiceLimits,
 ) -> Result<CreateOutcome, JobsError> {
     if let Some(existing) = existing {
+        if existing.id() != command.id {
+            return Err(JobsError::CorruptState {
+                reason_code: "existing_job_is_not_the_command_target",
+            });
+        }
         return if command.is_the_same_declaration_as(existing) {
             Ok(CreateOutcome::AlreadyQueued)
         } else {
@@ -66,13 +72,7 @@ pub fn create_job(
     if let Some(requested) = command.max_attempts {
         requested.guard_under_ceiling(limits.max_attempts_ceiling)?;
     }
-    if let Some(active) = active_for_source
-        && !active.is_terminal()
-    {
-        return Err(JobsError::SourceAlreadyActive {
-            active_job_id: active.id().as_uuid(),
-        });
-    }
+    guard_source_free(command.source(), active_for_source)?;
     let owner = resolve_owner(&command, parent)?;
     let source = command.source();
     Ok(CreateOutcome::Queued(CommandResult::from_event(

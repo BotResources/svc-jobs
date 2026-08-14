@@ -7,4 +7,5 @@ pub mod manual_retry;
 pub mod resolution;
 pub mod run_outcome;
 pub mod run_progress;
+pub mod source;
 pub mod withdrawal;

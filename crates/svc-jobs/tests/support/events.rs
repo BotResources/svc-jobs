@@ -101,11 +101,14 @@ impl EventLog {
             "expected {expected} {fact} events for job {job_id} within {timeout:?}, got {}",
             self.count_of(fact, job_id)
         );
+        tokio::time::sleep(super::QUIET).await;
         let events = self.of(fact, job_id);
         assert_eq!(
             events.len(),
             expected,
-            "expected exactly {expected} {fact} events for job {job_id}"
+            "expected exactly {expected} {fact} events for job {job_id}, counted again after a \
+             {:?} settling window so a duplicate still in flight is caught rather than missed",
+            super::QUIET
         );
         events
     }

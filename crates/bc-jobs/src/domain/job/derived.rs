@@ -8,6 +8,7 @@ use crate::domain::ownership::Caller;
 use crate::domain::policy::ServiceLimits;
 use crate::domain::references::SourceReference;
 use crate::domain::run::Run;
+use crate::domain::run::progression::RunProgression;
 use crate::error::JobsError;
 
 impl Job {
@@ -35,6 +36,14 @@ impl Job {
         self.runs().iter().rev().find(|run| !run.is_terminal())
     }
 
+    pub fn is_executing(&self) -> bool {
+        self.active_run().is_some_and(Run::has_started)
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        !self.is_terminal() && !self.is_executing()
+    }
+
     pub fn latest_run(&self) -> Option<&Run> {
         self.runs().last()
     }
@@ -46,6 +55,26 @@ impl Job {
             .ok_or(JobsError::RunNotFound {
                 run_id: id.as_uuid(),
             })
+    }
+
+    pub fn current_run(&self) -> Option<&Run> {
+        self.active_run().or_else(|| self.latest_run())
+    }
+
+    pub fn progression(&self) -> Option<RunProgression<'_>> {
+        self.current_run().and_then(Run::progression)
+    }
+
+    pub fn automatic_retry_of_run_id(&self, run: &Run) -> Option<RunId> {
+        let schedule_id = run.automatic_retry_schedule_id()?;
+        self.runs()
+            .iter()
+            .find(|candidate| {
+                candidate
+                    .retry_schedule()
+                    .is_some_and(|schedule| schedule.id() == schedule_id)
+            })
+            .map(Run::id)
     }
 
     pub fn unconsumed_retry(&self) -> Option<&Run> {
@@ -77,7 +106,7 @@ impl Job {
         self.predecessor_job_id().is_some()
     }
 
-    pub fn budget(&self, limits: &ServiceLimits) -> MaxAttempts {
+    pub fn budget(&self, limits: &ServiceLimits) -> Result<MaxAttempts, JobsError> {
         limits.budget(self.max_attempts())
     }
 

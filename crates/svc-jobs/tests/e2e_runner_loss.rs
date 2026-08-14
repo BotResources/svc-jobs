@@ -11,8 +11,8 @@ use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
-    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, stream,
-    subs, wire,
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, infra,
+    stream, subs, wire,
 };
 use uuid::Uuid;
 
@@ -119,15 +119,18 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         &announced_version,
     );
 
-    lost.crash().await;
+    lost.crash();
+    tokio::time::sleep(infra::PRESENCE_TTL).await;
 
     let disconnected =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;
     assert_eq!(
         disconnected["event"]["instanceKey"],
         json!("instance-lost"),
-        "an evicted presence entry — the fate of a crashed instance, which says no goodbye — is a \
-         disconnection signal in its own right, not only the graceful removal",
+        "this instance issued no delete and no purge: it simply stopped refreshing its presence \
+         entry, which is all a crashed process ever does. The entry died of its own TTL, and that \
+         eviction is a disconnection signal in its own right — a service that only reacts to an \
+         explicit removal never notices a real crash, and its runs hang for ever",
     );
     let empty_fleet = delta::fleet_projection(&disconnected, &runner_type);
     assert_eq!(empty_fleet["isAvailable"], json!(false));
@@ -283,6 +286,64 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         );
         assert_eq!(of_run[0]["runId"], json!(run.to_string()));
     }
+
+    // Then: the log tail reads backwards from its end without losing or repeating a line
+    let tail_page = gql::log_page(&client, admin, job_id, json!({ "last": 1 })).await;
+    let tail_edges = gql::edges_of(&tail_page);
+    assert_eq!(tail_edges.len(), 1);
+    assert_eq!(
+        tail_edges[0]["node"]["runId"],
+        json!(second_run.to_string()),
+        "reading the last line answers the newest attempt's line: {tail_page}",
+    );
+    assert_eq!(
+        tail_page["pageInfo"]["hasPreviousPage"],
+        json!(true),
+        "a tail that does not hold the whole log must say so: {tail_page}",
+    );
+    let start_cursor = tail_page["pageInfo"]["startCursor"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a non-empty log page carries its start cursor: {tail_page}"))
+        .to_string();
+    let older_page = gql::log_page(
+        &client,
+        admin,
+        job_id,
+        json!({ "last": 1, "before": start_cursor }),
+    )
+    .await;
+    let older_edges = gql::edges_of(&older_page);
+    assert_eq!(older_edges.len(), 1);
+    assert_eq!(
+        older_edges[0]["node"]["runId"],
+        json!(first_run.to_string()),
+        "walking backwards from the cursor hands over the previous line, never the same one again: \
+         {older_page}",
+    );
+    assert_eq!(older_page["pageInfo"]["hasPreviousPage"], json!(false));
+
+    // Then: each run names the instance that executed it, and its own terminal status
+    let audited = gql::job(&client, admin, job_id).await;
+    for (run, instance_key) in [
+        (first_run, "instance-lost"),
+        (second_run, "instance-replacement"),
+    ] {
+        assert_eq!(
+            gql::run_by_id(&audited, run)["instance"],
+            json!({ "runnerType": runner_type, "instanceKey": instance_key }),
+            "a run keeps the instance that started it, so an administrator can still tell which \
+             process abandoned the work: {audited}",
+        );
+    }
+    assert_eq!(
+        gql::run_by_id(&audited, first_run)["status"],
+        json!("FAILED")
+    );
+    assert_eq!(
+        gql::run_by_id(&audited, second_run)["status"],
+        json!("COMPLETED"),
+        "the run the replacement finished is projected as completed, not left started: {audited}",
+    );
 
     durable
         .assert_all(

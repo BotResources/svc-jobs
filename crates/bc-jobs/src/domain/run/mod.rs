@@ -2,6 +2,7 @@ pub mod failure;
 pub mod origin;
 pub mod parts;
 pub mod plan;
+pub mod progression;
 pub mod status;
 pub mod step;
 
@@ -10,8 +11,11 @@ use chrono::{DateTime, TimeDelta, Utc};
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::ids::{RetryScheduleId, RunId};
 use crate::domain::run::origin::RunOrigin;
-use crate::domain::run::parts::{RetrySchedule, RunCancellationRequest, RunStart, RunTerminal};
+use crate::domain::run::parts::{
+    RetrySchedule, RunCancellationRequest, RunStart, RunTerminal, RunnerInstanceReference,
+};
 use crate::domain::run::plan::RunPlan;
+use crate::domain::run::progression::RunProgression;
 use crate::domain::run::status::{RunStatus, RunTerminalKind};
 use crate::domain::run::step::Step;
 use crate::error::JobsError;
@@ -179,6 +183,16 @@ impl Run {
 
     pub fn current_step(&self) -> Option<&Step> {
         self.steps.last()
+    }
+
+    pub fn progression(&self) -> Option<RunProgression<'_>> {
+        RunProgression::of(self.plan.as_ref(), self.current_step())
+    }
+
+    pub fn is_executed_by(&self, instance: &RunnerInstanceReference) -> bool {
+        self.start
+            .as_ref()
+            .is_some_and(|start| start.instance() == instance)
     }
 
     pub fn last_activity_at(&self) -> DateTime<Utc> {

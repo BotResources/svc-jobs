@@ -7,6 +7,7 @@ pub mod docs;
 pub mod events;
 pub mod fixture;
 pub mod gql;
+pub mod infra;
 pub mod producer;
 pub mod runner;
 pub mod stream;
