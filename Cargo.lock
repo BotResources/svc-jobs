@@ -702,6 +702,8 @@ name = "contract-jobs"
 version = "0.0.0-dev"
 dependencies = [
  "br-core-integration",
+ "br-util-nats-fabric",
+ "uuid",
 ]
 
 [[package]]

@@ -39,12 +39,10 @@ impl Job {
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
         self.guard_owner(&command.caller)?;
-        Ok(CommandResult::from_event(JobEvent::JobCompleted(
-            JobCompleted {
-                job_id: self.id(),
-                resolution_id: command.resolution_id,
-            },
-        )))
+        self.resolve_after_withdrawing_its_run(JobEvent::JobCompleted(JobCompleted {
+            job_id: self.id(),
+            resolution_id: command.resolution_id,
+        }))
     }
 
     pub fn declare_failed(&self, command: FailJob) -> Result<JobCommandResult, JobsError> {
@@ -54,13 +52,13 @@ impl Job {
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
         self.guard_owner(&command.caller)?;
-        Ok(CommandResult::from_event(JobEvent::JobFailed(JobFailed {
+        self.resolve_after_withdrawing_its_run(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,
             failure_cause: JobFailureCause::DeclaredByOwner,
             caused_by_run_id: None,
             report: None,
-        })))
+        }))
     }
 }
 
@@ -147,6 +145,63 @@ mod tests {
             }
             other => panic!("expected a JobFailed fact, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn finishing_a_job_whose_run_is_still_executing_stops_that_run_first() {
+        // Given: a job the owner considers done while an instance still executes its run
+        let run = RunBuilder::new(1).started(ts(5)).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        // When: the owner declares it finished
+        let result = job
+            .finish(FinishJob {
+                resolution_id: resolution_id(),
+                caller: owner(),
+            })
+            .unwrap();
+        // Then: the runner is told to stop and the run is closed before the job resolves
+        match result.events.as_slice() {
+            [
+                JobEvent::RunCancellationRequested(requested),
+                JobEvent::RunCancelled(cancelled),
+                JobEvent::JobCompleted(_),
+            ] => {
+                assert_eq!(requested.run_id, run_id);
+                assert_eq!(requested.reason_code.as_str(), "job_resolved");
+                assert_eq!(cancelled.run_id, run_id);
+            }
+            other => {
+                panic!("expected a stop request, a run closure and a completion, got {other:?}")
+            }
+        }
+        assert_eq!(
+            result.warnings,
+            vec![CommandWarning::CancellationIsBestEffort]
+        );
+    }
+
+    #[test]
+    fn failing_a_job_withdraws_the_trigger_of_a_run_no_instance_ever_claimed() {
+        // Given: a job whose only run was dispatched but never started
+        let run = RunBuilder::new(1).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        // When: the owner declares the job failed
+        let result = job
+            .declare_failed(FailJob {
+                resolution_id: resolution_id(),
+                caller: owner(),
+            })
+            .unwrap();
+        // Then: the queued run is closed outright, with nothing to stop
+        match result.events.as_slice() {
+            [JobEvent::RunCancelled(cancelled), JobEvent::JobFailed(_)] => {
+                assert_eq!(cancelled.run_id, run_id);
+            }
+            other => panic!("expected a run closure and a failure, got {other:?}"),
+        }
+        assert!(result.warnings.is_empty());
     }
 
     #[test]

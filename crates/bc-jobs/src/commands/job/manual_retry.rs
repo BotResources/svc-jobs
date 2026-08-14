@@ -31,6 +31,8 @@ pub enum ManualRetryOutcome {
 
 pub fn manual_retry(
     predecessor: &Job,
+    parent: Option<&Job>,
+    active_for_source: Option<&Job>,
     command: ManualRetryJob,
 ) -> Result<ManualRetryOutcome, JobsError> {
     if let Some(record) = predecessor.manual_retry() {
@@ -43,13 +45,14 @@ pub fn manual_retry(
             });
         }
     }
-    predecessor.guard_manual_retry()?;
+    predecessor.guard_manual_retry(parent)?;
     if command.successor_job_id == predecessor.id() {
         return Err(JobsError::SelfReference {
             field: "successor_job_id",
         });
     }
     guard_current_failure(predecessor, command.failed_resolution_id)?;
+    guard_source_free(predecessor, active_for_source)?;
     Ok(ManualRetryOutcome::Started(Box::new(ManualRetryPlan {
         predecessor: CommandResult::from_event(JobEvent::ManualRetryStarted(ManualRetryStarted {
             job_id: predecessor.id(),
@@ -64,6 +67,8 @@ pub fn manual_retry(
                 job_id: command.successor_job_id,
                 runner_type: predecessor.runner_type().clone(),
                 producer: predecessor.producer().clone(),
+                config: predecessor.config().cloned(),
+                owner: predecessor.owner().clone(),
                 parent_job_id: predecessor.parent_job_id(),
                 predecessor_job_id: Some(predecessor.id()),
                 triggered_by: predecessor.triggered_by().cloned(),
@@ -81,6 +86,18 @@ pub fn manual_retry(
             }),
         ]),
     })))
+}
+
+fn guard_source_free(predecessor: &Job, active_for_source: Option<&Job>) -> Result<(), JobsError> {
+    if predecessor.source().is_none() {
+        return Ok(());
+    }
+    match active_for_source.filter(|active| !active.is_terminal()) {
+        Some(active) => Err(JobsError::SourceAlreadyActive {
+            active_job_id: active.id().as_uuid(),
+        }),
+        None => Ok(()),
+    }
 }
 
 fn guard_current_failure(

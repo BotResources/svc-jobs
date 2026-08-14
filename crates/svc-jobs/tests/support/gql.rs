@@ -9,6 +9,11 @@ use super::docs::{
     CANCEL_JOB, DELETE_JOB, FLEET, JOB_BY_SOURCE, JOB_DETAIL, JOB_LOGS, JOBS_LIST, MANUAL_RETRY_JOB,
 };
 
+pub async fn ready(base_url: &str) -> bool {
+    let (status, _) = GraphqlClient::new(base_url).get_raw("/readyz").await;
+    status == reqwest::StatusCode::OK
+}
+
 pub async fn cancel_job(
     gql: &GraphqlClient,
     passport: &Passport,
@@ -135,11 +140,33 @@ pub async fn wait_for_attempts(
 }
 
 pub async fn logs_of(gql: &GraphqlClient, passport: &Passport, job_id: Uuid) -> Vec<Value> {
+    log_lines(gql, passport, job_id, None).await
+}
+
+pub async fn logs_of_run(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    job_id: Uuid,
+    run_id: Uuid,
+) -> Vec<Value> {
+    log_lines(gql, passport, job_id, Some(run_id)).await
+}
+
+async fn log_lines(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    job_id: Uuid,
+    run_id: Option<Uuid>,
+) -> Vec<Value> {
     let response = gql
         .query(
             passport,
             JOB_LOGS,
-            json!({ "jobId": job_id.to_string(), "first": 200 }),
+            json!({
+                "jobId": job_id.to_string(),
+                "runId": run_id.map(|id| id.to_string()),
+                "first": 200,
+            }),
         )
         .await;
     data_of(&response, "jobsLogs")["edges"]
@@ -161,19 +188,67 @@ pub async fn fleet_of(gql: &GraphqlClient, passport: &Passport, runner_type: &st
 }
 
 pub async fn list_jobs(gql: &GraphqlClient, passport: &Passport, filter: Value) -> Vec<Value> {
+    edges_of(&list_page(gql, passport, filter, 50, None).await)
+        .iter()
+        .map(|edge| edge["node"].clone())
+        .collect()
+}
+
+pub async fn list_page(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    filter: Value,
+    first: i64,
+    after: Option<&str>,
+) -> Value {
     let response = gql
         .query(
             passport,
             JOBS_LIST,
-            json!({ "filter": filter, "first": 50 }),
+            json!({ "filter": filter, "first": first, "after": after }),
         )
         .await;
-    data_of(&response, "jobs")["edges"]
+    data_of(&response, "jobs")
+}
+
+pub fn edges_of(connection: &Value) -> Vec<Value> {
+    connection["edges"]
         .as_array()
-        .expect("a job connection carries an edge list")
+        .unwrap_or_else(|| panic!("a connection carries an edge list: {connection}"))
+        .clone()
+}
+
+pub fn listed_ids(connection: &Value) -> Vec<String> {
+    edges_of(connection)
         .iter()
-        .map(|edge| edge["node"].clone())
+        .map(|edge| {
+            edge["node"]["job"]["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a listed row carries its job id: {edge}"))
+                .to_string()
+        })
         .collect()
+}
+
+pub fn assert_lists_exactly(connection: &Value, expected: &[Uuid], what: &str) {
+    let mut listed = listed_ids(connection);
+    listed.sort();
+    let mut wanted: Vec<String> = expected.iter().map(Uuid::to_string).collect();
+    wanted.sort();
+    assert_eq!(
+        listed, wanted,
+        "{what}: the filter must answer with exactly the jobs it names, no more: {connection}"
+    );
+}
+
+pub fn assert_lists_none_of(connection: &Value, excluded: &[Uuid], what: &str) {
+    let listed = listed_ids(connection);
+    for id in excluded {
+        assert!(
+            !listed.contains(&id.to_string()),
+            "{what}: job {id} does not match this filter and must not be listed: {connection}"
+        );
+    }
 }
 
 pub fn data_of(response: &Value, field: &str) -> Value {
@@ -222,11 +297,45 @@ pub fn assert_blocked(view: &Value, action: &str) -> String {
         .as_str()
         .unwrap_or_else(|| panic!("a blocked affordance must carry a reason code: {entry}"))
         .to_string();
-    assert!(
-        br_test_harness::verdict::is_code_shaped(&reason),
-        "affordance '{action}' reason must be a stable code, not prose: {reason}"
-    );
+    super::codes::assert_stable_reason(&reason, &format!("affordance '{action}'"));
     reason
+}
+
+pub fn assert_affordances_well_formed(view: &Value, what: &str) {
+    let entries = view["affordances"].as_array().unwrap_or_else(|| {
+        panic!("{what}: every view the administrator reads carries its backend-owned affordances: {view}")
+    });
+    for entry in entries {
+        let action = entry["action"].as_str().unwrap_or_else(|| {
+            panic!("{what}: an affordance names the action it decides: {entry}")
+        });
+        assert!(
+            !action.is_empty(),
+            "{what}: an affordance action is never empty: {entry}"
+        );
+        assert!(
+            entry["allowed"].is_boolean(),
+            "{what}: an affordance is a decision the client renders, never a hint it interprets: \
+             {entry}"
+        );
+        if entry["allowed"] == json!(false) {
+            let reason = entry["reasonCode"].as_str().unwrap_or_else(|| {
+                panic!("{what}: a blocked affordance owes its reason code: {entry}")
+            });
+            super::codes::assert_stable_reason(reason, &format!("{what}: affordance '{action}'"));
+        }
+        assert!(
+            entry["params"].is_null() || entry["params"].is_object(),
+            "{what}: affordance params are structured data the client renders, never prose: {entry}"
+        );
+    }
+}
+
+pub fn listed_row(rows: &[Value], job_id: Uuid) -> Value {
+    rows.iter()
+        .find(|row| row["job"]["id"] == json!(job_id.to_string()))
+        .cloned()
+        .unwrap_or_else(|| panic!("job {job_id} must be listed here: {rows:?}"))
 }
 
 pub fn run_by_attempt(job: &Value, attempt: i64) -> Value {

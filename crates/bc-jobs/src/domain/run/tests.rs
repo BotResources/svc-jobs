@@ -82,6 +82,7 @@ fn a_retry_schedule_hanging_off_a_completed_run_cannot_be_loaded() {
     // Given: a stored run that completed yet carries a retry schedule
     let schedule = RetrySchedule::new(RetryScheduleId::new(Uuid::now_v7()).unwrap(), at(60));
     let result = Run::hydrate(RunState {
+        start: Some(RunStart::new(instance(), at(5))),
         terminal: Some(RunTerminal::completed(at(9))),
         retry_schedule: Some(schedule),
         ..pending()

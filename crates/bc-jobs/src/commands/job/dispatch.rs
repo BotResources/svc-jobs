@@ -211,6 +211,7 @@ mod tests {
         let job = JobBuilder::new()
             .with_run(
                 RunBuilder::new(1)
+                    .started(ts(5))
                     .failed(ts(20), RunFailureKind::Permanent)
                     .build(),
             )

@@ -1,5 +1,4 @@
-use chrono::{DateTime, Utc};
-
+use crate::commands::job::withdrawal::{CANCELLED_BY_JOB, RunWithdrawal};
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::{JobId, ResolutionId};
 use crate::domain::job::Job;
@@ -9,15 +8,12 @@ use crate::domain::references::KnownUser;
 use crate::domain::run::Run;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
-use crate::event::job_facts::{JobCancelled, RunCancellationRequested, RunCancelled};
-
-pub const CANCELLED_BY_JOB: &str = "job_cancelled";
+use crate::event::job_facts::JobCancelled;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelJob {
     pub resolution_id: ResolutionId,
     pub requester: CancelRequester,
-    pub at: DateTime<Utc>,
 }
 
 impl CancelRequester {
@@ -45,7 +41,12 @@ impl Job {
         if let CancelRequester::Owner(caller) = &command.requester {
             self.guard_owner(caller)?;
         }
-        let mut result = CommandResult::new(self.withdraw_active_run(&command)?);
+        let withdrawal = RunWithdrawal {
+            reason_code: ReasonCode::new(CANCELLED_BY_JOB)?,
+            requested_by: command.requester.known_user().cloned(),
+            originating_job_id: command.requester.originating_job_id(),
+        };
+        let mut result = CommandResult::new(self.withdraw_active_run(&withdrawal));
         if self.active_run().is_some_and(Run::has_started) {
             result = result.with_warning(CommandWarning::CancellationIsBestEffort);
         }
@@ -55,29 +56,6 @@ impl Job {
             originating_job_id: command.requester.originating_job_id(),
         }));
         Ok(result)
-    }
-
-    fn withdraw_active_run(&self, command: &CancelJob) -> Result<Vec<JobEvent>, JobsError> {
-        let Some(run) = self.active_run() else {
-            return Ok(vec![]);
-        };
-        let mut events = Vec::with_capacity(2);
-        if run.has_started() {
-            events.push(JobEvent::RunCancellationRequested(
-                RunCancellationRequested {
-                    job_id: self.id(),
-                    run_id: run.id(),
-                    reason_code: ReasonCode::new(CANCELLED_BY_JOB)?,
-                    requested_by: command.requester.known_user().cloned(),
-                    originating_job_id: command.requester.originating_job_id(),
-                },
-            ));
-        }
-        events.push(JobEvent::RunCancelled(RunCancelled {
-            job_id: self.id(),
-            run_id: run.id(),
-        }));
-        Ok(events)
     }
 }
 
@@ -104,7 +82,6 @@ mod tests {
             .cancel(CancelJob {
                 resolution_id: resolution_id(),
                 requester: by_administrator(),
-                at: ts(40),
             })
             .unwrap();
         // Then: the queued run is cancelled outright, with no stop request needed
@@ -128,7 +105,6 @@ mod tests {
             .cancel(CancelJob {
                 resolution_id: resolution_id(),
                 requester: by_administrator(),
-                at: ts(40),
             })
             .unwrap();
         // Then: a stop request is recorded before the run and job are cancelled
@@ -165,7 +141,6 @@ mod tests {
                 requester: CancelRequester::Cascade {
                     originating_job_id: ancestor,
                 },
-                at: ts(40),
             })
             .unwrap();
         // Then: each descendant carries its own cancellation, naming the origin
@@ -187,7 +162,6 @@ mod tests {
             .cancel(CancelJob {
                 resolution_id: resolution_id(),
                 requester: by_administrator(),
-                at: ts(40),
             })
             .unwrap();
         // Then: only the job resolution is recorded
@@ -204,7 +178,6 @@ mod tests {
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
             requester: by_administrator(),
-            at: ts(40),
         });
         // Then: it is refused with the same code the affordance advertises
         assert_eq!(
@@ -227,7 +200,6 @@ mod tests {
             .cancel(CancelJob {
                 resolution_id: resolution,
                 requester: by_administrator(),
-                at: ts(40),
             })
             .unwrap();
         // Then: nothing is recorded twice
@@ -242,7 +214,6 @@ mod tests {
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
             requester: CancelRequester::Owner(Caller::Producer(ProducerKey::new("chat").unwrap())),
-            at: ts(40),
         });
         // Then: ownership is checked before the cancellation is honoured
         assert_eq!(result, Err(JobsError::NotOwner));
@@ -256,7 +227,6 @@ mod tests {
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
             requester: CancelRequester::Owner(Caller::Producer(producer())),
-            at: ts(40),
         });
         // Then: the cancellation is honoured
         assert!(result.is_ok());

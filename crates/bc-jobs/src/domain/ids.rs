@@ -53,6 +53,7 @@ uuid_v7_id!(RetryScheduleId, "retry_schedule_id");
 uuid_v7_id!(PlanDeclarationId, "plan_declaration_id");
 uuid_v7_id!(RunLogId, "run_log_id");
 uuid_v7_id!(SourceEntityId, "source_entity_id");
+uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
 

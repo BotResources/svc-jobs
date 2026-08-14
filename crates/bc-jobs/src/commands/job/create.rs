@@ -1,4 +1,5 @@
 use crate::commands::{CommandResult, JobCommandResult};
+use crate::domain::actions::job::guard_parent_admits_work;
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{JobId, SourceEntityId};
@@ -62,13 +63,8 @@ pub fn create_job(
             })
         };
     }
-    if let Some(requested) = command.max_attempts
-        && requested.get() > limits.max_attempts_ceiling
-    {
-        return Err(JobsError::MaxAttemptsAboveCeiling {
-            requested: requested.get(),
-            ceiling: limits.max_attempts_ceiling,
-        });
+    if let Some(requested) = command.max_attempts {
+        requested.guard_under_ceiling(limits.max_attempts_ceiling)?;
     }
     if let Some(active) = active_for_source
         && !active.is_terminal()
@@ -77,13 +73,15 @@ pub fn create_job(
             active_job_id: active.id().as_uuid(),
         });
     }
-    resolve_owner(&command, parent)?;
+    let owner = resolve_owner(&command, parent)?;
     let source = command.source();
     Ok(CreateOutcome::Queued(CommandResult::from_event(
         JobEvent::JobQueued(JobQueued {
             job_id: command.id,
             runner_type: command.runner_type,
             producer: command.producer,
+            config: command.config,
+            owner,
             parent_job_id: command.parent_job_id,
             predecessor_job_id: None,
             triggered_by: command.triggered_by,
@@ -102,21 +100,7 @@ fn resolve_owner(command: &CreateJob, parent: Option<&Job>) -> Result<JobOwner, 
             field: "parent_job_id",
         });
     }
-    let parent = parent
-        .filter(|candidate| candidate.id() == parent_job_id)
-        .ok_or(JobsError::ParentJobUnknown {
-            parent_job_id: parent_job_id.as_uuid(),
-        })?;
-    if parent.is_deleted() {
-        return Err(JobsError::ParentJobDeleted {
-            parent_job_id: parent_job_id.as_uuid(),
-        });
-    }
-    if parent.is_terminal() {
-        return Err(JobsError::ParentJobTerminal {
-            parent_job_id: parent_job_id.as_uuid(),
-        });
-    }
+    let parent = guard_parent_admits_work(parent_job_id, parent)?;
     Ok(JobOwner::Runner {
         parent_job_id,
         runner_type: parent.runner_type().clone(),

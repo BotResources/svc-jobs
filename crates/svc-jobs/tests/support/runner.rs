@@ -58,6 +58,14 @@ impl<'a> FakeRunner<'a> {
             .expect("removing the presence entry");
     }
 
+    pub async fn crash(&self) {
+        let store = self.nats.create_kv(wire::PRESENCE_BUCKET).await;
+        store
+            .purge(wire::presence_key(&self.runner_type, &self.instance_key))
+            .await
+            .expect("evicting the presence entry");
+    }
+
     pub async fn next_trigger(&mut self, timeout: Duration) -> Value {
         self.try_next_trigger(timeout).await.unwrap_or_else(|| {
             panic!(
@@ -138,7 +146,16 @@ impl<'a> FakeRunner<'a> {
     }
 
     pub async fn declare_plan(&self, trigger: &Value, labels: &[&str]) -> Uuid {
-        let declaration_id = Uuid::now_v7();
+        self.declare_plan_with(trigger, Uuid::now_v7(), labels)
+            .await
+    }
+
+    pub async fn declare_plan_with(
+        &self,
+        trigger: &Value,
+        declaration_id: Uuid,
+        labels: &[&str],
+    ) -> Uuid {
         let items: Vec<Value> = labels
             .iter()
             .enumerate()
@@ -223,7 +240,18 @@ impl<'a> FakeRunner<'a> {
         level: &str,
         message: &str,
     ) -> Uuid {
-        let id = Uuid::now_v7();
+        self.log_line_with(trigger, Uuid::now_v7(), step_index, level, message)
+            .await
+    }
+
+    pub async fn log_line_with(
+        &self,
+        trigger: &Value,
+        id: Uuid,
+        step_index: Option<i64>,
+        level: &str,
+        message: &str,
+    ) -> Uuid {
         self.nats
             .publish_raw(
                 &wire::log_subject(&self.runner_type),
@@ -267,6 +295,20 @@ impl<'a> FakeRunner<'a> {
         self.cancel_entry(run)
             .await
             .expect("the entry observed a moment ago is still readable")
+    }
+
+    pub async fn await_no_cancel_entry(&self, run: Uuid, timeout: Duration) {
+        let watcher = self;
+        let removed = wait_until(timeout, || async move {
+            watcher.cancel_entry(run).await.is_none()
+        })
+        .await;
+        assert!(
+            removed,
+            "the desired-state entry for run {run} must be removed once the run is terminal, \
+             within {timeout:?} — every instance replays the whole bucket when its watch \
+             (re)connects, so a leftover entry re-issues a stop order for a run that ended long ago"
+        );
     }
 
     pub async fn expect_no_cancel_entry(&self, run: Uuid, quiet: Duration) {

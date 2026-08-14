@@ -42,9 +42,37 @@ pub const VERB_CANCEL: &str = "cancel";
 pub const VERB_FINISH: &str = "finish";
 pub const VERB_FAIL: &str = "fail";
 
-pub const ACTION_CANCEL: &str = "cancel";
-pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
-pub const ACTION_DELETE: &str = "delete";
+pub const ACTION_CANCEL: &str = "CANCEL_JOB";
+pub const ACTION_MANUAL_RETRY: &str = "MANUAL_RETRY_JOB";
+pub const ACTION_DELETE: &str = "DELETE_JOB";
+
+pub const EVT_QUEUED: &str = "JobsJobQueuedEvent";
+pub const EVT_RUN_DISPATCHED: &str = "JobsRunDispatchedEvent";
+pub const EVT_RUN_STARTED: &str = "JobsRunStartedEvent";
+pub const EVT_PLAN_DECLARED: &str = "JobsRunPlanDeclaredEvent";
+pub const EVT_STEP_STARTED: &str = "JobsRunStepStartedEvent";
+pub const EVT_RUN_COMPLETED: &str = "JobsRunCompletedEvent";
+pub const EVT_RUN_FAILED: &str = "JobsRunFailedEvent";
+pub const EVT_RUN_CANCELLED: &str = "JobsRunCancelledEvent";
+pub const EVT_RETRY_SCHEDULED: &str = "JobsRetryScheduledEvent";
+pub const EVT_JOB_COMPLETED: &str = "JobsJobCompletedEvent";
+pub const EVT_JOB_FAILED: &str = "JobsJobFailedEvent";
+pub const EVT_JOB_CANCELLED: &str = "JobsJobCancelledEvent";
+pub const EVT_MANUAL_RETRY_STARTED: &str = "JobsManualRetryStartedEvent";
+pub const EVT_JOB_DELETED: &str = "JobsJobDeletedEvent";
+pub const EVT_AFFORDANCES_CHANGED: &str = "JobsJobAffordancesChangedEvent";
+
+pub const KIND_TYPE_REGISTERED: &str = "RUNNER_TYPE_REGISTERED";
+pub const KIND_INSTANCE_CONNECTED: &str = "INSTANCE_CONNECTED";
+pub const KIND_INSTANCE_DISCONNECTED: &str = "INSTANCE_DISCONNECTED";
+pub const KIND_INSTANCE_STATUS_REPORTED: &str = "INSTANCE_STATUS_REPORTED";
+pub const KIND_JOB_BEGAN_WAITING: &str = "JOB_BEGAN_WAITING";
+pub const KIND_JOB_STOPPED_WAITING: &str = "JOB_STOPPED_WAITING";
+pub const KIND_JOB_BEGAN_EXECUTING: &str = "JOB_BEGAN_EXECUTING";
+pub const KIND_JOB_STOPPED_EXECUTING: &str = "JOB_STOPPED_EXECUTING";
+
+pub const REASON_INSTANCE_LOST: &str = "instance_lost";
+pub const REASON_ID_REUSE: &str = "id_reuse";
 
 pub fn trigger_subject(runner_type: &str) -> String {
     format!("jobs.trigger.{runner_type}")

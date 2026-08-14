@@ -1,20 +1,24 @@
 mod support;
 
 use br_test_harness::{SseSubscription, verdict};
-use serde_json::json;
+use serde_json::{Value, json};
+use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
-use support::{LONG, QUIET, SHORT, docs, gql, stream, wire};
+use support::{
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, stream,
+    subs, wire,
+};
 use uuid::Uuid;
-
-const JOB_CHANGED: &str = "jobsJobChanged";
 
 #[tokio::test]
 async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_terminal_failure() {
+    // Given: a job with no automatic retry left, watched on every channel
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
     let runner_type = wire::unique_runner_type("retryable");
@@ -35,13 +39,18 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         .expect_one(wire::FACT_QUEUED, predecessor_id, LONG)
         .await;
 
-    let mut watch = SseSubscription::open(
-        fixture.url(),
-        admin,
-        &docs::job_changed_subscription(predecessor_id),
-    )
-    .await;
+    let mut watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(predecessor_id)).await;
     stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    let mut listing =
+        SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&runner_type)).await;
+    stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
+    let mut tail =
+        SseSubscription::open(fixture.url(), admin, &subs::log_tail(predecessor_id)).await;
+    stream::snapshot(&mut tail, LOG_TAIL, SHORT).await;
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
 
     let trigger = instance.next_trigger(LONG).await;
     let failed_run = runner::run_id(&trigger);
@@ -51,35 +60,49 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     instance
         .log_line(&trigger, Some(0), "ERROR", "unsupported format")
         .await;
+    delta::log_line(
+        &stream::drain_appended(&mut tail, LOG_TAIL, 1, LONG).await[0],
+        failed_run,
+        Some(0),
+    );
     instance
         .fail_run(&trigger, "PERMANENT", "unsupported_format", None)
         .await;
 
-    gql::wait_for_status(&client, admin, predecessor_id, "FAILED", LONG).await;
-    let failure = events
-        .expect_one(wire::FACT_FAILED, predecessor_id, LONG)
-        .await;
+    let run_failed = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
     assert_eq!(
-        failure.payload()["failure_report"]["reason_code"],
+        delta::event_of(&run_failed, wire::EVT_RUN_FAILED, predecessor_id)["reasonCode"],
         json!("unsupported_format")
     );
+    let failed_delta =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
+    delta::projection(&failed_delta, predecessor_id, "FAILED");
+    delta::assert_failed_affordances(&failed_delta);
+    assert_eq!(
+        events
+            .expect_one(wire::FACT_FAILED, predecessor_id, LONG)
+            .await
+            .payload()["failure_report"]["reason_code"],
+        json!("unsupported_format")
+    );
+
+    // When: the owner also declares the failure it just received
+    producer.fail(predecessor_id, Uuid::now_v7()).await;
+    events
+        .expect_exactly(wire::FACT_FAILED, predecessor_id, 1, QUIET)
+        .await;
+    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_FAILED, QUIET).await;
     instance.expect_no_trigger(QUIET).await;
 
     let failed_view = gql::job_view(&client, admin, predecessor_id).await;
-    let failed_resolution_id = Uuid::parse_str(
-        failed_view["job"]["resolution"]["id"]
-            .as_str()
-            .expect("a failed job carries its resolution id"),
-    )
-    .expect("a resolution id is a UUID");
+    let failed_resolution_id = uuid_at(&failed_view["job"]["resolution"]["id"]);
     assert_eq!(
         failed_view["job"]["resolution"]["causedByRunId"],
         json!(failed_run.to_string())
     );
-    gql::assert_allowed(&failed_view, wire::ACTION_MANUAL_RETRY);
-    gql::assert_blocked(&failed_view, wire::ACTION_CANCEL);
-    gql::assert_allowed(&failed_view, wire::ACTION_DELETE);
+    delta::assert_failed_affordances(&failed_view);
 
+    // When: the administrator retries it as a fresh successor job
     let intervention_id = Uuid::now_v7();
     let successor_id = Uuid::now_v7();
     let ack = gql::manual_retry_job(
@@ -96,69 +119,175 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         ack["data"]["jobsManualRetryJob"],
         json!({ "success": true })
     );
-    stream::await_delta(&mut watch, JOB_CHANGED, "JobsManualRetryStartedEvent", LONG).await;
 
+    let intervention = stream::await_delta(
+        &mut watch,
+        JOB_CHANGED,
+        wire::EVT_MANUAL_RETRY_STARTED,
+        LONG,
+    )
+    .await;
+    let recorded = delta::event_of(
+        &intervention,
+        wire::EVT_MANUAL_RETRY_STARTED,
+        predecessor_id,
+    );
+    assert_eq!(recorded["successorJobId"], json!(successor_id.to_string()));
+    assert_eq!(
+        recorded["manualRetryId"],
+        json!(intervention_id.to_string())
+    );
+    assert!(
+        !recorded["runId"].is_null(),
+        "the successor's first run is dispatched with the \
+         intervention, even though the predecessor exhausted its budget: {intervention}"
+    );
+    let still_failed = delta::projection(&intervention, predecessor_id, "FAILED");
+    assert_eq!(
+        still_failed["manualRetry"]["successorJobId"],
+        json!(successor_id.to_string())
+    );
+    gql::assert_blocked(&intervention, wire::ACTION_CANCEL);
+    gql::assert_blocked(&intervention, wire::ACTION_MANUAL_RETRY);
+    gql::assert_blocked(&intervention, wire::ACTION_DELETE);
+
+    // Then: exactly one successor, at attempt one, followed live
     events
         .expect_one(wire::FACT_QUEUED, successor_id, LONG)
         .await;
-    gql::wait_for_attempts(&client, admin, successor_id, 1, LONG).await;
-    let successor = gql::job(&client, admin, successor_id).await;
-    assert_eq!(successor["runnerType"], json!(runner_type));
-    assert_eq!(successor["config"], json!({ "prompt": "convert" }));
-    assert_eq!(successor["maxAttempts"], json!(1));
-    assert_eq!(
-        successor["triggeredBy"]["id"],
-        json!(operator_id.to_string())
-    );
-    assert_eq!(
-        successor["source"]["entityId"],
-        json!(entity_id.to_string())
-    );
-    assert_eq!(
-        successor["status"],
-        json!("IN_PROGRESS"),
-        "the successor's first run is dispatched even though the predecessor exhausted its budget",
-    );
     let successor_trigger = instance.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&successor_trigger), successor_id);
     assert_eq!(runner::attempt_number(&successor_trigger), 1);
+    let successor_run = runner::run_id(&successor_trigger);
+    assert_eq!(recorded["runId"], json!(successor_run.to_string()));
 
+    let mut successor_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(successor_id)).await;
+    let successor_snapshot = stream::snapshot(&mut successor_watch, JOB_CHANGED, SHORT).await;
+    assert_eq!(
+        successor_snapshot["job"]["runs"].as_array().map(Vec::len),
+        Some(1),
+        "the successor opens with its dispatched first run: {successor_snapshot}",
+    );
+    delta::assert_active_affordances(&successor_snapshot);
+    instance.start_run(&successor_trigger).await;
+    let successor_started = stream::await_delta(
+        &mut successor_watch,
+        JOB_CHANGED,
+        wire::EVT_RUN_STARTED,
+        LONG,
+    )
+    .await;
+    delta::projection(&successor_started, successor_id, "IN_PROGRESS");
+    delta::assert_active_affordances(&successor_started);
+    delta::assert_fleet(
+        &stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await,
+        &runner_type,
+        0,
+        1,
+        1,
+        0,
+    );
+    instance.start_step(&successor_trigger, 0, "convert").await;
+    let successor_stepped = stream::await_delta(
+        &mut successor_watch,
+        JOB_CHANGED,
+        wire::EVT_STEP_STARTED,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::event_of(&successor_stepped, wire::EVT_STEP_STARTED, successor_id)["stepIndex"],
+        json!(0)
+    );
+    let mut successor_tail =
+        SseSubscription::open(fixture.url(), admin, &subs::log_tail(successor_id)).await;
+    stream::snapshot(&mut successor_tail, LOG_TAIL, SHORT).await;
+    instance
+        .log_line(&successor_trigger, Some(0), "INFO", "converting again")
+        .await;
+    delta::log_line(
+        &stream::drain_appended(&mut successor_tail, LOG_TAIL, 1, LONG).await[0],
+        successor_run,
+        Some(0),
+    );
+    instance.complete_run(&successor_trigger).await;
+    let successor_run_done = stream::await_delta(
+        &mut successor_watch,
+        JOB_CHANGED,
+        wire::EVT_RUN_COMPLETED,
+        LONG,
+    )
+    .await;
+    delta::projection(&successor_run_done, successor_id, "IN_PROGRESS");
+    delta::assert_fleet(
+        &stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_STOPPED_EXECUTING, LONG).await,
+        &runner_type,
+        0,
+        0,
+        0,
+        1,
+    );
+
+    let predecessor_row = stream::await_delta(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_MANUAL_RETRY_STARTED,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::upserted(&predecessor_row, predecessor_id)["job"]["successorJobId"],
+        json!(successor_id.to_string()),
+        "the list window carries the predecessor's new link, not a refetch hint",
+    );
     let predecessor = gql::job(&client, admin, predecessor_id).await;
-    assert_eq!(predecessor["status"], json!("FAILED"));
-    assert_eq!(predecessor["attemptCount"], json!(1));
+    let successor = gql::job(&client, admin, successor_id).await;
+    for (field, expected, what) in [
+        (
+            "config",
+            json!({ "prompt": "convert" }),
+            "the runner configuration",
+        ),
+        ("runnerType", json!(&runner_type), "the runner type"),
+        (
+            "maxAttempts",
+            json!(1),
+            "the producer's own attempt ceiling — a successor that lost it would silently inherit \
+             the service ceiling and widen the retry policy nobody asked to widen",
+        ),
+    ] {
+        assert_eq!(
+            successor[field], expected,
+            "the successor copies {what}: {successor}",
+        );
+    }
     assert_eq!(
-        predecessor["resolution"]["id"],
-        json!(failed_resolution_id.to_string()),
-        "a manual retry never reopens the predecessor",
+        successor["triggeredBy"]["id"],
+        json!(operator_id.to_string()),
+        "the successor copies whose behalf the work runs on, or the audit trail breaks: \
+         {successor}",
     );
     assert_eq!(
-        predecessor["manualRetry"],
-        json!({
-            "id": intervention_id.to_string(),
-            "failedResolutionId": failed_resolution_id.to_string(),
-            "predecessorJobId": predecessor_id.to_string(),
-            "successorJobId": successor_id.to_string(),
-            "requestedAt": predecessor["manualRetry"]["requestedAt"],
-            "requestedBy": {
-                "id": admin.actor_id().to_string(),
-                "displayName": predecessor["manualRetry"]["requestedBy"]["displayName"],
-            }
-        }),
-        "the human intervention is recorded on the predecessor",
+        successor["source"],
+        json!({ "bc": "projects", "entityId": entity_id.to_string() }),
+        "the successor copies the source reference: {successor}",
     );
-
-    let listed = gql::list_jobs(&client, admin, json!({ "runnerTypes": [runner_type] })).await;
-    let predecessor_row = row_for(&listed, predecessor_id);
-    let successor_row = row_for(&listed, successor_id);
     assert_eq!(
-        predecessor_row["job"]["successorJobId"],
-        json!(successor_id.to_string())
+        successor["parentJobId"], predecessor["parentJobId"],
+        "the successor keeps the predecessor's place in the tree, so a cancellation of the \
+         ancestor still reaches it: {successor}",
     );
+    let listed = gql::list_jobs(&client, admin, json!({ "runnerTypes": [&runner_type] })).await;
+    let successor_row = listed
+        .iter()
+        .find(|row| row["job"]["id"] == json!(successor_id.to_string()))
+        .unwrap_or_else(|| panic!("the successor is listed among its type's jobs: {listed:?}"));
     assert_eq!(
         successor_row["job"]["predecessorJobId"],
-        json!(predecessor_id.to_string())
+        json!(predecessor_id.to_string()),
+        "the chain of manual retries reads from either end: {successor_row}",
     );
-
     let by_source = gql::job_by_source(&client, admin, "projects", entity_id).await;
     assert_eq!(
         by_source["job"]["id"],
@@ -166,16 +295,33 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         "the source lookup answers with the single non-terminal job, successor included",
     );
 
-    let blocked_delete = gql::delete_job(&client, admin, predecessor_id).await;
-    verdict::expect_code_shaped(
-        &blocked_delete,
-        "deleting a predecessor with a live successor",
-    );
-    gql::assert_blocked(
-        &gql::job_view(&client, admin, predecessor_id).await,
-        wire::ACTION_DELETE,
-    );
+    // When: the successor's owner finishes it, the predecessor's affordances change alone
+    producer.finish(successor_id, Uuid::now_v7()).await;
+    let successor_completed = stream::await_delta(
+        &mut successor_watch,
+        JOB_CHANGED,
+        wire::EVT_JOB_COMPLETED,
+        LONG,
+    )
+    .await;
+    delta::projection(&successor_completed, successor_id, "COMPLETED");
+    events
+        .expect_one(wire::FACT_COMPLETED, successor_id, LONG)
+        .await;
 
+    let reopened =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_AFFORDANCES_CHANGED, LONG).await;
+    assert_eq!(
+        delta::event_of(&reopened, wire::EVT_AFFORDANCES_CHANGED, predecessor_id)["causedByJobId"],
+        json!(successor_id.to_string()),
+        "when only the affordances move, the client is told so by its own event",
+    );
+    delta::projection(&reopened, predecessor_id, "FAILED");
+    gql::assert_allowed(&reopened, wire::ACTION_DELETE);
+    gql::assert_blocked(&reopened, wire::ACTION_MANUAL_RETRY);
+    instance.expect_no_trigger(QUIET).await;
+
+    // Then: every conflicting reuse is refused without a trace
     let absorbed = gql::manual_retry_job(
         &client,
         admin,
@@ -186,13 +332,8 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     )
     .await;
     verdict::expect_ack(&absorbed, "an identical redelivery of the intervention");
-    assert_eq!(
-        gql::job(&client, admin, successor_id).await["attemptCount"],
-        json!(1),
-        "an absorbed intervention creates no second successor and no second run",
-    );
 
-    for (intervention, successor_candidate, resolution, what) in [
+    for (intervention, candidate, resolution, what) in [
         (
             intervention_id,
             Uuid::now_v7(),
@@ -209,7 +350,13 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
             Uuid::now_v7(),
             Uuid::now_v7(),
             failed_resolution_id,
-            "a predecessor that already has a non-terminal successor",
+            "a second manual retry of the same failed resolution",
+        ),
+        (
+            Uuid::now_v7(),
+            predecessor_id,
+            failed_resolution_id,
+            "a successor reusing the predecessor's job id",
         ),
     ] {
         let refused = gql::manual_retry_job(
@@ -217,50 +364,51 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
             admin,
             intervention,
             predecessor_id,
-            successor_candidate,
+            candidate,
             resolution,
         )
         .await;
         verdict::expect_code_shaped(&refused, what);
-        let untouched = gql::job(&client, admin, predecessor_id).await;
         assert_eq!(
-            untouched["manualRetry"]["id"],
-            json!(intervention_id.to_string())
+            gql::job(&client, admin, predecessor_id).await["manualRetry"]["id"],
+            json!(intervention_id.to_string()),
+            "{what} leaves the recorded intervention untouched",
         );
     }
+    watch
+        .expect_silence("a refused intervention pushes nothing", QUIET)
+        .await;
+    instance.expect_no_trigger(QUIET).await;
 
-    let completed = JobDeclaration::new(&runner_type);
-    let completed_id = completed.job_id;
-    producer.declare(&completed).await;
-    let completed_trigger = instance.next_trigger(LONG).await;
-    instance.complete_run(&completed_trigger).await;
-    producer.finish(completed_id, Uuid::now_v7()).await;
-    gql::wait_for_status(&client, admin, completed_id, "COMPLETED", LONG).await;
-    let completed_view = gql::job_view(&client, admin, completed_id).await;
-    gql::assert_blocked(&completed_view, wire::ACTION_MANUAL_RETRY);
-    let refused = gql::manual_retry_job(
-        &client,
-        admin,
-        Uuid::now_v7(),
-        completed_id,
-        Uuid::now_v7(),
-        Uuid::parse_str(
-            completed_view["job"]["resolution"]["id"]
-                .as_str()
-                .expect("a completed job carries its resolution id"),
+    durable
+        .assert_all(
+            predecessor_id,
+            &[
+                (db::RUNS_OF_JOB, 1, "no same-job retry run"),
+                (db::RESOLUTIONS_OF_JOB, 1, "one immutable failed resolution"),
+            ],
         )
-        .expect("a resolution id is a UUID"),
-    )
-    .await;
-    verdict::expect_code_shaped(&refused, "retrying a job that did not fail");
+        .await;
+    durable
+        .assert_all(
+            successor_id,
+            &[
+                (db::JOBS_WITH_ID, 1, "one successor job"),
+                (db::RUNS_OF_JOB, 1, "exactly one first run on the successor"),
+            ],
+        )
+        .await;
 
+    durable.close().await;
     events.stop().await;
     fixture.shutdown().await;
 }
 
-fn row_for(rows: &[serde_json::Value], job_id: Uuid) -> serde_json::Value {
-    rows.iter()
-        .find(|row| row["job"]["id"] == json!(job_id.to_string()))
-        .cloned()
-        .unwrap_or_else(|| panic!("job {job_id} must appear in the listing: {rows:?}"))
+fn uuid_at(value: &Value) -> Uuid {
+    Uuid::parse_str(
+        value
+            .as_str()
+            .unwrap_or_else(|| panic!("expected a UUID, got: {value}")),
+    )
+    .expect("a resolution id is a UUID")
 }

@@ -2,11 +2,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::attempts::{AttemptNumber, MaxAttempts};
+use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{
     JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
 };
 use crate::domain::job::resolution::JobFailureCause;
 use crate::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey, StepLabel};
+use crate::domain::ownership::JobOwner;
 use crate::domain::references::{KnownUser, SourceReference};
 use crate::domain::run::failure::RunFailureReport;
 use crate::domain::run::origin::RunOrigin;
@@ -18,6 +20,8 @@ pub struct JobQueued {
     pub job_id: JobId,
     pub runner_type: RunnerTypeKey,
     pub producer: ProducerKey,
+    pub config: Option<RunnerConfig>,
+    pub owner: JobOwner,
     pub parent_job_id: Option<JobId>,
     pub predecessor_job_id: Option<JobId>,
     pub triggered_by: Option<KnownUser>,

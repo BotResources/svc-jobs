@@ -89,6 +89,9 @@ impl Job {
         if runs.iter().filter(|run| !run.is_terminal()).count() > 1 {
             return Err(corrupt("several_non_terminal_runs"));
         }
+        if state.resolution.is_some() && runs.iter().any(|run| !run.is_terminal()) {
+            return Err(corrupt("terminal_job_with_a_live_run"));
+        }
         if let Some(resolution) = &state.resolution
             && let Some(caused_by) = resolution.caused_by_run_id()
             && !runs.iter().any(|run| run.id() == caused_by)

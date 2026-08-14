@@ -1,138 +1,302 @@
 mod support;
 
+use std::time::Duration;
+
 use br_test_harness::SseSubscription;
+use chrono::Utc;
 use serde_json::json;
+use support::db::{self, Durable};
 use support::events::EventLog;
-use support::fixture::JobsFixture;
+use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
-use support::{LONG, QUIET, SHORT, docs, gql, stream, wire};
+use support::{
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, stream,
+    subs, wire,
+};
 use uuid::Uuid;
 
-const JOB_CHANGED: &str = "jobsJobChanged";
-const FLEET_CHANGED: &str = "jobsFleetChanged";
+const BASE_DELAY_SECONDS: u64 = 2;
 
 #[tokio::test]
 async fn a_job_survives_the_loss_of_its_runner_without_administrator_intervention() {
-    let fixture = JobsFixture::start().await;
+    // Given: a job with retry capacity, watched from the list and fleet before it exists
+    let fixture = JobsFixture::start_with(Knobs {
+        retry_base_delay_seconds: BASE_DELAY_SECONDS,
+        ..Knobs::default()
+    })
+    .await;
     let events = EventLog::open(fixture.fabric()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
     let runner_type = wire::unique_runner_type("volatile");
     let producer = Producer::new(fixture.fabric(), "projects");
     let mut lost = FakeRunner::new(fixture.nats(), &runner_type, "instance-lost");
     let mut replacement = FakeRunner::new(fixture.nats(), &runner_type, "instance-replacement");
+    let announced_version = lost.version.clone();
+
+    let mut listing =
+        SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&runner_type)).await;
+    stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
 
     let declaration = JobDeclaration::new(&runner_type).with_max_attempts(3);
     let job_id = declaration.job_id;
     producer.declare(&declaration).await;
     events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
+    delta::assert_active_affordances(&delta::assert_upserted_summary(
+        &stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, LONG).await,
+        job_id,
+        "PENDING",
+    ));
+    stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await;
 
-    let mut job_watch = SseSubscription::open(
-        fixture.url(),
-        admin,
-        &docs::job_changed_subscription(job_id),
-    )
-    .await;
+    let mut job_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
     stream::snapshot(&mut job_watch, JOB_CHANGED, SHORT).await;
-    let mut fleet_watch = SseSubscription::open(
-        fixture.url(),
-        admin,
-        &docs::fleet_changed_subscription(&runner_type),
-    )
-    .await;
-    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    let mut tail = SseSubscription::open(fixture.url(), admin, &subs::log_tail(job_id)).await;
+    stream::snapshot(&mut tail, LOG_TAIL, SHORT).await;
 
+    // When: an instance appears, claims the job and reports its first progress
     lost.connect().await;
-    stream::await_message(
-        &mut fleet_watch,
-        FLEET_CHANGED,
-        "INSTANCE_CONNECTED",
-        |message| message["event"]["kind"] == json!("INSTANCE_CONNECTED"),
-        LONG,
-    )
-    .await;
-
+    stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
     let first = lost.next_trigger(LONG).await;
     let first_run = runner::run_id(&first);
+    let first_dispatch =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_DISPATCHED, LONG).await;
+    assert_eq!(
+        delta::event_of(&first_dispatch, wire::EVT_RUN_DISPATCHED, job_id)["runId"],
+        json!(first_run.to_string())
+    );
     lost.start_run(&first).await;
-    gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
-    let live = gql::fleet_of(&client, admin, &runner_type).await;
-    assert_eq!(live[0]["runnerType"]["isAvailable"], json!(true));
-    assert_eq!(live[0]["runnerType"]["executingJobCount"], json!(1));
+    let started =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_STARTED, LONG).await;
+    delta::projection(&started, job_id, "IN_PROGRESS");
+    delta::assert_active_affordances(&started);
+    lost.start_step(&first, 0, "convert").await;
+    let stepped =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_STEP_STARTED, LONG).await;
+    assert_eq!(
+        delta::event_of(&stepped, wire::EVT_STEP_STARTED, job_id)["stepIndex"],
+        json!(0)
+    );
+    lost.log_line(&first, Some(0), "INFO", "first attempt")
+        .await;
+    delta::log_line(
+        &stream::drain_appended(&mut tail, LOG_TAIL, 1, LONG).await[0],
+        first_run,
+        Some(0),
+    );
+    let executing =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await;
+    delta::assert_instance(
+        &delta::assert_fleet(&executing, &runner_type, 0, 1, 1, 0),
+        "instance-lost",
+        true,
+        &[first_run],
+        &announced_version,
+    );
 
-    lost.disconnect().await;
+    // When: the instance reports a new self-declared status, then dies without a goodbye
+    lost.announce("BUSY").await;
+    let reported =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_STATUS_REPORTED, LONG)
+            .await;
+    let rewritten = delta::fleet_projection(&reported, &runner_type);
+    assert_eq!(
+        rewritten["instances"][0]["reportedStatus"],
+        json!("BUSY"),
+        "a presence rewrite carries the instance's self-reported status: {reported}",
+    );
+    delta::assert_instance(
+        &rewritten,
+        "instance-lost",
+        true,
+        &[first_run],
+        &announced_version,
+    );
 
-    let disconnected = stream::await_message(
-        &mut fleet_watch,
-        FLEET_CHANGED,
-        "INSTANCE_DISCONNECTED",
-        |message| message["event"]["kind"] == json!("INSTANCE_DISCONNECTED"),
-        LONG,
-    )
-    .await;
+    lost.crash().await;
+
+    let disconnected =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;
     assert_eq!(
         disconnected["event"]["instanceKey"],
         json!("instance-lost"),
-        "graceful removal of the presence entry is the disconnection signal",
+        "an evicted presence entry — the fate of a crashed instance, which says no goodbye — is a \
+         disconnection signal in its own right, not only the graceful removal",
     );
-    assert_eq!(disconnected["runnerType"]["isAvailable"], json!(false));
+    let empty_fleet = delta::fleet_projection(&disconnected, &runner_type);
+    assert_eq!(empty_fleet["isAvailable"], json!(false));
+    assert_eq!(empty_fleet["instances"], json!([]));
 
-    stream::await_delta(&mut job_watch, JOB_CHANGED, "JobsRunFailedEvent", LONG).await;
-    let after_loss = gql::job(&client, admin, job_id).await;
-    let orphaned = gql::run_by_id(&after_loss, first_run);
-    assert_eq!(orphaned["status"], json!("FAILED"));
-    assert_eq!(orphaned["failureReport"]["kind"], json!("TRANSIENT"));
+    let run_failed =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
+    let orphaned = delta::event_of(&run_failed, wire::EVT_RUN_FAILED, job_id);
+    assert_eq!(orphaned["runId"], json!(first_run.to_string()));
+    assert_eq!(orphaned["failureKind"], json!("TRANSIENT"));
     assert_eq!(
-        orphaned["failureReport"]["reasonCode"],
-        json!("instance_lost"),
-        "losing an instance fails its runs as transient under the reason the spec names",
+        orphaned["reasonCode"],
+        json!(wire::REASON_INSTANCE_LOST),
+        "losing an instance fails its runs under the reason the contract names",
     );
-    assert_eq!(
-        after_loss["status"],
-        json!("IN_PROGRESS"),
-        "the job survives the loss of its runner",
-    );
-    assert!(!after_loss["nextAttemptAt"].is_null());
+
+    let scheduled =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RETRY_SCHEDULED, LONG).await;
+    let due_at =
+        delta::instant(&delta::event_of(&scheduled, wire::EVT_RETRY_SCHEDULED, job_id)["dueAt"]);
+    let surviving = delta::projection(&scheduled, job_id, "IN_PROGRESS");
+    assert_eq!(delta::instant(&surviving["nextAttemptAt"]), due_at);
+    delta::assert_active_affordances(&scheduled);
+    delta::assert_active_affordances(&delta::assert_upserted_summary(
+        &stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_RETRY_SCHEDULED, LONG).await,
+        job_id,
+        "IN_PROGRESS",
+    ));
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
-    let surviving = gql::job_view(&client, admin, job_id).await;
-    gql::assert_allowed(&surviving, wire::ACTION_CANCEL);
-    gql::assert_blocked(&surviving, wire::ACTION_MANUAL_RETRY);
 
-    let empty = gql::fleet_of(&client, admin, &runner_type).await;
-    assert_eq!(empty[0]["runnerType"]["instances"], json!([]));
-    assert_eq!(empty[0]["runnerType"]["isAvailable"], json!(false));
-    replacement.expect_no_trigger(QUIET).await;
+    // Then: no trigger is produced while the type is unavailable, due time or not
+    let past_due = (due_at - Utc::now())
+        .to_std()
+        .unwrap_or(Duration::from_secs(0))
+        + Duration::from_secs(BASE_DELAY_SECONDS + 2);
+    replacement.expect_no_trigger(past_due).await;
+    assert!(
+        Utc::now() > due_at,
+        "the silence window must outlast the recorded due time to prove anything",
+    );
     assert_eq!(
         gql::status_of(&client, admin, job_id).await,
         "IN_PROGRESS",
         "no administrator touched this job",
     );
 
+    // When: a replacement instance appears
     replacement.connect().await;
+    stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
     let second = replacement.next_trigger(LONG).await;
+    let second_run = runner::run_id(&second);
     assert_eq!(runner::attempt_number(&second), 2);
     assert_eq!(runner::job_id(&second), job_id);
-    replacement.start_run(&second).await;
-    events
-        .expect_exactly(wire::FACT_STARTED, job_id, 1, QUIET)
-        .await;
-
-    let recovered = gql::job(&client, admin, job_id).await;
-    let retried = gql::run_by_id(&recovered, runner::run_id(&second));
-    assert_eq!(retried["origin"], json!("AUTOMATIC_RETRY"));
+    assert_ne!(
+        second_run, first_run,
+        "a retry is a new run, never a rewrite"
+    );
+    let retry_dispatch =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_DISPATCHED, LONG).await;
     assert_eq!(
-        retried["instance"]["instanceKey"],
+        delta::event_of(&retry_dispatch, wire::EVT_RUN_DISPATCHED, job_id)["attemptNumber"],
+        json!(2)
+    );
+    replacement.start_run(&second).await;
+    let retry_started =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_STARTED, LONG).await;
+    assert_eq!(
+        delta::event_of(&retry_started, wire::EVT_RUN_STARTED, job_id)["instanceKey"],
         json!("instance-replacement")
     );
-    assert_eq!(recovered["attemptCount"], json!(2));
+    let retry_executing =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await;
+    delta::assert_instance(
+        &delta::assert_fleet(&retry_executing, &runner_type, 0, 1, 1, 0),
+        "instance-replacement",
+        true,
+        &[second_run],
+        &announced_version,
+    );
 
+    replacement
+        .log_line(&second, None, "INFO", "second attempt")
+        .await;
+    delta::log_line(
+        &stream::drain_appended(&mut tail, LOG_TAIL, 1, LONG).await[0],
+        second_run,
+        None,
+    );
     replacement.complete_run(&second).await;
+    let completed =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, LONG).await;
+    delta::projection(&completed, job_id, "IN_PROGRESS");
+    let stopped =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_STOPPED_EXECUTING, LONG).await;
+    delta::assert_instance(
+        &delta::assert_fleet(&stopped, &runner_type, 0, 0, 0, 1),
+        "instance-replacement",
+        false,
+        &[],
+        &announced_version,
+    );
+
+    // When: the replacement leaves gracefully, carrying no run any more
+    replacement.disconnect().await;
+    let gracefully_gone =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;
+    assert_eq!(
+        gracefully_gone["event"]["instanceKey"],
+        json!("instance-replacement"),
+        "graceful removal of the presence entry is the other disconnection signal",
+    );
+    delta::assert_fleet(&gracefully_gone, &runner_type, 0, 0, 0, 0);
+    stream::expect_no_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_FAILED, QUIET).await;
+    events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
+
+    // When: the owner finishes the job
     producer.finish(job_id, Uuid::now_v7()).await;
-    gql::wait_for_status(&client, admin, job_id, "COMPLETED", LONG).await;
+    let job_completed =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
+    let final_projection = delta::projection(&job_completed, job_id, "COMPLETED");
+    assert_eq!(
+        final_projection["runs"].as_array().map(Vec::len),
+        Some(2),
+        "the final projection holds both attempts: {job_completed}",
+    );
+    delta::assert_completed_affordances(&job_completed);
     events.expect_one(wire::FACT_COMPLETED, job_id, LONG).await;
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
 
+    let logs = gql::logs_of(&client, admin, job_id).await;
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line["runId"] == json!(first_run.to_string()))
+            .count(),
+        1,
+        "each attempt keeps its own log lines: {logs:?}",
+    );
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line["runId"] == json!(second_run.to_string()))
+            .count(),
+        1,
+        "a log is associated only with the run that produced it: {logs:?}",
+    );
+
+    for run in [first_run, second_run] {
+        let of_run = gql::logs_of_run(&client, admin, job_id, run).await;
+        assert_eq!(
+            of_run.len(),
+            1,
+            "reading the log by run returns that attempt's lines alone, never the job's union: \
+             {of_run:?}",
+        );
+        assert_eq!(of_run[0]["runId"], json!(run.to_string()));
+    }
+
+    durable
+        .assert_all(
+            job_id,
+            &[
+                (db::JOBS_WITH_ID, 1, "one job"),
+                (db::RUNS_OF_JOB, 2, "two runs"),
+                (db::RETRY_SCHEDULES_OF_JOB, 1, "one recorded retry schedule"),
+                (db::LOGS_OF_JOB, 2, "one log line per attempt"),
+            ],
+        )
+        .await;
+
+    durable.close().await;
     events.stop().await;
     fixture.shutdown().await;
 }

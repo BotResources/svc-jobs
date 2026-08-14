@@ -38,11 +38,19 @@ pub fn observe_presence(
                 runner_type_id: command.runner_type_id,
                 runner_type: command.runner_type.clone(),
             }),
-            connected(&command),
+            connected(
+                command.runner_type_id,
+                command.runner_type.clone(),
+                &command,
+            ),
         ]));
     };
     let Some(live) = runner_type.instance(&command.instance_key) else {
-        return Ok(CommandResult::from_event(connected(&command)));
+        return Ok(CommandResult::from_event(connected(
+            runner_type.id(),
+            runner_type.key().clone(),
+            &command,
+        )));
     };
     if live.reports_the_same_as(&command.version, &command.reported_status) {
         return Ok(CommandResult::nothing_happened(
@@ -85,10 +93,14 @@ pub fn observe_loss(
     )))
 }
 
-fn connected(command: &ObservePresence) -> FleetEvent {
+fn connected(
+    runner_type_id: RunnerTypeId,
+    runner_type: RunnerTypeKey,
+    command: &ObservePresence,
+) -> FleetEvent {
     FleetEvent::InstanceConnected(InstanceConnected {
-        runner_type_id: command.runner_type_id,
-        runner_type: command.runner_type.clone(),
+        runner_type_id,
+        runner_type,
         instance_key: command.instance_key.clone(),
         session_id: command.session_id,
         version: command.version.clone(),
@@ -163,14 +175,17 @@ mod tests {
     fn a_new_instance_of_a_known_type_only_connects() {
         // Given: a known runner type with no live instance left
         let known = fleet(vec![]);
-        // When: an instance announces itself
+        // When: an instance announces itself, carrying an id the caller minted before the lookup
         let result = observe_presence(Some(&known), presence("idle")).unwrap();
-        // Then: only the connection is recorded — the type is already registered
+        // Then: the connection is filed under the type already registered, never under that id
         assert_eq!(result.events.len(), 1);
-        assert!(matches!(
-            result.events.first(),
-            Some(FleetEvent::InstanceConnected(_))
-        ));
+        match result.events.first() {
+            Some(FleetEvent::InstanceConnected(fact)) => {
+                assert_eq!(fact.runner_type_id, known.id());
+                assert_eq!(&fact.runner_type, known.key());
+            }
+            other => panic!("expected a connection, got {other:?}"),
+        }
     }
 
     #[test]

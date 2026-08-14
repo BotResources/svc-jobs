@@ -44,4 +44,5 @@ br-core-auth.workspace = true
 br-core-integration.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
 uuid.workspace = true

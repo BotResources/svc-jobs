@@ -1,4 +1,5 @@
 use crate::domain::actions::{Affordance, Availability};
+use crate::domain::ids::JobId;
 use crate::domain::job::Job;
 use crate::domain::job::status::JobStatus;
 use crate::error::JobsError;
@@ -7,25 +8,50 @@ pub const CANCEL: &str = "cancel";
 pub const MANUAL_RETRY: &str = "manual_retry";
 pub const DELETE: &str = "delete";
 
+pub fn guard_parent_admits_work(
+    parent_job_id: JobId,
+    parent: Option<&Job>,
+) -> Result<&Job, JobsError> {
+    let parent = parent
+        .filter(|candidate| candidate.id() == parent_job_id)
+        .ok_or(JobsError::ParentJobUnknown {
+            parent_job_id: parent_job_id.as_uuid(),
+        })?;
+    if parent.is_deleted() {
+        return Err(JobsError::ParentJobDeleted {
+            parent_job_id: parent_job_id.as_uuid(),
+        });
+    }
+    if parent.is_terminal() {
+        return Err(JobsError::ParentJobTerminal {
+            parent_job_id: parent_job_id.as_uuid(),
+        });
+    }
+    Ok(parent)
+}
+
 impl Job {
     pub fn guard_cancel(&self) -> Result<(), JobsError> {
         self.guard_not_deleted()?;
         self.guard_not_terminal()
     }
 
-    pub fn guard_manual_retry(&self) -> Result<(), JobsError> {
+    pub fn guard_manual_retry(&self, parent: Option<&Job>) -> Result<(), JobsError> {
         self.guard_not_deleted()?;
         if self.status() != JobStatus::Failed {
             return Err(JobsError::JobNotFailed {
                 status: self.status().as_db_str(),
             });
         }
-        match self.manual_retry() {
-            Some(record) => Err(JobsError::ManualRetryAlreadyStarted {
+        if let Some(record) = self.manual_retry() {
+            return Err(JobsError::ManualRetryAlreadyStarted {
                 successor_job_id: record.successor_job_id().as_uuid(),
-            }),
-            None => Ok(()),
+            });
         }
+        if let Some(parent_job_id) = self.parent_job_id() {
+            guard_parent_admits_work(parent_job_id, parent)?;
+        }
+        Ok(())
     }
 
     pub fn guard_delete(&self) -> Result<(), JobsError> {
@@ -43,18 +69,18 @@ impl Job {
         Availability::from_guard(self.guard_cancel())
     }
 
-    pub fn can_manual_retry(&self) -> Availability {
-        Availability::from_guard(self.guard_manual_retry())
+    pub fn can_manual_retry(&self, parent: Option<&Job>) -> Availability {
+        Availability::from_guard(self.guard_manual_retry(parent))
     }
 
     pub fn can_delete(&self) -> Availability {
         Availability::from_guard(self.guard_delete())
     }
 
-    pub fn affordances(&self) -> Vec<Affordance> {
+    pub fn affordances(&self, parent: Option<&Job>) -> Vec<Affordance> {
         vec![
             Affordance::new(CANCEL, self.can_cancel()),
-            Affordance::new(MANUAL_RETRY, self.can_manual_retry()),
+            Affordance::new(MANUAL_RETRY, self.can_manual_retry(parent)),
             Affordance::new(DELETE, self.can_delete()),
         ]
     }
@@ -72,6 +98,7 @@ mod tests {
         JobBuilder::new()
             .with_run(
                 RunBuilder::new(1)
+                    .started(ts(5))
                     .failed(ts(20), RunFailureKind::Permanent)
                     .build(),
             )
@@ -95,7 +122,10 @@ mod tests {
         // When: the backend computes what may be done to it
         // Then: cancel is open, the terminal-only actions are blocked with their codes
         assert_eq!(job.can_cancel(), Availability::Available);
-        assert_eq!(job.can_manual_retry().reason_code(), Some("job_not_failed"));
+        assert_eq!(
+            job.can_manual_retry(None).reason_code(),
+            Some("job_not_failed")
+        );
         assert_eq!(job.can_delete().reason_code(), Some("job_not_terminal"));
     }
 
@@ -104,7 +134,7 @@ mod tests {
         // Given: a job that failed and was never retried
         let job = failed_job().build();
         // When/Then: the terminal actions open and cancel closes
-        assert_eq!(job.can_manual_retry(), Availability::Available);
+        assert_eq!(job.can_manual_retry(None), Availability::Available);
         assert_eq!(job.can_delete(), Availability::Available);
         assert_eq!(job.can_cancel().reason_code(), Some("job_already_terminal"));
     }
@@ -116,12 +146,43 @@ mod tests {
         let job = failed_job().manually_retried_by(successor, false).build();
         // When/Then: the second retry is blocked, naming the successor in params
         assert_eq!(
-            job.can_manual_retry(),
+            job.can_manual_retry(None),
             Availability::Blocked {
                 reason_code: "manual_retry_already_started".to_owned(),
                 params: json!({ "successorJobId": successor.as_uuid() })
             }
         );
+    }
+
+    #[test]
+    fn a_failed_child_may_be_retried_while_the_parent_that_owns_it_still_runs() {
+        // Given: a failed child job whose parent is still executing
+        let parent = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(5)).build())
+            .build();
+        let child = failed_job().with_parent(parent.id()).build();
+        // When/Then: the retry is open, judged against the parent that owns the child
+        assert_eq!(
+            child.can_manual_retry(Some(&parent)),
+            Availability::Available
+        );
+    }
+
+    #[test]
+    fn a_failed_child_is_never_retried_under_a_parent_that_has_finished() {
+        // Given: a failed child whose parent failed after it
+        let parent = failed_job().build();
+        let child = failed_job().with_parent(parent.id()).build();
+        // When: the affordance and the command guard are both consulted
+        let verdict = child.can_manual_retry(Some(&parent));
+        // Then: both refuse — a successor under a finished parent could never be resolved
+        assert_eq!(
+            child.guard_manual_retry(Some(&parent)),
+            Err(JobsError::ParentJobTerminal {
+                parent_job_id: parent.id().as_uuid()
+            })
+        );
+        assert_eq!(verdict.reason_code(), Some("parent_job_terminal"));
     }
 
     #[test]
@@ -152,7 +213,7 @@ mod tests {
         // Given: an already soft-deleted job
         let job = failed_job().deleted(ts(90)).build();
         // When: the affordance surface is projected
-        let affordances = job.affordances();
+        let affordances = job.affordances(None);
         // Then: every action is blocked, each with its own code
         assert_eq!(
             affordances
@@ -173,7 +234,7 @@ mod tests {
         let job = JobBuilder::new().build();
         // When: the surface is projected for a snapshot or an event
         let actions: Vec<&str> = job
-            .affordances()
+            .affordances(None)
             .iter()
             .map(|entry| entry.action())
             .collect();
@@ -188,9 +249,6 @@ mod tests {
         // When: the guard and the affordance are both consulted
         let refusal = job.guard_delete().unwrap_err();
         // Then: the client sees exactly the code the mutation would return
-        assert_eq!(
-            job.can_delete().reason_code(),
-            Some(refusal.code().as_str())
-        );
+        assert_eq!(job.can_delete().reason_code(), Some(refusal.code()));
     }
 }

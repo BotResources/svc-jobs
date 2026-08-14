@@ -1,101 +1,198 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
+use serde_json::error::Category;
 use serde_json::{Value, json};
-use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobsError {
-    #[error("not_uuid_v7")]
-    NotUuidV7 { field: &'static str, value: Uuid },
-    #[error("blank_value")]
-    BlankValue { field: &'static str },
-    #[error("invalid_segment")]
-    InvalidSegment { field: &'static str, value: String },
-    #[error("value_too_long")]
+    NotUuidV7 {
+        field: &'static str,
+        value: Uuid,
+    },
+    BlankValue {
+        field: &'static str,
+    },
+    InvalidSegment {
+        field: &'static str,
+        value: String,
+    },
     ValueTooLong {
         field: &'static str,
         length: usize,
         maximum: usize,
     },
-    #[error("invalid_jitter")]
     InvalidJitter,
-    #[error("invalid_duration")]
-    InvalidDuration { field: &'static str },
-    #[error("job_id_conflict")]
-    JobIdConflict { job_id: Uuid },
-    #[error("source_already_active")]
-    SourceAlreadyActive { active_job_id: Uuid },
-    #[error("parent_job_unknown")]
-    ParentJobUnknown { parent_job_id: Uuid },
-    #[error("parent_job_terminal")]
-    ParentJobTerminal { parent_job_id: Uuid },
-    #[error("parent_job_deleted")]
-    ParentJobDeleted { parent_job_id: Uuid },
-    #[error("self_reference")]
-    SelfReference { field: &'static str },
-    #[error("max_attempts_above_ceiling")]
-    MaxAttemptsAboveCeiling { requested: u32, ceiling: u32 },
-    #[error("job_already_terminal")]
-    JobAlreadyTerminal { status: &'static str },
-    #[error("job_deleted")]
+    InvalidDuration {
+        field: &'static str,
+    },
+    NotAJsonObject {
+        field: &'static str,
+    },
+    JobIdConflict {
+        job_id: Uuid,
+    },
+    SourceAlreadyActive {
+        active_job_id: Uuid,
+    },
+    ParentJobUnknown {
+        parent_job_id: Uuid,
+    },
+    ParentJobTerminal {
+        parent_job_id: Uuid,
+    },
+    ParentJobDeleted {
+        parent_job_id: Uuid,
+    },
+    SelfReference {
+        field: &'static str,
+    },
+    MaxAttemptsAboveCeiling {
+        requested: u32,
+        ceiling: u32,
+    },
+    JobAlreadyTerminal {
+        status: &'static str,
+    },
     JobDeleted,
-    #[error("job_not_terminal")]
-    JobNotTerminal { status: &'static str },
-    #[error("job_already_deleted")]
+    JobNotTerminal {
+        status: &'static str,
+    },
     JobAlreadyDeleted,
-    #[error("job_not_failed")]
-    JobNotFailed { status: &'static str },
-    #[error("job_not_in_progress")]
-    JobNotInProgress { status: &'static str },
-    #[error("not_owner")]
+    JobNotFailed {
+        status: &'static str,
+    },
+    JobNotInProgress {
+        status: &'static str,
+    },
     NotOwner,
-    #[error("successor_still_active")]
-    SuccessorStillActive { successor_job_id: Uuid },
-    #[error("manual_retry_already_started")]
-    ManualRetryAlreadyStarted { successor_job_id: Uuid },
-    #[error("manual_retry_conflict")]
-    ManualRetryConflict { successor_job_id: Uuid },
-    #[error("stale_failed_resolution")]
-    StaleFailedResolution { current_resolution_id: Uuid },
-    #[error("job_still_active")]
+    SuccessorStillActive {
+        successor_job_id: Uuid,
+    },
+    ManualRetryAlreadyStarted {
+        successor_job_id: Uuid,
+    },
+    ManualRetryConflict {
+        successor_job_id: Uuid,
+    },
+    StaleFailedResolution {
+        current_resolution_id: Uuid,
+    },
     JobStillActive,
-    #[error("inactivity_timeout_not_reached")]
-    InactivityTimeoutNotReached { idle_since: DateTime<Utc> },
-    #[error("run_not_found")]
-    RunNotFound { run_id: Uuid },
-    #[error("run_already_in_flight")]
-    RunAlreadyInFlight { run_id: Uuid },
-    #[error("run_within_max_duration")]
-    RunWithinMaxDuration { run_id: Uuid },
-    #[error("retry_budget_exhausted")]
-    RetryBudgetExhausted { attempts: u32, max_attempts: u32 },
-    #[error("retry_not_scheduled")]
+    InactivityTimeoutNotReached {
+        idle_since: DateTime<Utc>,
+    },
+    RunNotFound {
+        run_id: Uuid,
+    },
+    RunAlreadyInFlight {
+        run_id: Uuid,
+    },
+    RunNotStarted {
+        run_id: Uuid,
+    },
+    RunWithinMaxDuration {
+        run_id: Uuid,
+    },
+    RunnerTypeMismatch {
+        expected: String,
+        claimed: String,
+    },
+    RunnerTypeUnavailable {
+        runner_type: String,
+    },
+    RetryBudgetExhausted {
+        attempts: u32,
+        max_attempts: u32,
+    },
     RetryNotScheduled,
-    #[error("retry_not_due")]
-    RetryNotDue { due_at: DateTime<Utc> },
-    #[error("empty_plan")]
+    RetryNotDue {
+        due_at: DateTime<Utc>,
+    },
     EmptyPlan,
-    #[error("duplicate_plan_step_index")]
-    DuplicatePlanStepIndex { step_index: u32 },
-    #[error("instance_not_live")]
-    InstanceNotLive { instance_key: String },
-    #[error("corrupt_state")]
-    CorruptState { reason_code: &'static str },
-    #[error("unknown_enum_value")]
-    UnknownEnumValue { field: &'static str, value: String },
-    #[error("serialization_failed")]
-    Serialization { detail: String },
+    DuplicatePlanStepIndex {
+        step_index: u32,
+    },
+    InstanceNotLive {
+        instance_key: String,
+    },
+    CorruptState {
+        reason_code: &'static str,
+    },
+    UnknownEnumValue {
+        field: &'static str,
+        value: String,
+    },
+    Serialization {
+        category: &'static str,
+        line: usize,
+        column: usize,
+    },
 }
 
+impl fmt::Display for JobsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl std::error::Error for JobsError {}
+
 impl JobsError {
-    pub fn code(&self) -> String {
-        self.to_string()
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotUuidV7 { .. } => "not_uuid_v7",
+            Self::BlankValue { .. } => "blank_value",
+            Self::InvalidSegment { .. } => "invalid_segment",
+            Self::ValueTooLong { .. } => "value_too_long",
+            Self::InvalidJitter => "invalid_jitter",
+            Self::InvalidDuration { .. } => "invalid_duration",
+            Self::NotAJsonObject { .. } => "not_a_json_object",
+            Self::JobIdConflict { .. } => "job_id_conflict",
+            Self::SourceAlreadyActive { .. } => "source_already_active",
+            Self::ParentJobUnknown { .. } => "parent_job_unknown",
+            Self::ParentJobTerminal { .. } => "parent_job_terminal",
+            Self::ParentJobDeleted { .. } => "parent_job_deleted",
+            Self::SelfReference { .. } => "self_reference",
+            Self::MaxAttemptsAboveCeiling { .. } => "max_attempts_above_ceiling",
+            Self::JobAlreadyTerminal { .. } => "job_already_terminal",
+            Self::JobDeleted => "job_deleted",
+            Self::JobNotTerminal { .. } => "job_not_terminal",
+            Self::JobAlreadyDeleted => "job_already_deleted",
+            Self::JobNotFailed { .. } => "job_not_failed",
+            Self::JobNotInProgress { .. } => "job_not_in_progress",
+            Self::NotOwner => "not_owner",
+            Self::SuccessorStillActive { .. } => "successor_still_active",
+            Self::ManualRetryAlreadyStarted { .. } => "manual_retry_already_started",
+            Self::ManualRetryConflict { .. } => "manual_retry_conflict",
+            Self::StaleFailedResolution { .. } => "stale_failed_resolution",
+            Self::JobStillActive => "job_still_active",
+            Self::InactivityTimeoutNotReached { .. } => "inactivity_timeout_not_reached",
+            Self::RunNotFound { .. } => "run_not_found",
+            Self::RunAlreadyInFlight { .. } => "run_already_in_flight",
+            Self::RunNotStarted { .. } => "run_not_started",
+            Self::RunWithinMaxDuration { .. } => "run_within_max_duration",
+            Self::RunnerTypeMismatch { .. } => "runner_type_mismatch",
+            Self::RunnerTypeUnavailable { .. } => "runner_type_unavailable",
+            Self::RetryBudgetExhausted { .. } => "retry_budget_exhausted",
+            Self::RetryNotScheduled => "retry_not_scheduled",
+            Self::RetryNotDue { .. } => "retry_not_due",
+            Self::EmptyPlan => "empty_plan",
+            Self::DuplicatePlanStepIndex { .. } => "duplicate_plan_step_index",
+            Self::InstanceNotLive { .. } => "instance_not_live",
+            Self::CorruptState { .. } => "corrupt_state",
+            Self::UnknownEnumValue { .. } => "unknown_enum_value",
+            Self::Serialization { .. } => "serialization_failed",
+        }
     }
 
     pub fn params(&self) -> Value {
         match self {
             Self::NotUuidV7 { field, value } => json!({ "field": field, "value": value }),
-            Self::BlankValue { field } | Self::InvalidDuration { field } => {
+            Self::BlankValue { field }
+            | Self::InvalidDuration { field }
+            | Self::NotAJsonObject { field } => {
                 json!({ "field": field })
             }
             Self::InvalidSegment { field, value } => json!({ "field": field, "value": value }),
@@ -135,7 +232,12 @@ impl JobsError {
             Self::InactivityTimeoutNotReached { idle_since } => json!({ "idleSince": idle_since }),
             Self::RunNotFound { run_id }
             | Self::RunAlreadyInFlight { run_id }
+            | Self::RunNotStarted { run_id }
             | Self::RunWithinMaxDuration { run_id } => json!({ "runId": run_id }),
+            Self::RunnerTypeMismatch { expected, claimed } => {
+                json!({ "expected": expected, "claimed": claimed })
+            }
+            Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
             Self::RetryBudgetExhausted {
                 attempts,
                 max_attempts,
@@ -145,7 +247,11 @@ impl JobsError {
             Self::InstanceNotLive { instance_key } => json!({ "instanceKey": instance_key }),
             Self::CorruptState { reason_code } => json!({ "reasonCode": reason_code }),
             Self::UnknownEnumValue { field, value } => json!({ "field": field, "value": value }),
-            Self::Serialization { detail } => json!({ "detail": detail }),
+            Self::Serialization {
+                category,
+                line,
+                column,
+            } => json!({ "category": category, "line": line, "column": column }),
         }
     }
 }
@@ -153,35 +259,17 @@ impl JobsError {
 impl From<serde_json::Error> for JobsError {
     fn from(error: serde_json::Error) -> Self {
         Self::Serialization {
-            detail: error.to_string(),
+            category: match error.classify() {
+                Category::Io => "io",
+                Category::Syntax => "syntax",
+                Category::Data => "data",
+                Category::Eof => "eof",
+            },
+            line: error.line(),
+            column: error.column(),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_code_is_the_stable_key_never_a_sentence() {
-        // Given: a refusal carrying structured params
-        let error = JobsError::RetryBudgetExhausted {
-            attempts: 3,
-            max_attempts: 3,
-        };
-        // When: the edge asks for its code and params
-        // Then: the code is a snake_case key and the data lives in params
-        assert_eq!(error.code(), "retry_budget_exhausted");
-        assert_eq!(error.params(), json!({ "attempts": 3, "maxAttempts": 3 }));
-    }
-
-    #[test]
-    fn params_never_repeat_the_code() {
-        // Given: an error whose params identify the offending aggregate
-        let job_id = Uuid::from_u128(7);
-        let error = JobsError::JobIdConflict { job_id };
-        // When/Then: params carry the id, the code stays free of interpolation
-        assert_eq!(error.code(), "job_id_conflict");
-        assert_eq!(error.params(), json!({ "jobId": job_id }));
-    }
-}
+mod tests;

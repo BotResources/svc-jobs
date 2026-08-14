@@ -22,7 +22,7 @@ impl Jitter {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServiceLimits {
-    pub max_attempts_ceiling: u32,
+    pub max_attempts_ceiling: MaxAttempts,
     pub default_max_attempts: MaxAttempts,
     pub max_run_duration: TimeDelta,
     pub inactivity_timeout: TimeDelta,
@@ -31,7 +31,7 @@ pub struct ServiceLimits {
 impl Default for ServiceLimits {
     fn default() -> Self {
         Self {
-            max_attempts_ceiling: 10,
+            max_attempts_ceiling: MaxAttempts::new(10).expect("ten is a positive attempt budget"),
             default_max_attempts: MaxAttempts::new(3).expect("three is a positive attempt budget"),
             max_run_duration: TimeDelta::hours(72),
             inactivity_timeout: TimeDelta::hours(24),
@@ -41,7 +41,9 @@ impl Default for ServiceLimits {
 
 impl ServiceLimits {
     pub fn budget(&self, declared: Option<MaxAttempts>) -> MaxAttempts {
-        declared.unwrap_or(self.default_max_attempts)
+        declared
+            .unwrap_or(self.default_max_attempts)
+            .min(self.max_attempts_ceiling)
     }
 }
 

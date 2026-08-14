@@ -18,6 +18,7 @@ pub async fn snapshot(watch: &mut SseSubscription, field: &str, timeout: Duratio
     message
 }
 
+#[must_use]
 pub async fn await_delta(
     watch: &mut SseSubscription,
     field: &str,
@@ -99,6 +100,7 @@ pub async fn expect_no_delta(
     }
 }
 
+#[must_use]
 pub async fn drain_appended(
     watch: &mut SseSubscription,
     field: &str,
@@ -123,4 +125,38 @@ pub async fn drain_appended(
         collected.push(event[field].clone());
     }
     collected
+}
+
+pub async fn await_fleet_event(
+    watch: &mut SseSubscription,
+    kind: &str,
+    timeout: Duration,
+) -> Value {
+    await_message(
+        watch,
+        super::FLEET_CHANGED,
+        kind,
+        |message| message["event"]["kind"] == json!(kind),
+        timeout,
+    )
+    .await
+}
+
+pub async fn expect_no_fleet_event(watch: &mut SseSubscription, kind: &str, quiet: Duration) {
+    let deadline = tokio::time::Instant::now() + quiet;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        let Some(event) = watch.next_event(remaining).await else {
+            return;
+        };
+        let message = event[super::FLEET_CHANGED].clone();
+        assert_ne!(
+            message["event"]["kind"],
+            json!(kind),
+            "no {kind} fleet event may reach a subscriber here: {message}"
+        );
+    }
 }

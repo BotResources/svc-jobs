@@ -39,25 +39,7 @@ const SUBJECTS: &[(&str, &str)] = &[
     ("KV_RUNNER_TYPE_INSTANCE_KEY", KV_RUNNER_TYPE_INSTANCE_KEY),
 ];
 
-fn rendered_command(coords: &CommandCoords) -> String {
-    format!(
-        "integration.cmd.{}.{}.{}.v{}",
-        coords.receiver.as_str(),
-        coords.aggregate.as_str(),
-        coords.verb.as_str(),
-        coords.version
-    )
-}
-
-fn rendered_event(coords: &EventCoords) -> String {
-    format!(
-        "integration.evt.{}.{}.{}.v{}",
-        coords.producer.as_str(),
-        coords.aggregate.as_str(),
-        coords.fact.as_str(),
-        coords.version
-    )
-}
+use br_util_nats_fabric::{command_subject as rendered_command, event_subject as rendered_event};
 
 #[test]
 fn every_coordinate_renders_its_declared_subject() {

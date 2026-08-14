@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 pub const JOB_DETAIL: &str = r#"
 query($id: UUID!) {
   jobsJob(id: $id) {
@@ -32,8 +30,8 @@ query($id: UUID!) {
 "#;
 
 pub const JOBS_LIST: &str = r#"
-query($filter: JobsJobFilterInput, $first: Int!) {
-  jobs(filter: $filter, first: $first) {
+query($filter: JobsJobFilterInput, $first: Int!, $after: String) {
+  jobs(filter: $filter, first: $first, after: $after) {
     edges {
       cursor
       node {
@@ -53,7 +51,10 @@ query($filter: JobsJobFilterInput, $first: Int!) {
 pub const JOB_BY_SOURCE: &str = r#"
 query($bc: String!, $entityId: UUID!) {
   jobsJobBySource(sourceBc: $bc, sourceEntityId: $entityId) {
-    job { id status isDeleted predecessorJobId }
+    job {
+      id status attemptCount activeRunId runnerType producer isDeleted predecessorJobId
+      source { bc entityId }
+    }
     affordances { action allowed reasonCode params }
   }
 }
@@ -92,70 +93,3 @@ mutation($input: JobsManualRetryJobInput!) { jobsManualRetryJob(input: $input) {
 pub const DELETE_JOB: &str = r#"
 mutation($input: JobsDeleteJobInput!) { jobsDeleteJob(input: $input) { success } }
 "#;
-
-pub fn job_changed_subscription(job_id: Uuid) -> String {
-    format!(
-        r#"subscription {{
-  jobsJobChanged(jobId: "{job_id}") {{
-    __typename
-    ... on JobsJobSnapshot {{
-      cursor
-      job {{ id status attemptCount activeRunId isDeleted runs {{ id status attemptNumber }} }}
-      affordances {{ action allowed reasonCode params }}
-    }}
-    ... on JobsJobDelta {{
-      cursor
-      event {{ __typename id jobId occurredAt }}
-      job {{ id status attemptCount activeRunId isDeleted runs {{ id status attemptNumber }} }}
-      affordances {{ action allowed reasonCode params }}
-    }}
-  }}
-}}"#
-    )
-}
-
-pub fn jobs_changed_subscription(runner_type: &str) -> String {
-    format!(
-        r#"subscription {{
-  jobsChanged(filter: {{ runnerTypes: ["{runner_type}"] }}, window: {{ first: 50 }}) {{
-    __typename
-    ... on JobsJobsSnapshot {{ cursor jobs {{ edges {{ node {{ job {{ id status }} }} }} }} }}
-    ... on JobsJobsDelta {{
-      cursor
-      event {{ __typename id jobId occurredAt }}
-      upserted {{ job {{ id status attemptCount }} affordances {{ action allowed reasonCode }} }}
-      removedIds
-    }}
-  }}
-}}"#
-    )
-}
-
-pub fn log_tail_subscription(job_id: Uuid) -> String {
-    format!(
-        r#"subscription {{
-  jobsJobLogTail(jobId: "{job_id}", window: {{ last: 200 }}) {{
-    __typename
-    ... on JobsJobLogSnapshot {{ cursor logs {{ edges {{ node {{ id runId stepIndex level message }} }} }} }}
-    ... on JobsRunLogAppended {{ cursor log {{ id runId stepIndex level message }} }}
-  }}
-}}"#
-    )
-}
-
-pub fn fleet_changed_subscription(runner_type: &str) -> String {
-    format!(
-        r#"subscription {{
-  jobsFleetChanged(runnerType: "{runner_type}") {{
-    __typename
-    ... on JobsFleetSnapshot {{ cursor runnerTypes {{ runnerType {{ typeKey isAvailable idleInstanceCount }} }} }}
-    ... on JobsRunnerTypeDelta {{
-      cursor
-      event {{ id kind occurredAt runnerType instanceKey jobId runId }}
-      runnerType {{ typeKey isAvailable busyInstanceCount idleInstanceCount waitingJobCount executingJobCount }}
-      affordances {{ action allowed reasonCode }}
-    }}
-  }}
-}}"#
-    )
-}

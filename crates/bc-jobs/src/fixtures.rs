@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::attempts::{AttemptNumber, MaxAttempts};
+use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{
     JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId, SourceEntityId,
 };
@@ -126,6 +127,11 @@ impl RunBuilder {
         self
     }
 
+    pub fn cancelled(mut self, at: DateTime<Utc>) -> Self {
+        self.state.terminal = Some(RunTerminal::cancelled(at));
+        self
+    }
+
     pub fn failed(self, at: DateTime<Utc>, kind: RunFailureKind) -> Self {
         self.failed_with(at, report(kind))
     }
@@ -194,6 +200,11 @@ impl JobBuilder {
 
     pub fn with_id(mut self, id: JobId) -> Self {
         self.state.id = id;
+        self
+    }
+
+    pub fn with_config(mut self, config: RunnerConfig) -> Self {
+        self.state.config = Some(config);
         self
     }
 

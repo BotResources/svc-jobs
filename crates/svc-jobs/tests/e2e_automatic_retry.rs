@@ -3,21 +3,23 @@ mod support;
 use std::time::Duration;
 
 use br_test_harness::SseSubscription;
-use chrono::{DateTime, Utc};
-use serde_json::{Value, json};
+use chrono::Utc;
+use serde_json::json;
+use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
-use support::{LONG, QUIET, SHORT, docs, gql, stream, wire};
-use uuid::Uuid;
+use support::{
+    FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, gql, stream, subs, wire,
+};
 
-const JOB_CHANGED: &str = "jobsJobChanged";
 const BASE_DELAY_SECONDS: i64 = 2;
-const HINT_SECONDS: i64 = 6;
+const HINT_SECONDS: i64 = 8;
 
 #[tokio::test]
 async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
+    // Given: a job with exactly two permitted attempts, its first run started
     let fixture = JobsFixture::start_with(Knobs {
         retry_base_delay_seconds: BASE_DELAY_SECONDS as u64,
         max_attempts_ceiling: 3,
@@ -25,6 +27,7 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
     })
     .await;
     let events = EventLog::open(fixture.fabric()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
     let runner_type = wire::unique_runner_type("flaky");
@@ -32,57 +35,94 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
     let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     instance.connect().await;
 
-    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(3);
+    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(2);
     let job_id = declaration.job_id;
     producer.declare(&declaration).await;
     events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
 
-    let mut watch = SseSubscription::open(
-        fixture.url(),
-        admin,
-        &docs::job_changed_subscription(job_id),
-    )
-    .await;
-    stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
-
     let first = instance.next_trigger(LONG).await;
     let first_run = runner::run_id(&first);
     instance.start_run(&first).await;
+    gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
+
+    let mut watch = SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
+    stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    let mut listing =
+        SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&runner_type)).await;
+    stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+
+    // When: the runner fails transiently with a hint longer than the ordinary backoff
     let failed_at = Utc::now();
     instance
-        .fail_run(&first, "TRANSIENT", "provider_timeout", Some(0))
+        .fail_run(&first, "TRANSIENT", "provider_timeout", Some(HINT_SECONDS))
         .await;
 
-    stream::await_delta(&mut watch, JOB_CHANGED, "JobsRunFailedEvent", LONG).await;
-    let scheduled = wait_for_next_attempt(&client, admin, job_id).await;
+    let run_failed = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
+    let failure = delta::event_of(&run_failed, wire::EVT_RUN_FAILED, job_id);
+    assert_eq!(failure["runId"], json!(first_run.to_string()));
+    assert_eq!(failure["failureKind"], json!("TRANSIENT"));
+    assert_eq!(failure["reasonCode"], json!("provider_timeout"));
+
+    let retry = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RETRY_SCHEDULED, LONG).await;
+    let scheduling = delta::event_of(&retry, wire::EVT_RETRY_SCHEDULED, job_id);
+    assert_eq!(scheduling["failedRunId"], json!(first_run.to_string()));
+    let scheduled = delta::instant(&scheduling["dueAt"]);
     assert!(
-        scheduled - failed_at >= chrono::Duration::seconds(BASE_DELAY_SECONDS),
-        "a retry-after hint may lengthen the delay, never shorten it: due {scheduled}, failed {failed_at}",
+        scheduled - failed_at >= chrono::Duration::seconds(HINT_SECONDS),
+        "a runner retry-after hint lengthens the delay, never shortens it: due {scheduled}, \
+         failed {failed_at}",
     );
-    let read_again = wait_for_next_attempt(&client, admin, job_id).await;
+    let pushed = delta::projection(&retry, job_id, "IN_PROGRESS");
     assert_eq!(
-        scheduled, read_again,
+        delta::instant(&pushed["nextAttemptAt"]),
+        scheduled,
+        "the pushed projection carries the same recorded time as its event: {retry}",
+    );
+    delta::assert_active_affordances(&retry);
+
+    // Then: the recorded time survives every read and a reconnection
+    assert_eq!(
+        delta::instant(&gql::job(&client, admin, job_id).await["nextAttemptAt"]),
+        scheduled,
         "the backoff is computed once and stored, never recomputed on read",
     );
-    let failed_run = gql::run_by_id(&gql::job(&client, admin, job_id).await, first_run);
-    assert_eq!(failed_run["status"], json!("FAILED"));
-    assert_eq!(failed_run["failureReport"]["kind"], json!("TRANSIENT"));
-    assert_eq!(instant(&failed_run["retryDueAt"]), scheduled);
-
-    instance.expect_no_trigger(Duration::from_millis(800)).await;
+    drop(watch);
+    let mut reconnected =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
+    let snapshot = stream::snapshot(&mut reconnected, JOB_CHANGED, SHORT).await;
     assert_eq!(
-        gql::status_of(&client, admin, job_id).await,
-        "IN_PROGRESS",
-        "a job awaiting its retry is still in progress, never terminal",
+        delta::instant(&snapshot["job"]["nextAttemptAt"]),
+        scheduled,
+        "a reconnection reconstructs the same recorded due time, with no jitter drift",
     );
+    delta::assert_active_affordances(&snapshot);
+
+    // Then: nothing is dispatched strictly before that time
+    let quiet_until = (scheduled - Utc::now() - chrono::Duration::milliseconds(500))
+        .to_std()
+        .expect("the recorded due time is still ahead of the assertion window");
+    instance.expect_no_trigger(quiet_until).await;
 
     let second = instance.next_trigger(LONG).await;
-    assert_eq!(runner::attempt_number(&second), 2);
     assert!(
         Utc::now() >= scheduled,
         "the retry was dispatched before its recorded due time",
     );
+    assert_eq!(runner::attempt_number(&second), 2);
     let second_run = runner::run_id(&second);
+    let dispatched = stream::await_delta(
+        &mut reconnected,
+        JOB_CHANGED,
+        wire::EVT_RUN_DISPATCHED,
+        LONG,
+    )
+    .await;
+    let dispatch = delta::event_of(&dispatched, wire::EVT_RUN_DISPATCHED, job_id);
+    assert_eq!(dispatch["runId"], json!(second_run.to_string()));
+    assert_eq!(dispatch["attemptNumber"], json!(2));
     let retried = gql::run_by_id(&gql::job(&client, admin, job_id).await, second_run);
     assert_eq!(retried["origin"], json!("AUTOMATIC_RETRY"));
     assert_eq!(
@@ -90,25 +130,36 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         json!(first_run.to_string())
     );
 
+    // When: the second attempt fails too, exhausting the budget
     instance.start_run(&second).await;
-    let hinted_at = Utc::now();
     instance
-        .fail_run(&second, "TRANSIENT", "provider_timeout", Some(HINT_SECONDS))
+        .fail_run(&second, "TRANSIENT", "provider_timeout", None)
         .await;
-    let hinted = wait_for_next_attempt(&client, admin, job_id).await;
-    assert!(
-        hinted - hinted_at >= chrono::Duration::seconds(HINT_SECONDS),
-        "the runner's retry-after hint lengthens the delay: due {hinted}, failed {hinted_at}",
+
+    let last_failure =
+        stream::await_delta(&mut reconnected, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
+    assert_eq!(
+        delta::event_of(&last_failure, wire::EVT_RUN_FAILED, job_id)["runId"],
+        json!(second_run.to_string())
     );
+    let job_failed =
+        stream::await_delta(&mut reconnected, JOB_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
+    assert_eq!(
+        delta::event_of(&job_failed, wire::EVT_JOB_FAILED, job_id)["failureCause"],
+        json!("TERMINAL_RUN_FAILURE")
+    );
+    let terminal_projection = delta::projection(&job_failed, job_id, "FAILED");
+    assert_eq!(
+        terminal_projection["runs"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert!(terminal_projection["activeRunId"].is_null());
+    assert!(
+        terminal_projection["nextAttemptAt"].is_null(),
+        "an exhausted budget schedules nothing: {job_failed}",
+    );
+    delta::assert_failed_affordances(&job_failed);
 
-    let third = instance.next_trigger(LONG).await;
-    assert_eq!(runner::attempt_number(&third), 3);
-    instance.start_run(&third).await;
-    instance
-        .fail_run(&third, "TRANSIENT", "provider_timeout", None)
-        .await;
-
-    gql::wait_for_status(&client, admin, job_id, "FAILED", LONG).await;
     let exhausted = events.expect_one(wire::FACT_FAILED, job_id, LONG).await;
     assert_eq!(
         exhausted.payload()["failure_cause"],
@@ -118,52 +169,53 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         exhausted.payload()["failure_report"]["reason_code"],
         json!("provider_timeout")
     );
-    stream::await_delta(&mut watch, JOB_CHANGED, "JobsJobFailedEvent", LONG).await;
 
-    let terminal = gql::job_view(&client, admin, job_id).await;
-    assert_eq!(terminal["job"]["attemptCount"], json!(3));
-    assert!(
-        terminal["job"]["nextAttemptAt"].is_null(),
-        "an exhausted budget schedules nothing: {terminal}",
+    let listed = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
+    delta::assert_failed_affordances(&delta::assert_upserted_summary(&listed, job_id, "FAILED"));
+    delta::assert_fleet(
+        &stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_STOPPED_EXECUTING, LONG).await,
+        &runner_type,
+        0,
+        0,
+        0,
+        1,
     );
-    gql::assert_blocked(&terminal, wire::ACTION_CANCEL);
-    gql::assert_allowed(&terminal, wire::ACTION_MANUAL_RETRY);
 
+    // Then: no third attempt is ever scheduled or dispatched
+    stream::expect_no_delta(
+        &mut reconnected,
+        JOB_CHANGED,
+        wire::EVT_RETRY_SCHEDULED,
+        beyond_the_longest_delay(),
+    )
+    .await;
     instance.expect_no_trigger(QUIET).await;
     assert_eq!(
         instance.trigger_count().await,
-        3,
+        2,
         "the retry budget is a ceiling on dispatches, not on failures",
     );
 
+    durable
+        .assert_all(
+            job_id,
+            &[
+                (db::RUNS_OF_JOB, 2, "two runs"),
+                (
+                    db::RETRY_SCHEDULES_OF_JOB,
+                    1,
+                    "one once-computed retry due time",
+                ),
+                (db::RESOLUTIONS_OF_JOB, 1, "one terminal resolution"),
+            ],
+        )
+        .await;
+
+    durable.close().await;
     events.stop().await;
     fixture.shutdown().await;
 }
 
-async fn wait_for_next_attempt(
-    client: &br_test_harness::GraphqlClient,
-    admin: &br_core_auth::Passport,
-    job_id: Uuid,
-) -> DateTime<Utc> {
-    let deadline = tokio::time::Instant::now() + LONG;
-    loop {
-        let job = gql::job(client, admin, job_id).await;
-        if !job["nextAttemptAt"].is_null() {
-            return instant(&job["nextAttemptAt"]);
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "job {job_id} never recorded a next attempt time: {job}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-fn instant(value: &Value) -> DateTime<Utc> {
-    let raw = value
-        .as_str()
-        .unwrap_or_else(|| panic!("expected an RFC3339 timestamp, got: {value}"));
-    DateTime::parse_from_rfc3339(raw)
-        .unwrap_or_else(|e| panic!("a DateTime must be RFC3339: {raw} ({e})"))
-        .with_timezone(&Utc)
+fn beyond_the_longest_delay() -> Duration {
+    Duration::from_secs((HINT_SECONDS + BASE_DELAY_SECONDS) as u64)
 }

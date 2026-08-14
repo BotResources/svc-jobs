@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::job::resolution::JobResolution;
+use crate::domain::keys::{InstanceKey, RunnerTypeKey};
 use crate::fixtures::{JobBuilder, RunBuilder, declaration_id, instance, resolution_id, ts};
 
 fn label(text: &str) -> StepLabel {
@@ -62,8 +63,8 @@ fn a_redelivered_start_records_nothing_twice() {
 
 #[test]
 fn a_status_fact_for_a_terminal_job_is_acknowledged_and_discarded() {
-    // Given: a job cancelled while its run was still in flight
-    let run = RunBuilder::new(1).build();
+    // Given: a job cancelled, its run withdrawn with it
+    let run = RunBuilder::new(1).cancelled(ts(30)).build();
     let run_id = run.id();
     let job = JobBuilder::new()
         .with_run(run)
@@ -215,5 +216,29 @@ fn a_step_that_does_not_advance_the_cursor_is_discarded() {
             current: 2,
             submitted: 1
         }]
+    );
+}
+
+#[test]
+fn an_instance_of_another_runner_type_may_not_claim_the_run() {
+    // Given: a dispatched run belonging to a job of the analyst runner type
+    let run = RunBuilder::new(1).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: an instance of a different runner type reports that it began executing
+    let result = job.record_run_started(RunStartedFact {
+        run_id,
+        instance: RunnerInstanceReference::new(
+            RunnerTypeKey::new("scribe").unwrap(),
+            InstanceKey::new("pod-9").unwrap(),
+        ),
+    });
+    // Then: the claim is refused rather than silently relabelled to the job's own type
+    assert_eq!(
+        result,
+        Err(JobsError::RunnerTypeMismatch {
+            expected: "analyst".to_owned(),
+            claimed: "scribe".to_owned()
+        })
     );
 }

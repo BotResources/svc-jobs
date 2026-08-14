@@ -62,10 +62,14 @@ impl Run {
             if terminal.occurred_at() < state.dispatched_at {
                 return Err(corrupt("run_finished_before_dispatch"));
             }
-            if let Some(start) = &state.start
-                && terminal.occurred_at() < start.started_at()
-            {
-                return Err(corrupt("run_finished_before_start"));
+            match &state.start {
+                Some(start) if terminal.occurred_at() < start.started_at() => {
+                    return Err(corrupt("run_finished_before_start"));
+                }
+                None if terminal.kind() != RunTerminalKind::Cancelled => {
+                    return Err(corrupt("run_settled_without_start"));
+                }
+                _ => {}
             }
         }
         let mut steps = state.steps;

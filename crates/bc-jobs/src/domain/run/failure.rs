@@ -47,6 +47,14 @@ impl RunFailureKind {
     }
 }
 
+fn guard_object(field: &'static str, value: &Value) -> Result<(), JobsError> {
+    if value.is_object() {
+        Ok(())
+    } else {
+        Err(JobsError::NotAJsonObject { field })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunFailureReport {
     kind: RunFailureKind,
@@ -64,6 +72,8 @@ impl RunFailureReport {
         diagnostic: Value,
         retry_after: Option<TimeDelta>,
     ) -> Result<Self, JobsError> {
+        guard_object("params", &params)?;
+        guard_object("diagnostic", &diagnostic)?;
         let retry_after_seconds = match retry_after {
             None => None,
             Some(hint) if hint >= TimeDelta::zero() => Some(hint.num_seconds()),
@@ -155,6 +165,39 @@ mod tests {
         assert_eq!(report.params(), &json!({ "provider": "acme" }));
         assert_eq!(report.diagnostic(), &json!({ "http_status": 429 }));
         assert_eq!(report.retry_after(), Some(TimeDelta::seconds(90)));
+    }
+
+    #[test]
+    fn a_report_whose_params_are_not_an_object_is_refused() {
+        // Given: a runner reporting `"params": null`, which the served contract declares non-null
+        let result = RunFailureReport::new(
+            RunFailureKind::Transient,
+            ReasonCode::new("provider_rate_limited").unwrap(),
+            Value::Null,
+            json!({}),
+            None,
+        );
+        // Then: it never reaches storage, so no read can break on it later
+        assert_eq!(result, Err(JobsError::NotAJsonObject { field: "params" }));
+    }
+
+    #[test]
+    fn a_report_whose_diagnostic_is_a_bare_value_is_refused() {
+        // Given: a diagnostic sent as a string rather than a structured payload
+        let result = RunFailureReport::new(
+            RunFailureKind::Permanent,
+            ReasonCode::new("provider_unavailable").unwrap(),
+            json!({}),
+            json!("boom"),
+            None,
+        );
+        // Then: the same refusal applies to both structured halves of the report
+        assert_eq!(
+            result,
+            Err(JobsError::NotAJsonObject {
+                field: "diagnostic"
+            })
+        );
     }
 
     #[test]

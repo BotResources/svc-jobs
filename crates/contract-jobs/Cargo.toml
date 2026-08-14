@@ -9,3 +9,7 @@ description = "Published language for svc-jobs — the integration subjects and 
 
 [dependencies]
 br-core-integration.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+br-util-nats-fabric.workspace = true

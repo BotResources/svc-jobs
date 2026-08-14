@@ -12,18 +12,11 @@ pub enum Availability {
 }
 
 impl Availability {
-    pub fn blocked(reason_code: &str) -> Self {
-        Self::Blocked {
-            reason_code: reason_code.to_owned(),
-            params: Value::Object(serde_json::Map::new()),
-        }
-    }
-
     pub fn from_guard(verdict: Result<(), JobsError>) -> Self {
         match verdict {
             Ok(()) => Self::Available,
             Err(refusal) => Self::Blocked {
-                reason_code: refusal.code(),
+                reason_code: refusal.code().to_owned(),
                 params: refusal.params(),
             },
         }

@@ -1,7 +1,7 @@
 use crate::domain::ids::{JobId, RunId};
 use crate::domain::job::Job;
-use crate::domain::keys::InstanceKey;
 use crate::domain::run::Run;
+use crate::domain::run::parts::RunnerInstanceReference;
 use crate::event::job::JobEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,13 @@ pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
         JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_) => {
             vec![FleetSignal::JobStoppedWaiting]
         }
-        _ => vec![],
+        JobEvent::RunDispatched(_)
+        | JobEvent::RunPlanDeclared(_)
+        | JobEvent::RunStepStarted(_)
+        | JobEvent::RunCancellationRequested(_)
+        | JobEvent::ManualRetryStarted(_)
+        | JobEvent::JobDeleted(_)
+        | JobEvent::JobAffordancesChanged(_) => vec![],
     }
 }
 
@@ -47,14 +53,14 @@ pub struct RunLostWithInstance {
 }
 
 pub fn runs_lost_with_instance(
-    instance_key: &InstanceKey,
+    instance: &RunnerInstanceReference,
     jobs: &[Job],
 ) -> Vec<RunLostWithInstance> {
     jobs.iter()
         .filter(|job| !job.is_terminal())
         .filter_map(|job| {
             job.active_run()
-                .filter(|run| run_belongs_to(run, instance_key))
+                .filter(|run| run_belongs_to(run, instance))
                 .map(|run| RunLostWithInstance {
                     job_id: job.id(),
                     run_id: run.id(),
@@ -63,16 +69,24 @@ pub fn runs_lost_with_instance(
         .collect()
 }
 
-fn run_belongs_to(run: &Run, instance_key: &InstanceKey) -> bool {
+fn run_belongs_to(run: &Run, instance: &RunnerInstanceReference) -> bool {
     run.start()
-        .is_some_and(|start| start.instance().instance_key() == instance_key)
+        .is_some_and(|start| start.instance() == instance)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::keys::{InstanceKey, RunnerTypeKey};
     use crate::event::job_facts::{RunCompleted, RunStarted};
-    use crate::fixtures::{JobBuilder, RunBuilder, job_id, run_id, runner_type, ts};
+    use crate::fixtures::{JobBuilder, RunBuilder, instance, job_id, run_id, runner_type, ts};
+
+    fn instance_of(runner_type: &str, instance_key: &str) -> RunnerInstanceReference {
+        RunnerInstanceReference::new(
+            RunnerTypeKey::new(runner_type).unwrap(),
+            InstanceKey::new(instance_key).unwrap(),
+        )
+    }
 
     #[test]
     fn a_started_run_moves_its_job_from_waiting_to_executing() {
@@ -111,7 +125,6 @@ mod tests {
     #[test]
     fn losing_an_instance_names_the_runs_it_was_executing() {
         // Given: two jobs, one running on the lost instance and one not started
-        let lost = InstanceKey::new("pod-7").unwrap();
         let running = RunBuilder::new(1).started(ts(5)).build();
         let running_id = running.id();
         let executing = JobBuilder::new().with_run(running).build();
@@ -119,7 +132,7 @@ mod tests {
             .with_run(RunBuilder::new(1).build())
             .build();
         // When: the loss is observed
-        let intents = runs_lost_with_instance(&lost, &[executing.clone(), waiting]);
+        let intents = runs_lost_with_instance(&instance(), &[executing.clone(), waiting]);
         // Then: only the run that instance had claimed is reclaimed
         assert_eq!(
             intents,
@@ -132,13 +145,25 @@ mod tests {
 
     #[test]
     fn a_run_claimed_by_another_instance_is_left_alone() {
-        // Given: a job executing on a different instance
+        // Given: a job executing on a different instance of the same type
         let executing = JobBuilder::new()
             .with_run(RunBuilder::new(1).started(ts(5)).build())
             .build();
         // When: an unrelated instance is lost
-        let intents = runs_lost_with_instance(&InstanceKey::new("pod-9").unwrap(), &[executing]);
+        let intents = runs_lost_with_instance(&instance_of("analyst", "pod-9"), &[executing]);
         // Then: nothing is reclaimed
+        assert!(intents.is_empty());
+    }
+
+    #[test]
+    fn a_run_claimed_by_a_namesake_instance_of_another_type_is_left_alone() {
+        // Given: an analyst instance named pod-7 executing a run
+        let executing = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(5)).build())
+            .build();
+        // When: a scribe instance that happens to share the name pod-7 is lost
+        let intents = runs_lost_with_instance(&instance_of("scribe", "pod-7"), &[executing]);
+        // Then: the analyst's work is untouched — an instance is a type and a key, never a key alone
         assert!(intents.is_empty());
     }
 }

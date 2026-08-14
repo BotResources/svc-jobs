@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::attempts::AttemptNumber;
 use crate::domain::ids::JobId;
 use crate::domain::job::JobState;
 use crate::domain::job::resolution::{JobFailureCause, JobResolution};
@@ -32,7 +33,7 @@ fn a_job_with_a_run_and_no_resolution_is_in_progress() {
 fn a_terminal_resolution_governs_the_status_whatever_the_runs_say() {
     // Given: a job whose only run completed but whose owner cancelled it
     let job = JobBuilder::new()
-        .with_run(RunBuilder::new(1).completed(ts(20)).build())
+        .with_run(RunBuilder::new(1).started(ts(5)).completed(ts(20)).build())
         .with_resolution(JobResolution::cancelled(resolution_id(), ts(30)))
         .build();
     // When/Then: the resolution is what the job reports
@@ -46,6 +47,7 @@ fn a_terminal_job_advertises_no_next_attempt() {
     let job = JobBuilder::new()
         .with_run(
             RunBuilder::new(1)
+                .started(ts(5))
                 .failed(ts(20), RunFailureKind::Transient)
                 .retry_due(ts(80))
                 .build(),
@@ -70,6 +72,7 @@ fn the_next_attempt_time_is_the_unconsumed_retry_due_time() {
     let job = JobBuilder::new()
         .with_run(
             RunBuilder::new(1)
+                .started(ts(5))
                 .failed(ts(20), RunFailureKind::Transient)
                 .retry_due(ts(80))
                 .build(),
@@ -83,6 +86,7 @@ fn the_next_attempt_time_is_the_unconsumed_retry_due_time() {
 fn a_dispatched_retry_consumes_its_schedule() {
     // Given: a failed first attempt whose retry has already been dispatched
     let failed = RunBuilder::new(1)
+        .started(ts(5))
         .failed(ts(20), RunFailureKind::Transient)
         .retry_due(ts(80))
         .build();
@@ -134,10 +138,28 @@ fn a_job_holding_two_live_runs_cannot_be_loaded() {
 }
 
 #[test]
+fn a_resolved_job_still_holding_a_live_run_cannot_be_loaded() {
+    // Given: a stored job that reached a terminal resolution while a run stayed open
+    let state = JobBuilder::new()
+        .with_run(RunBuilder::new(1).started(ts(5)).build())
+        .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+        .state();
+    // When: it is hydrated
+    let result = Job::hydrate(state);
+    // Then: a finished job never keeps work in flight — no backstop could reclaim it
+    assert_eq!(
+        result.err(),
+        Some(JobsError::CorruptState {
+            reason_code: "terminal_job_with_a_live_run"
+        })
+    );
+}
+
+#[test]
 fn a_job_whose_attempts_skip_a_number_cannot_be_loaded() {
     // Given: a stored job whose attempts jump from one to three
     let state = JobBuilder::new()
-        .with_run(RunBuilder::new(1).completed(ts(10)).build())
+        .with_run(RunBuilder::new(1).started(ts(5)).completed(ts(10)).build())
         .with_run(RunBuilder::new(3).build())
         .state();
     // When: it is hydrated
@@ -148,6 +170,66 @@ fn a_job_whose_attempts_skip_a_number_cannot_be_loaded() {
         Some(JobsError::CorruptState {
             reason_code: "attempt_numbers_not_contiguous"
         })
+    );
+}
+
+fn lowered_to(ceiling: u32) -> ServiceLimits {
+    ServiceLimits {
+        max_attempts_ceiling: MaxAttempts::new(ceiling).unwrap(),
+        ..ServiceLimits::default()
+    }
+}
+
+#[test]
+fn a_job_accepted_above_a_ceiling_since_lowered_still_loads() {
+    // Given: a job accepted with five attempts, and an operator who later lowered the ceiling to three
+    let state = JobBuilder::new().with_max_attempts(5).state();
+    // When: it is read back
+    let job = Job::hydrate(state).unwrap();
+    // Then: it loads — a service knob never turns accepted history into unreadable data
+    assert_eq!(job.max_attempts(), Some(MaxAttempts::new(5).unwrap()));
+}
+
+#[test]
+fn a_lowered_ceiling_bounds_what_a_job_may_still_spend() {
+    // Given: a job holding a stored budget of five under a ceiling since lowered to three
+    let job = JobBuilder::new().with_max_attempts(5).build();
+    // When: the effective budget is read
+    let budget = job.budget(&lowered_to(3));
+    // Then: the ceiling bounds the effect, not the load — the fourth attempt is refused
+    assert_eq!(budget.get(), 3);
+    assert!(!budget.allows(AttemptNumber::new(4).unwrap()));
+}
+
+#[test]
+fn a_lowered_ceiling_also_bounds_the_service_default() {
+    // Given: a job that declared no budget, under a ceiling below the service default
+    let job = JobBuilder::new().build();
+    // When: the effective budget is read
+    // Then: the ceiling governs, never the higher default
+    assert_eq!(job.budget(&lowered_to(1)).get(), 1);
+}
+
+#[test]
+fn a_stored_budget_under_the_ceiling_governs_the_dispatch_bound() {
+    // Given: a job that lowered its own budget to two under a ceiling of ten
+    let job = JobBuilder::new().with_max_attempts(2).build();
+    // When: the effective budget is read
+    let budget = job.budget(&ServiceLimits::default());
+    // Then: the declared figure is honoured, never widened to the ceiling
+    assert_eq!(budget.get(), 2);
+    assert!(!budget.allows(AttemptNumber::new(3).unwrap()));
+}
+
+#[test]
+fn a_job_declaring_no_budget_falls_back_to_the_service_default() {
+    // Given: a job that declared no attempt count
+    let job = JobBuilder::new().build();
+    // When: the effective budget is read
+    // Then: the service default governs
+    assert_eq!(
+        job.budget(&ServiceLimits::default()).get(),
+        ServiceLimits::default().default_max_attempts.get()
     );
 }
 
@@ -170,7 +252,12 @@ fn a_deleted_job_without_a_resolution_cannot_be_loaded() {
 fn a_resolution_blaming_a_run_of_another_job_cannot_be_loaded() {
     // Given: a stored failure attributed to a run this job never dispatched
     let state = JobBuilder::new()
-        .with_run(RunBuilder::new(1).build())
+        .with_run(
+            RunBuilder::new(1)
+                .started(ts(5))
+                .failed(ts(20), RunFailureKind::Permanent)
+                .build(),
+        )
         .with_resolution(
             JobResolution::failed(
                 resolution_id(),
@@ -198,6 +285,7 @@ fn a_failed_run_report_survives_hydration_for_escalation() {
     let job = JobBuilder::new()
         .with_run(
             RunBuilder::new(1)
+                .started(ts(5))
                 .failed(ts(20), RunFailureKind::Permanent)
                 .build(),
         )

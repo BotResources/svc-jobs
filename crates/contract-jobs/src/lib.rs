@@ -1,3 +1,6 @@
+pub mod runner_transport;
+pub mod segment;
+
 use br_core_integration::{Aggregate, Bc, CommandCoords, CoordError, EventCoords, PastFact, Verb};
 
 pub const SERVICE_KEY: &str = "jobs";

@@ -61,15 +61,18 @@ impl MaxAttempts {
         }
     }
 
-    pub fn under_ceiling(value: u32, ceiling: u32) -> Result<Self, JobsError> {
-        let requested = Self::new(value)?;
-        if requested.0 > ceiling {
+    pub fn under_ceiling(value: u32, ceiling: Self) -> Result<Self, JobsError> {
+        Self::new(value)?.guard_under_ceiling(ceiling)
+    }
+
+    pub fn guard_under_ceiling(self, ceiling: Self) -> Result<Self, JobsError> {
+        if self > ceiling {
             Err(JobsError::MaxAttemptsAboveCeiling {
-                requested: value,
-                ceiling,
+                requested: self.0,
+                ceiling: ceiling.0,
             })
         } else {
-            Ok(requested)
+            Ok(self)
         }
     }
 
@@ -104,7 +107,7 @@ mod tests {
     fn a_caller_may_lower_the_attempt_budget() {
         // Given: a service ceiling of ten attempts
         // When: a producer asks for three
-        let budget = MaxAttempts::under_ceiling(3, 10).unwrap();
+        let budget = MaxAttempts::under_ceiling(3, MaxAttempts::new(10).unwrap()).unwrap();
         // Then: the lower figure is honoured
         assert_eq!(budget.get(), 3);
     }
@@ -113,7 +116,7 @@ mod tests {
     fn a_caller_may_never_raise_the_attempt_budget_above_the_ceiling() {
         // Given: a service ceiling of ten attempts
         // When: a producer asks for fifty
-        let result = MaxAttempts::under_ceiling(50, 10);
+        let result = MaxAttempts::under_ceiling(50, MaxAttempts::new(10).unwrap());
         // Then: the request is refused with both figures in the params
         assert_eq!(
             result,

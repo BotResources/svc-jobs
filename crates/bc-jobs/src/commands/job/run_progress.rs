@@ -68,6 +68,12 @@ impl Job {
         if let Some(discarded) = self.discard_settled("RunStarted", run) {
             return Ok(discarded);
         }
+        if fact.instance.runner_type() != self.runner_type() {
+            return Err(JobsError::RunnerTypeMismatch {
+                expected: self.runner_type().as_str().to_owned(),
+                claimed: fact.instance.runner_type().as_str().to_owned(),
+            });
+        }
         if run.start().is_some() {
             return Ok(CommandResult::nothing_happened(
                 CommandWarning::FactAlreadyRecorded { fact: "RunStarted" },

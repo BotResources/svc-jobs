@@ -1,15 +1,22 @@
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::fleet::RunnerType;
+use crate::error::JobsError;
 
 pub const DISPATCH: &str = "dispatch";
 
 impl RunnerType {
-    pub fn can_dispatch(&self) -> Availability {
+    pub fn guard_dispatch(&self) -> Result<(), JobsError> {
         if self.is_available() {
-            Availability::Available
+            Ok(())
         } else {
-            Availability::blocked("runner_type_unavailable")
+            Err(JobsError::RunnerTypeUnavailable {
+                runner_type: self.key().as_str().to_owned(),
+            })
         }
+    }
+
+    pub fn can_dispatch(&self) -> Availability {
+        Availability::from_guard(self.guard_dispatch())
     }
 
     pub fn affordances(&self) -> Vec<Affordance> {
