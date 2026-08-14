@@ -1,0 +1,104 @@
+# The workspace root, bootstrapped by runkit.
+#
+# This repository held no cargo workspace when the scaffold phase ran — the
+# first service is the one that creates it — so this manifest is the floor the
+# generated crates need and deliberately nothing beyond it:
+#
+#   [workspace]              the multi-line `members` list every generated crate
+#                            is registered in, empty until the first one lands;
+#   [workspace.package]      the four fields every generated manifest inherits
+#                            with `edition.workspace = true`;
+#   [workspace.dependencies] exactly the pins the skeletons name. A dependency no
+#                            generated crate references is left out on purpose:
+#                            `cargo-machete` fails CI on one nothing uses, and a
+#                            manifest that pre-declares what a service *might*
+#                            want is where unused pins go to rot.
+#
+# The br-rust-common crates ride ONE git tag, and that is load-bearing rather
+# than tidy: cargo does not unify two tags of the same repository, so a second
+# tag here would resolve to a second copy of every shared type and every `From`
+# between the two would stop compiling. Bump the tag on every line together, or
+# not at all.
+#
+# HTTPS rather than ssh:// for the same reason spelled out in the backend's own
+# manifest — both repositories are public, anonymous HTTPS clones work in CI
+# without a deploy key, and one URL scheme everywhere means one cargo source.
+
+[workspace]
+resolver = "2"
+members = [
+    # jobs — HEXAGONAL manner, major 0 in the Services registry.
+    # Scaffolded by runkit from the major's declared posture: contract-jobs, bc-jobs, svc-jobs.
+    "crates/contract-jobs",
+    "crates/bc-jobs",
+    "crates/svc-jobs",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.94"
+# Read from this repository's own LICENSE file, never defaulted: every generated
+# crate inherits this field, so a value picked by the generator would be a legal
+# claim it invented, repeated in every manifest. SPDX, because cargo requires it.
+license = "Apache-2.0"
+# Nothing here is published to crates.io. Flip a crate's own `publish` the day
+# one is, rather than opening the whole workspace.
+publish = false
+
+# A scaffolded service declares its own library crates at the top of this table,
+# above the blank line — the internal group the manifest keeps together, ahead
+# of the third-party pins.
+[workspace.dependencies]
+# svc-jobs's own library crates, scaffolded by runkit from major 0.
+contract-jobs = { path = "crates/contract-jobs" }
+bc-jobs = { path = "crates/bc-jobs" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+
+# GraphQL. Pinned `=7.0.19`: 7.1.0..7.2.1 serialize a container whose collected
+# selection set is empty as `null` instead of `{}` (upstream regression PR
+# #1746), which the gateway hits on every non-null root when it rewrites
+# `__typename` — SUBGRAPH_INVALID_RESPONSE_ERROR. Unpin once the revert reaches
+# a stable release.
+async-graphql = { version = "=7.0.19", features = ["uuid", "chrono"] }
+async-graphql-axum = "=7.0.19"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client — the e2e suite drives the edge through it.
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Types & utilities
+uuid = { version = "1", features = ["v7", "serde"] }
+thiserror = "2"
+tracing = "0.1"
+dotenvy = "0.15"
+
+# Cross-project shared crates (br-rust-common), all on the single workspace tag.
+br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.2.0", version = "1.2.0" }
+br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "v1.2.0", version = "1.2.0" }
+br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v1.2.0", version = "1.2.0" }
+br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "v1.2.0", version = "1.2.0" }
+br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v1.2.0", version = "1.2.0" }
+br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v1.2.0", version = "1.2.0" }
+br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.2.0", version = "1.2.0" }
+# The single NATS seam: every publish, consume and KV access goes through the
+# Fabric. A service that speaks on the bus gets this pin in its own manifest.
+br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.2.0", version = "1.2.0" }
+
+# The real-infra e2e harness (br-e2e-harness) — a dev-dependency of the smoke
+# suite, feature-gated to exactly what the generated scenario spawns. Its own
+# repository and its own release line, so this tag moves independently of the
+# br-rust-common one above — but the br-rust-common crates IT pins must ride the
+# same v-tag as the pins above, or cargo resolves two copies of every shared
+# type and every `From` between the two stops compiling.
+br-test-harness = { git = "https://github.com/BotResources/br-e2e-harness", package = "br-test-harness", tag = "v1.1.3", version = "1.1.3", default-features = false, features = ["e2e-db", "server", "spawned-nats"] }

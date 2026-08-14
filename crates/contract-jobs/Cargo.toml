@@ -1,0 +1,20 @@
+[package]
+name = "contract-jobs"
+version = "0.0.0-dev"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Published language for svc-jobs — the integration subjects and KV prefixes major 0 declares this service offers."
+
+# Pure leaf crate: one contract-{service} crate per service, never a shared
+# contracts crate. Serde DTOs, subject literals and coordinate constructors only
+# — no logic, no infra, no NATS client (`br-util-nats-fabric` belongs to the
+# service, not to its published language) and no SQL.
+#
+# Exactly what the generated code names, and nothing held in reserve: the
+# `cargo-machete` supply-chain job fails CI on an unused dependency, so a `serde`
+# declared "for later" turns the first push red. Add `serde` / `serde_json` /
+# `uuid` with the first payload type.
+[dependencies]
+br-core-integration.workspace = true
