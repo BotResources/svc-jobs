@@ -1,0 +1,144 @@
+use crate::domain::ids::{JobId, RunId};
+use crate::domain::job::Job;
+use crate::domain::keys::InstanceKey;
+use crate::domain::run::Run;
+use crate::event::job::JobEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FleetSignal {
+    JobBeganWaiting,
+    JobStoppedWaiting,
+    JobBeganExecuting,
+    JobStoppedExecuting,
+}
+
+impl FleetSignal {
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::JobBeganWaiting => "JOB_BEGAN_WAITING",
+            Self::JobStoppedWaiting => "JOB_STOPPED_WAITING",
+            Self::JobBeganExecuting => "JOB_BEGAN_EXECUTING",
+            Self::JobStoppedExecuting => "JOB_STOPPED_EXECUTING",
+        }
+    }
+}
+
+pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
+    match event {
+        JobEvent::JobQueued(_) | JobEvent::RetryScheduled(_) => vec![FleetSignal::JobBeganWaiting],
+        JobEvent::RunStarted(_) => vec![
+            FleetSignal::JobStoppedWaiting,
+            FleetSignal::JobBeganExecuting,
+        ],
+        JobEvent::RunCompleted(_) | JobEvent::RunFailed(_) | JobEvent::RunCancelled(_) => {
+            vec![FleetSignal::JobStoppedExecuting]
+        }
+        JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_) => {
+            vec![FleetSignal::JobStoppedWaiting]
+        }
+        _ => vec![],
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunLostWithInstance {
+    pub job_id: JobId,
+    pub run_id: RunId,
+}
+
+pub fn runs_lost_with_instance(
+    instance_key: &InstanceKey,
+    jobs: &[Job],
+) -> Vec<RunLostWithInstance> {
+    jobs.iter()
+        .filter(|job| !job.is_terminal())
+        .filter_map(|job| {
+            job.active_run()
+                .filter(|run| run_belongs_to(run, instance_key))
+                .map(|run| RunLostWithInstance {
+                    job_id: job.id(),
+                    run_id: run.id(),
+                })
+        })
+        .collect()
+}
+
+fn run_belongs_to(run: &Run, instance_key: &InstanceKey) -> bool {
+    run.start()
+        .is_some_and(|start| start.instance().instance_key() == instance_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::job_facts::{RunCompleted, RunStarted};
+    use crate::fixtures::{JobBuilder, RunBuilder, job_id, run_id, runner_type, ts};
+
+    #[test]
+    fn a_started_run_moves_its_job_from_waiting_to_executing() {
+        // Given: a run that an instance just claimed
+        let event = JobEvent::RunStarted(RunStarted {
+            job_id: job_id(),
+            run_id: run_id(),
+            runner_type: runner_type(),
+            instance_key: InstanceKey::new("pod-7").unwrap(),
+        });
+        // When/Then: the fleet view learns both halves of the transition
+        assert_eq!(
+            fleet_signals(&event),
+            vec![
+                FleetSignal::JobStoppedWaiting,
+                FleetSignal::JobBeganExecuting
+            ]
+        );
+    }
+
+    #[test]
+    fn a_finished_run_stops_the_job_executing_without_settling_the_job() {
+        // Given: a run that completed while its job stays in progress
+        let event = JobEvent::RunCompleted(RunCompleted {
+            job_id: job_id(),
+            run_id: run_id(),
+            attempt_number: crate::domain::attempts::AttemptNumber::FIRST,
+        });
+        // When/Then: only the executing signal is emitted
+        assert_eq!(
+            fleet_signals(&event),
+            vec![FleetSignal::JobStoppedExecuting]
+        );
+    }
+
+    #[test]
+    fn losing_an_instance_names_the_runs_it_was_executing() {
+        // Given: two jobs, one running on the lost instance and one not started
+        let lost = InstanceKey::new("pod-7").unwrap();
+        let running = RunBuilder::new(1).started(ts(5)).build();
+        let running_id = running.id();
+        let executing = JobBuilder::new().with_run(running).build();
+        let waiting = JobBuilder::new()
+            .with_run(RunBuilder::new(1).build())
+            .build();
+        // When: the loss is observed
+        let intents = runs_lost_with_instance(&lost, &[executing.clone(), waiting]);
+        // Then: only the run that instance had claimed is reclaimed
+        assert_eq!(
+            intents,
+            vec![RunLostWithInstance {
+                job_id: executing.id(),
+                run_id: running_id
+            }]
+        );
+    }
+
+    #[test]
+    fn a_run_claimed_by_another_instance_is_left_alone() {
+        // Given: a job executing on a different instance
+        let executing = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(5)).build())
+            .build();
+        // When: an unrelated instance is lost
+        let intents = runs_lost_with_instance(&InstanceKey::new("pod-9").unwrap(), &[executing]);
+        // Then: nothing is reclaimed
+        assert!(intents.is_empty());
+    }
+}
