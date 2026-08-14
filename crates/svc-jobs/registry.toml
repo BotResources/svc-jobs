@@ -1,0 +1,20 @@
+# Registry coordinates for svc-jobs — the committed identity of this crate in
+# the production Services registry.
+#
+# Ids of SERVICES are committed, because a service has no other stable handle:
+# it cannot be resolved by name (a rename would silently retarget a release, and
+# the by-name entry point is closed to machine keys anyway). Everything BELOW a
+# service is addressed by the version numbers the repo already knows. So this
+# file carries exactly one line.
+#
+# service-id  the Service. Stable for the life of the service; changing it means
+#             this crate now realizes a DIFFERENT service. Cross-checked at run
+#             time against scripts/service-meta.sh, which carries the same id —
+#             the two must agree or the release refuses to proceed.
+#
+# The PatchVersion is deliberately NOT named here. CI addresses it by the
+# coordinate quadruple (service-id, major, minor, patch), the last three parsed
+# from this crate's Cargo.toml version. Nothing about a release has to be
+# hand-copied out of the registry, and no committed id can go stale against the
+# version sitting next to it.
+service-id = "019f8137-e784-7320-87f3-13074aacc4d4"

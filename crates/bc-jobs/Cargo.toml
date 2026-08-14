@@ -1,0 +1,27 @@
+[package]
+name = "bc-jobs"
+# 0.0.0-dev until the first release. The service release gate reads the version
+# out of this file, so it stays the placeholder until a sealed registry version
+# says otherwise.
+version = "0.0.0-dev"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "jobs bounded context — the pure domain: commands, events, policies, ports. No I/O."
+
+[features]
+# Test doubles for this context's ports, compiled into a consumer's test build
+# only. Empty until the first port exists, and declared now because introducing
+# a feature later means touching every dependent manifest at once.
+test-support = []
+
+# Only what the skeleton actually references. A dependency nothing uses is a
+# supply-chain surface for no benefit, and `cargo-machete` fails CI on it — so
+# the next crate a command needs is added by the person who writes that command.
+[dependencies]
+shared-kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

@@ -1,0 +1,39 @@
+[package]
+name = "svc-jobs"
+# 0.0.0-dev until the first release. `scripts/check-changelog.sh` maps exactly
+# this placeholder to the `## [Unreleased]` heading in CHANGELOG.md; any other
+# version here must have a matching numbered heading or CI fails the PR.
+version = "0.0.0-dev"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "jobs service — the binary: composition root, GraphQL edge, adapters, projectors."
+
+# Only what the skeleton actually references. `cargo-machete` fails CI on a
+# dependency nothing uses, so the crate a projector or a publisher needs is
+# added by whoever writes it, in the same commit.
+[dependencies]
+bc-jobs.workspace = true
+infra.workspace = true
+br-util-axum-readiness.workspace = true
+br-util-observability.workspace = true
+async-graphql.workspace = true
+async-graphql-axum.workspace = true
+axum.workspace = true
+dotenvy.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+br-util-nats-fabric.workspace = true
+
+[dev-dependencies]
+# The e2e smoke suite: it spawns the real binary by `CARGO_BIN_EXE_svc-jobs`,
+# provisions its database through the shared harness, and drives the edge over
+# HTTP. Extend this list as the suite grows real scenarios.
+test-harness = { path = "../test-harness" }
+# Inherits the workspace reqwest (rustls + json).
+reqwest.workspace = true
+tokio.workspace = true
+async-graphql.workspace = true
