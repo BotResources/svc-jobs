@@ -24,6 +24,7 @@ pub enum JobsError {
         maximum: usize,
     },
     InvalidJitter,
+    InvalidRetryFactor,
     InvalidDuration {
         field: &'static str,
     },
@@ -147,6 +148,7 @@ impl JobsError {
             Self::InvalidSegment { .. } => "invalid_segment",
             Self::ValueTooLong { .. } => "value_too_long",
             Self::InvalidJitter => "invalid_jitter",
+            Self::InvalidRetryFactor => "invalid_retry_factor",
             Self::InvalidDuration { .. } => "invalid_duration",
             Self::NotAJsonObject { .. } => "not_a_json_object",
             Self::JobIdConflict { .. } => "job_id_conflict",
@@ -202,6 +204,7 @@ impl JobsError {
                 maximum,
             } => json!({ "field": field, "length": length, "maximum": maximum }),
             Self::InvalidJitter
+            | Self::InvalidRetryFactor
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
             | Self::NotOwner

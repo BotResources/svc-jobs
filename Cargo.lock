@@ -124,23 +124,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-graphql-axum"
-version = "7.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b364d7988b41ad042e5b781927d289cb89cbb19020d65851f63ab04c9709b40"
-dependencies = [
- "async-graphql",
- "axum",
- "bytes",
- "futures-util",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower-service",
-]
-
-[[package]]
 name = "async-graphql-derive"
 version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -456,6 +439,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-core-values"
+version = "1.2.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "br-scope-declaration-contract"
 version = "1.2.0"
 source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
@@ -493,21 +485,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "br-util-axum-auth"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
-dependencies = [
- "axum",
- "br-core-auth",
- "tracing",
-]
-
-[[package]]
 name = "br-util-axum-readiness"
 version = "1.2.0"
 source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
 dependencies = [
  "axum",
+ "tracing",
+]
+
+[[package]]
+name = "br-util-graphql"
+version = "1.2.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+dependencies = [
+ "async-graphql",
+ "axum",
+ "br-core-values",
+ "serde_json",
  "tracing",
 ]
 
@@ -523,6 +517,7 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tracing",
@@ -703,6 +698,9 @@ version = "0.0.0-dev"
 dependencies = [
  "br-core-integration",
  "br-util-nats-fabric",
+ "chrono",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -1124,6 +1122,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1202,6 +1215,7 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -3221,20 +3235,26 @@ name = "svc-jobs"
 version = "0.0.0-dev"
 dependencies = [
  "async-graphql",
- "async-graphql-axum",
+ "async-nats",
+ "async-stream",
+ "async-trait",
  "axum",
  "bc-jobs",
  "br-core-auth",
+ "br-core-events",
  "br-core-integration",
  "br-test-harness",
- "br-util-axum-auth",
  "br-util-axum-readiness",
+ "br-util-graphql",
  "br-util-nats-fabric",
  "br-util-observability",
  "br-util-postgres",
  "chrono",
+ "contract-jobs",
  "dotenvy",
+ "futures",
  "reqwest",
+ "serde",
  "serde_json",
  "sqlx",
  "thiserror",
@@ -3451,7 +3471,6 @@ checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
- "futures-io",
  "futures-sink",
  "libc",
  "pin-project-lite",

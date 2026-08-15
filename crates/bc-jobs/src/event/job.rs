@@ -35,6 +35,10 @@ fn payload_of<T: Serialize>(fact: &T) -> Result<Value, JobsError> {
     serde_json::to_value(fact).map_err(JobsError::from)
 }
 
+fn fact_of<T: serde::de::DeserializeOwned>(payload: Value) -> Result<T, JobsError> {
+    serde_json::from_value(payload).map_err(JobsError::from)
+}
+
 impl JobEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
@@ -96,6 +100,31 @@ impl JobEvent {
             Self::ManualRetryStarted(fact) => payload_of(fact),
             Self::JobDeleted(fact) => payload_of(fact),
             Self::JobAffordancesChanged(fact) => payload_of(fact),
+        }
+    }
+
+    pub fn decode(event_type: &str, payload: Value) -> Result<Self, JobsError> {
+        match event_type {
+            "JobQueued" => Ok(Self::JobQueued(fact_of(payload)?)),
+            "RunDispatched" => Ok(Self::RunDispatched(fact_of(payload)?)),
+            "RunStarted" => Ok(Self::RunStarted(fact_of(payload)?)),
+            "RunPlanDeclared" => Ok(Self::RunPlanDeclared(fact_of(payload)?)),
+            "RunStepStarted" => Ok(Self::RunStepStarted(fact_of(payload)?)),
+            "RunCompleted" => Ok(Self::RunCompleted(fact_of(payload)?)),
+            "RunFailed" => Ok(Self::RunFailed(fact_of(payload)?)),
+            "RunCancellationRequested" => Ok(Self::RunCancellationRequested(fact_of(payload)?)),
+            "RunCancelled" => Ok(Self::RunCancelled(fact_of(payload)?)),
+            "RetryScheduled" => Ok(Self::RetryScheduled(fact_of(payload)?)),
+            "JobCompleted" => Ok(Self::JobCompleted(fact_of(payload)?)),
+            "JobFailed" => Ok(Self::JobFailed(fact_of(payload)?)),
+            "JobCancelled" => Ok(Self::JobCancelled(fact_of(payload)?)),
+            "ManualRetryStarted" => Ok(Self::ManualRetryStarted(fact_of(payload)?)),
+            "JobDeleted" => Ok(Self::JobDeleted(fact_of(payload)?)),
+            "JobAffordancesChanged" => Ok(Self::JobAffordancesChanged(fact_of(payload)?)),
+            other => Err(JobsError::UnknownEnumValue {
+                field: "job_event_type",
+                value: other.to_owned(),
+            }),
         }
     }
 

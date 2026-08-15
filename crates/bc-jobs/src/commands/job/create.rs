@@ -70,7 +70,7 @@ pub fn create_job(
         };
     }
     if let Some(requested) = command.max_attempts {
-        requested.guard_under_ceiling(limits.max_attempts_ceiling)?;
+        requested.guard_under_ceiling(limits.max_attempts_ceiling())?;
     }
     guard_source_free(command.source(), active_for_source)?;
     let owner = resolve_owner(&command, parent)?;

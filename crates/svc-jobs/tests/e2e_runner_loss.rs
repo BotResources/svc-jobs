@@ -120,6 +120,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     );
 
     lost.crash();
+    replacement.resume_after(&lost);
     tokio::time::sleep(infra::PRESENCE_TTL).await;
 
     let disconnected =

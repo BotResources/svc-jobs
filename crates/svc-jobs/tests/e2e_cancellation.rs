@@ -168,6 +168,13 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
         gql::wait_for_status(&client, admin, job_id, "CANCELLED", LONG).await;
     }
 
+    let run_cancelled =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_CANCELLED, LONG).await;
+    assert_eq!(
+        delta::event_of(&run_cancelled, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
+        json!(parent_run.to_string()),
+        "the root's in-flight run is terminated by its own event",
+    );
     let root_cancelled =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, LONG).await;
     assert_eq!(
@@ -190,14 +197,6 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
         cancelled_tree["runs"].as_array().map(Vec::len),
         Some(1),
         "the execution history stays readable on a cancelled job: {cancelled_tree}",
-    );
-
-    let run_cancelled =
-        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_CANCELLED, LONG).await;
-    assert_eq!(
-        delta::event_of(&run_cancelled, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
-        json!(parent_run.to_string()),
-        "the root's in-flight run is terminated by its own event",
     );
 
     let listed =
@@ -323,6 +322,16 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     tail.expect_silence("cancellation appends no log line", QUIET)
         .await;
 
+    for job_id in [
+        parent_id,
+        running_child_id,
+        queued_child_id,
+        dispatched_child_id,
+    ] {
+        support::views::assert_views_agree(&durable, &client, admin, job_id, "a cancelled tree")
+            .await;
+    }
+
     // Then: the audit trail the edge cannot show — one resolution per job, one request per run
     for job_id in [
         parent_id,
@@ -436,6 +445,13 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
         gql::wait_for_status(&client, admin, job_id, "CANCELLED", LONG).await;
     }
 
+    let run_cancelled =
+        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_CANCELLED, LONG).await;
+    assert_eq!(
+        delta::event_of(&run_cancelled, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
+        json!(parent_run.to_string()),
+        "the root's in-flight run is terminated by its own event on the bus path too",
+    );
     let root_cancelled =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, LONG).await;
     assert_eq!(
@@ -455,14 +471,6 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
         running_child_id,
         "CANCELLED",
     ));
-
-    let run_cancelled =
-        stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_CANCELLED, LONG).await;
-    assert_eq!(
-        delta::event_of(&run_cancelled, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
-        json!(parent_run.to_string()),
-        "the root's in-flight run is terminated by its own event on the bus path too",
-    );
 
     let read_back = gql::job_view(&client, admin, parent_id).await;
     assert_eq!(

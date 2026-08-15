@@ -23,6 +23,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     let admin = fixture.admin();
     let parent_type = wire::unique_runner_type("orchestrator");
     let child_type = wire::unique_runner_type("worker");
+    let sibling_type = wire::unique_runner_type("sibling_worker");
     let producer = Producer::new(fixture.fabric(), "projects");
     let owner = Producer::new(fixture.fabric(), "jobs");
     let mut orchestrator = FakeRunner::new(fixture.nats(), &parent_type, "orchestrator-a");
@@ -31,7 +32,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     let mut listing = SseSubscription::open(
         fixture.url(),
         admin,
-        &subs::jobs_changed_for(&[&parent_type, &child_type]),
+        &subs::jobs_changed_for(&[&parent_type, &child_type, &sibling_type]),
     )
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
@@ -116,7 +117,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     // When: the parent runner spawns a child and an independent sibling
     let child = JobDeclaration::new(&child_type).with_parent(parent_id);
     let child_id = child.job_id;
-    let sibling = JobDeclaration::new(&child_type).with_parent(parent_id);
+    let sibling = JobDeclaration::new(&sibling_type).with_parent(parent_id);
     let sibling_id = sibling.job_id;
     owner.declare(&child).await;
     owner.declare(&sibling).await;
@@ -196,6 +197,11 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         json!("PENDING"),
         "no sibling is failed or cancelled automatically",
     );
+    assert_eq!(
+        gql::run_by_id(&gql::job(&client, admin, parent_id).await, parent_run)["status"],
+        json!("STARTED"),
+        "the parent's own run is never terminated by a child's fate",
+    );
     for job_id in [parent_id, sibling_id] {
         for fact in [wire::FACT_FAILED, wire::FACT_CANCELLED] {
             events.expect_none(fact, job_id, QUIET).await;
@@ -210,24 +216,15 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     events
         .expect_one(wire::FACT_QUEUED, alternative_id, LONG)
         .await;
+    let alternative_trigger = worker.next_trigger(LONG).await;
     let mut alternative_watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(alternative_id)).await;
-    stream::snapshot(&mut alternative_watch, JOB_CHANGED, SHORT).await;
-    let alternative_trigger = worker.next_trigger(LONG).await;
-    let alternative_dispatched = stream::await_delta(
-        &mut alternative_watch,
-        JOB_CHANGED,
-        wire::EVT_RUN_DISPATCHED,
-        LONG,
-    )
-    .await;
+    let alternative_opening = stream::snapshot(&mut alternative_watch, JOB_CHANGED, SHORT).await;
     assert_eq!(
-        delta::event_of(
-            &alternative_dispatched,
-            wire::EVT_RUN_DISPATCHED,
-            alternative_id
-        )["runId"],
-        json!(runner::run_id(&alternative_trigger).to_string())
+        alternative_opening["job"]["runs"][0]["id"],
+        json!(runner::run_id(&alternative_trigger).to_string()),
+        "an administrator arriving after the dispatch opens on the run the trigger carries: \
+         {alternative_opening}",
     );
     worker.start_run(&alternative_trigger).await;
     let alternative_started = stream::await_delta(
@@ -317,12 +314,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
             )],
         )
         .await;
-    assert_eq!(
-        gql::run_by_id(&gql::job(&client, admin, parent_id).await, parent_run)["status"],
-        json!("STARTED"),
-        "the parent's own run is never terminated by a child's fate",
-    );
-
     durable.close().await;
     events.stop().await;
     fixture.shutdown().await;

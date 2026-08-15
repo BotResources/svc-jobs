@@ -15,20 +15,30 @@ description = "jobs service — the binary: composition root, GraphQL edge, adap
 # added by whoever writes it, in the same commit.
 [dependencies]
 bc-jobs.workspace = true
+contract-jobs.workspace = true
+br-core-events.workspace = true
+br-core-integration.workspace = true
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.2.0", version = "1.2.0", features = ["graphql"] }
+async-nats.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
 br-core-auth.workspace = true
-br-util-axum-auth.workspace = true
 br-util-postgres.workspace = true
 br-util-axum-readiness.workspace = true
 br-util-observability.workspace = true
 async-graphql.workspace = true
-async-graphql-axum.workspace = true
 axum.workspace = true
 dotenvy.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-br-util-nats-fabric.workspace = true
+br-util-nats-fabric = { workspace = true, features = ["outbox"] }
 
 [dev-dependencies]
 # The e2e suite: it spawns the real binary by `CARGO_BIN_EXE_svc-jobs`, provisions

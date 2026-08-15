@@ -97,6 +97,16 @@ impl Job {
         if let Some(discarded) = self.discard_settled("RunPlanDeclared", run) {
             return Ok(discarded);
         }
+        if run
+            .plan()
+            .is_some_and(|current| current.items() == fact.items)
+        {
+            return Ok(CommandResult::nothing_happened(
+                CommandWarning::FactAlreadyRecorded {
+                    fact: "RunPlanDeclared",
+                },
+            ));
+        }
         let declaration_number = run.plan().map_or(DeclarationNumber::FIRST, |current| {
             current.declaration_number().next()
         });

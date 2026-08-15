@@ -12,6 +12,7 @@ pub mod producer;
 pub mod runner;
 pub mod stream;
 pub mod subs;
+pub mod views;
 pub mod wire;
 
 use std::time::Duration;

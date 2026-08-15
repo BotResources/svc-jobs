@@ -9,6 +9,9 @@ description = "Published language for svc-jobs — the integration subjects and 
 
 [dependencies]
 br-core-integration.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

@@ -69,10 +69,8 @@ impl JobDeclaration {
                 "id": id.to_string(),
                 "display_name": name,
             })),
-            "source": self.source.as_ref().map(|(bc, entity_id)| json!({
-                "bc": bc,
-                "entity_id": entity_id.to_string(),
-            })),
+            "source_bc": self.source.as_ref().map(|(bc, _)| bc.clone()),
+            "source_entity_id": self.source.as_ref().map(|(_, entity_id)| entity_id.to_string()),
             "max_attempts": self.max_attempts,
         })
     }

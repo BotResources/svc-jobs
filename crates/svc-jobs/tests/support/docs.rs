@@ -52,7 +52,7 @@ pub const JOB_BY_SOURCE: &str = r#"
 query($bc: String!, $entityId: UUID!) {
   jobsJobBySource(sourceBc: $bc, sourceEntityId: $entityId) {
     job {
-      id status attemptCount activeRunId runnerType producer isDeleted predecessorJobId
+      id status attemptCount activeRunId runnerType producer isDeleted
       source { bc entityId }
     }
     affordances { action allowed reasonCode params }

@@ -42,9 +42,9 @@ pub const VERB_CANCEL: &str = "cancel";
 pub const VERB_FINISH: &str = "finish";
 pub const VERB_FAIL: &str = "fail";
 
-pub const ACTION_CANCEL: &str = "CANCEL_JOB";
-pub const ACTION_MANUAL_RETRY: &str = "MANUAL_RETRY_JOB";
-pub const ACTION_DELETE: &str = "DELETE_JOB";
+pub const ACTION_CANCEL: &str = "cancel";
+pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
+pub const ACTION_DELETE: &str = "delete";
 
 pub const EVT_QUEUED: &str = "JobsJobQueuedEvent";
 pub const EVT_RUN_DISPATCHED: &str = "JobsRunDispatchedEvent";

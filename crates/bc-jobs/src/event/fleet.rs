@@ -70,6 +70,42 @@ impl FleetEvent {
         }
     }
 
+    pub fn decode(event_type: &str, payload: Value) -> Result<Self, JobsError> {
+        let decoded = match event_type {
+            "RunnerTypeRegistered" => Self::RunnerTypeRegistered(serde_json::from_value(payload)?),
+            "InstanceConnected" => Self::InstanceConnected(serde_json::from_value(payload)?),
+            "InstanceStatusReported" => {
+                Self::InstanceStatusReported(serde_json::from_value(payload)?)
+            }
+            "InstanceDisconnected" => Self::InstanceDisconnected(serde_json::from_value(payload)?),
+            other => {
+                return Err(JobsError::UnknownEnumValue {
+                    field: "fleet_event_type",
+                    value: other.to_owned(),
+                });
+            }
+        };
+        Ok(decoded)
+    }
+
+    pub fn runner_type(&self) -> &RunnerTypeKey {
+        match self {
+            Self::RunnerTypeRegistered(fact) => &fact.runner_type,
+            Self::InstanceConnected(fact) => &fact.runner_type,
+            Self::InstanceStatusReported(fact) => &fact.runner_type,
+            Self::InstanceDisconnected(fact) => &fact.runner_type,
+        }
+    }
+
+    pub fn instance_key(&self) -> Option<&InstanceKey> {
+        match self {
+            Self::RunnerTypeRegistered(_) => None,
+            Self::InstanceConnected(fact) => Some(&fact.instance_key),
+            Self::InstanceStatusReported(fact) => Some(&fact.instance_key),
+            Self::InstanceDisconnected(fact) => Some(&fact.instance_key),
+        }
+    }
+
     pub fn payload(&self) -> Result<Value, JobsError> {
         match self {
             Self::RunnerTypeRegistered(fact) => serde_json::to_value(fact),

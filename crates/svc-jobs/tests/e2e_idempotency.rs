@@ -1,6 +1,6 @@
 mod support;
 
-use br_test_harness::SseSubscription;
+use br_test_harness::{SseSubscription, wait_until};
 use serde_json::json;
 use support::db::{self, Durable};
 use support::events::EventLog;
@@ -172,6 +172,15 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     instance.start_step(&trigger, 1, "store").await;
     gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
 
+    let landed = wait_until(LONG, || async {
+        !gql::logs_of(&client, admin, job_id).await.is_empty()
+    })
+    .await;
+    assert!(
+        landed,
+        "the line the runner logged must reach the audit record within {LONG:?}"
+    );
+    tokio::time::sleep(QUIET).await;
     let logs = gql::logs_of(&client, admin, job_id).await;
     let repeated = logs
         .iter()

@@ -104,7 +104,7 @@ fn a_run_carried_by_a_sibling_instance_never_lands_on_this_one() {
 }
 
 #[test]
-fn a_job_whose_run_no_instance_has_claimed_is_waiting() {
+fn only_a_job_whose_next_attempt_is_still_undispatched_is_waiting() {
     // Given: one job with a dispatched but unclaimed run, and one with no run at all
     let dispatched = JobBuilder::new()
         .with_run(RunBuilder::new(1).build())
@@ -115,8 +115,9 @@ fn a_job_whose_run_no_instance_has_claimed_is_waiting() {
         &analysts(vec![live("pod-7", "idle")]),
         &[dispatched, queued],
     );
-    // Then: both count as waiting for an instance, neither as executing
-    assert_eq!(view.waiting_job_count(), 2);
+    // Then: only the job whose work has not been handed to the type yet is waiting —
+    // a dispatched trigger is already the type's, and it is not executing until claimed
+    assert_eq!(view.waiting_job_count(), 1);
     assert_eq!(view.executing_job_count(), 0);
 }
 

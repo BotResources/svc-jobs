@@ -1,3 +1,6 @@
+pub mod command;
+pub mod event;
+pub mod runner;
 pub mod runner_transport;
 pub mod segment;
 

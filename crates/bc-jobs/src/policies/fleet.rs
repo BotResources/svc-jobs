@@ -25,18 +25,15 @@ impl FleetSignal {
 pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
     match event {
         JobEvent::JobQueued(_) | JobEvent::RetryScheduled(_) => vec![FleetSignal::JobBeganWaiting],
-        JobEvent::RunStarted(_) => vec![
-            FleetSignal::JobStoppedWaiting,
-            FleetSignal::JobBeganExecuting,
-        ],
+        JobEvent::RunDispatched(_) => vec![FleetSignal::JobStoppedWaiting],
+        JobEvent::RunStarted(_) => vec![FleetSignal::JobBeganExecuting],
         JobEvent::RunCompleted(_) | JobEvent::RunFailed(_) | JobEvent::RunCancelled(_) => {
             vec![FleetSignal::JobStoppedExecuting]
         }
         JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_) => {
             vec![FleetSignal::JobStoppedWaiting]
         }
-        JobEvent::RunDispatched(_)
-        | JobEvent::RunPlanDeclared(_)
+        JobEvent::RunPlanDeclared(_)
         | JobEvent::RunStepStarted(_)
         | JobEvent::RunCancellationRequested(_)
         | JobEvent::ManualRetryStarted(_)
@@ -83,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn a_started_run_moves_its_job_from_waiting_to_executing() {
+    fn a_started_run_moves_its_job_into_executing() {
         // Given: a run that an instance just claimed
         let event = JobEvent::RunStarted(RunStarted {
             job_id: job_id(),
@@ -91,14 +88,8 @@ mod tests {
             runner_type: runner_type(),
             instance_key: InstanceKey::new("pod-7").unwrap(),
         });
-        // When/Then: the fleet view learns both halves of the transition
-        assert_eq!(
-            fleet_signals(&event),
-            vec![
-                FleetSignal::JobStoppedWaiting,
-                FleetSignal::JobBeganExecuting
-            ]
-        );
+        // When/Then: the job was already dispatched, so only the executing half moves
+        assert_eq!(fleet_signals(&event), vec![FleetSignal::JobBeganExecuting]);
     }
 
     #[test]

@@ -173,14 +173,18 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
 
     let listed = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
     delta::assert_failed_affordances(&delta::assert_upserted_summary(&listed, job_id, "FAILED"));
-    delta::assert_fleet(
-        &stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_STOPPED_EXECUTING, LONG).await,
-        &runner_type,
-        0,
-        0,
-        0,
-        1,
-    );
+    let last_attempt_stopped = stream::await_message(
+        &mut fleet_watch,
+        FLEET_CHANGED,
+        "the last attempt leaving execution",
+        |message| {
+            message["event"]["kind"] == json!(wire::KIND_JOB_STOPPED_EXECUTING)
+                && message["event"]["runId"] == json!(second_run.to_string())
+        },
+        LONG,
+    )
+    .await;
+    delta::assert_fleet(&last_attempt_stopped, &runner_type, 0, 0, 0, 1);
 
     // Then: no third attempt is ever scheduled or dispatched
     stream::expect_no_delta(
@@ -196,6 +200,15 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         2,
         "the retry budget is a ceiling on dispatches, not on failures",
     );
+
+    support::views::assert_views_agree(
+        &durable,
+        &client,
+        admin,
+        job_id,
+        "a job whose retry budget is exhausted",
+    )
+    .await;
 
     // When: another job's runner asks to come back sooner than the backoff it earned
     let impatient_type = wire::unique_runner_type("impatient");

@@ -15,3 +15,22 @@ first real release promotes to a numbered heading.
 
 - Scaffolded by `runkit`: the composition root, the GraphQL edge with a single
   placeholder query, and the event-store migration. No behaviour yet.
+- The service: migrations realising the sealed 0.1 database schema (including
+  the bounded `run_logs` range partitions and the three read views), the
+  PostgreSQL adapters behind the `bc-jobs` ports, the GraphQL edge serving the
+  sealed SDL (five queries, three ack-only mutations, four snapshot-then-delta
+  subscriptions over SSE), the integration bus through
+  `br-util-nats-fabric` (four durable command consumers, transactional outbox
+  for the eight published events), the confined runner transport (trigger
+  publication and withdrawal, status and log consumption, the desired-state
+  cancel bucket, the presence watch), and the dispatch and backstop loops.
+- Every knob is configuration: `JOBS_INACTIVITY_TIMEOUT_SECONDS`,
+  `JOBS_RUN_MAX_DURATION_SECONDS`, `JOBS_RETRY_BASE_DELAY_SECONDS`,
+  `JOBS_MAX_ATTEMPTS_CEILING`, `JOBS_BACKSTOP_INTERVAL_SECONDS`, validated once
+  at boot.
+- The whole user-facing surface is platform-administrator only: a missing or
+  undecodable passport is answered `UNAUTHENTICATED`, any other caller
+  `FORBIDDEN`, both as structured GraphQL errors, before a query, a mutation or
+  a subscription establishment reaches a resolver.
+- Declared NATS streams and buckets are bound, never created: an absent stream
+  or bucket fails the boot loudly.

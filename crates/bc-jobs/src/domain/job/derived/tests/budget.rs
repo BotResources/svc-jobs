@@ -1,10 +1,13 @@
 use super::*;
 
 fn lowered_to(ceiling: u32) -> ServiceLimits {
-    ServiceLimits {
-        max_attempts_ceiling: MaxAttempts::new(ceiling).unwrap(),
-        ..ServiceLimits::default()
-    }
+    ServiceLimits::new(
+        MaxAttempts::new(ceiling).unwrap(),
+        MaxAttempts::new(1).unwrap(),
+        chrono::TimeDelta::hours(72),
+        chrono::TimeDelta::hours(24),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -34,19 +37,13 @@ fn a_stored_budget_above_a_lowered_ceiling_is_refused_never_narrowed() {
 }
 
 #[test]
-fn a_service_whose_default_exceeds_its_own_ceiling_yields_no_budget_at_all() {
-    // Given: a job that declared no budget, under a ceiling below the service default
+fn a_job_declaring_no_budget_takes_the_configured_default_whatever_the_ceiling() {
+    // Given: a job that declared no budget, under limits whose default is one
     let job = JobBuilder::new().build();
     // When: the effective budget is read
-    let result = job.budget(&lowered_to(1));
-    // Then: the misconfiguration fails loud instead of applying a figure nobody chose
-    assert_eq!(
-        result,
-        Err(JobsError::MaxAttemptsAboveCeiling {
-            requested: ServiceLimits::default().default_max_attempts.get(),
-            ceiling: 1
-        })
-    );
+    // Then: the configured default governs — a default above its own ceiling cannot exist,
+    // because the limits refuse to be constructed at all
+    assert_eq!(job.budget(&lowered_to(1)).unwrap().get(), 1);
 }
 
 #[test]
@@ -68,6 +65,6 @@ fn a_job_declaring_no_budget_falls_back_to_the_service_default() {
     // Then: the service default governs
     assert_eq!(
         job.budget(&ServiceLimits::default()).unwrap().get(),
-        ServiceLimits::default().default_max_attempts.get()
+        ServiceLimits::default().default_max_attempts().get()
     );
 }

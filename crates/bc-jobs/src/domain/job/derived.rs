@@ -41,7 +41,9 @@ impl Job {
     }
 
     pub fn is_waiting(&self) -> bool {
-        !self.is_terminal() && !self.is_executing()
+        !self.is_terminal()
+            && self.active_run().is_none()
+            && (self.runs().is_empty() || self.unconsumed_retry().is_some())
     }
 
     pub fn latest_run(&self) -> Option<&Run> {

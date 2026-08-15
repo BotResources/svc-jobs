@@ -75,7 +75,7 @@ impl Job {
         if let Some(discarded) = self.discard_settled("RunFailed", run) {
             return Ok(discarded);
         }
-        if !run.has_outrun(command.at, limits.max_run_duration) {
+        if !run.has_outrun(command.at, limits.max_run_duration()) {
             return Err(JobsError::RunWithinMaxDuration {
                 run_id: run.id().as_uuid(),
             });
@@ -110,7 +110,7 @@ impl Job {
             return Err(JobsError::JobStillActive);
         }
         let idle_since = self.last_activity_at();
-        if command.at - idle_since < limits.inactivity_timeout {
+        if command.at - idle_since < limits.inactivity_timeout() {
             return Err(JobsError::InactivityTimeoutNotReached { idle_since });
         }
         Ok(CommandResult::from_event(JobEvent::JobFailed(JobFailed {

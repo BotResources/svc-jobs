@@ -120,6 +120,10 @@ impl<'a> FakeRunner<'a> {
         )
     }
 
+    pub fn resume_after(&mut self, claimed_by: &FakeRunner) {
+        self.cursor = claimed_by.cursor;
+    }
+
     pub async fn next_trigger(&mut self, timeout: Duration) -> Value {
         self.try_next_trigger(timeout).await.unwrap_or_else(|| {
             panic!(
@@ -210,19 +214,13 @@ impl<'a> FakeRunner<'a> {
         declaration_id: Uuid,
         labels: &[&str],
     ) -> Uuid {
-        let items: Vec<Value> = labels
-            .iter()
-            .enumerate()
-            .map(|(index, label)| json!({ "index": index, "label": label }))
-            .collect();
         self.publish_status(
             wire::FACT_PLAN_DECLARED,
             json!({
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
                 "declaration_id": declaration_id.to_string(),
-                "declared_at": Utc::now().to_rfc3339(),
-                "items": items,
+                "steps": labels,
             }),
         )
         .await;
@@ -235,7 +233,7 @@ impl<'a> FakeRunner<'a> {
             json!({
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
-                "step_index": index,
+                "index": index,
                 "label": label,
                 "started_at": Utc::now().to_rfc3339(),
             }),
@@ -268,10 +266,12 @@ impl<'a> FakeRunner<'a> {
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
                 "occurred_at": Utc::now().to_rfc3339(),
-                "failure_kind": kind,
-                "reason_code": reason_code,
-                "params": { "attempt": trigger["attempt_number"].clone() },
-                "diagnostic": { "stderr": "runner double diagnostic" },
+                "report": {
+                    "kind": kind,
+                    "reason_code": reason_code,
+                    "params": { "attempt": trigger["attempt"].clone() },
+                    "diagnostic": { "stderr": "runner double diagnostic" },
+                },
                 "retry_after_seconds": retry_after_seconds,
             }),
         )
@@ -390,7 +390,7 @@ fn presence_value(runner_type: &str, instance_key: &str, version: &str, status: 
     serde_json::to_vec(&json!({
         "runner_type": runner_type,
         "instance_key": instance_key,
-        "version": version,
+        "runner_version": version,
         "status": status,
         "observed_at": Utc::now().to_rfc3339(),
     }))
@@ -406,7 +406,7 @@ pub fn job_id(trigger: &Value) -> Uuid {
 }
 
 pub fn attempt_number(trigger: &Value) -> i64 {
-    trigger["attempt_number"]
+    trigger["attempt"]
         .as_i64()
         .unwrap_or_else(|| panic!("a trigger carries its attempt number: {trigger}"))
 }

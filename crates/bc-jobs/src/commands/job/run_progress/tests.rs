@@ -163,6 +163,32 @@ fn a_revised_plan_supersedes_the_previous_declaration() {
 }
 
 #[test]
+fn a_redelivered_identical_plan_declaration_is_absorbed() {
+    // Given: a run whose runner already declared exactly this segmentation
+    let run = RunBuilder::new(1)
+        .started(ts(5))
+        .with_plan(crate::fixtures::plan(&["Fetch", "Read"]))
+        .build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the very same declaration is delivered a second time
+    let result = job
+        .declare_run_plan(RunPlanFact {
+            run_id,
+            declaration_id: declaration_id(),
+            items: items(&["Fetch", "Read"]),
+            declared_at: ts(30),
+        })
+        .unwrap();
+    // Then: no second declaration is opened — an at-least-once transport must not renumber a plan
+    assert!(result.is_empty());
+    assert_eq!(
+        result.warnings.first().map(CommandWarning::code),
+        Some("fact_already_recorded")
+    );
+}
+
+#[test]
 fn starting_a_step_implicitly_closes_the_previous_one() {
     // Given: a run currently on step zero
     let run = RunBuilder::new(1)

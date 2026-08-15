@@ -79,6 +79,9 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     assert_eq!(job["source"]["entityId"], json!(entity_id.to_string()));
     delta::assert_active_affordances(&view);
 
+    support::views::assert_views_agree(&durable, &client, admin, job_id, "a job nobody serves yet")
+        .await;
+
     let by_source = gql::job_by_source(&client, admin, "projects", entity_id).await;
     let listed = gql::list_jobs(&client, admin, json!({ "runnerTypes": [runner_type] })).await;
     assert_eq!(by_source["job"]["id"], json!(job_id.to_string()));
@@ -173,6 +176,9 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         &[run],
         &instance.version,
     );
+
+    support::views::assert_views_agree(&durable, &client, admin, job_id, "a job under execution")
+        .await;
 
     // When: the runner declares a plan, revises it, and advances its cursor
     instance
@@ -314,6 +320,8 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         "the source lookup answers with the single NON-TERMINAL job for that reference, so a \
          finished one no longer answers for its source",
     );
+
+    support::views::assert_views_agree(&durable, &client, admin, job_id, "a completed job").await;
 
     // When: the administrator soft-deletes the terminal job
     let mut deleted_window = SseSubscription::open(
