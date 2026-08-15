@@ -14,8 +14,6 @@ pub enum PortError {
     ConcurrentModification,
     #[error("dependency_unavailable")]
     Unavailable { detail: String },
-    #[error("write_refused")]
-    Refused { detail: String },
     #[error("stored_state_rejected")]
     StoredStateRejected(#[from] JobsError),
 }

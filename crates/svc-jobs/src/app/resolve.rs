@@ -2,7 +2,7 @@ use bc_jobs::commands::job::cancellation::CancelJob;
 use bc_jobs::commands::job::resolution::{FailJob, FinishJob};
 use bc_jobs::domain::ids::{JobId, ResolutionId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::ownership::{Caller, CancelRequester, JobOwner};
+use bc_jobs::domain::ownership::{ActorRef, CancelRequester, DeclarationClaim};
 use bc_jobs::policies::cascade::cancellation_cascade;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::EventMetadata;
@@ -15,31 +15,19 @@ pub async fn owner_claim(
     jobs: &Jobs,
     job: &Job,
     metadata: &EventMetadata,
-) -> Result<Caller, ServiceError> {
-    let mut bound = job.clone();
-    while let Some(predecessor) = bound.predecessor_job_id() {
+) -> Result<DeclarationClaim, ServiceError> {
+    let mut governing = job.clone();
+    while let Some(predecessor) = governing.predecessor_job_id() {
         match jobs.load(predecessor).await? {
-            Some(earlier) => bound = earlier,
+            Some(earlier) => governing = earlier,
             None => break,
         }
     }
-    match jobs.store.declaring_actor(bound.id()).await? {
-        Some(declared_by) if declared_by == metadata.actor.id() => Ok(claim_of(job.owner())),
-        _ => Err(ServiceError::Domain(bc_jobs::JobsError::NotOwner)),
-    }
-}
-
-fn claim_of(owner: &JobOwner) -> Caller {
-    match owner {
-        JobOwner::Producer(producer) => Caller::Producer(producer.clone()),
-        JobOwner::Runner {
-            parent_job_id,
-            runner_type,
-        } => Caller::Runner {
-            runner_type: runner_type.clone(),
-            executing_job_id: *parent_job_id,
-        },
-    }
+    let declared_by = jobs.store.declaring_actor(governing.id()).await?;
+    Ok(DeclarationClaim::new(
+        declared_by.map(ActorRef::new),
+        ActorRef::new(metadata.actor.id()),
+    ))
 }
 
 pub async fn finish(
@@ -49,10 +37,10 @@ pub async fn finish(
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    let caller = owner_claim(jobs, &job, metadata).await?;
+    let claim = owner_claim(jobs, &job, metadata).await?;
     let result = job.finish(FinishJob {
         resolution_id,
-        caller,
+        claim,
     })?;
     jobs.commit(
         vec![JobChange::new(job_id, Some(job), result.events)],
@@ -69,10 +57,10 @@ pub async fn fail(
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    let caller = owner_claim(jobs, &job, metadata).await?;
+    let claim = owner_claim(jobs, &job, metadata).await?;
     let result = job.declare_failed(FailJob {
         resolution_id,
-        caller,
+        claim,
     })?;
     jobs.commit(
         vec![JobChange::new(job_id, Some(job), result.events).with_note(note)],

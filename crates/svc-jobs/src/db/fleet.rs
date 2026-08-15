@@ -62,6 +62,23 @@ impl PgStore {
         load_one(&mut *tx, key).await
     }
 
+    pub async fn lock_runner_type(
+        tx: &mut PgConnection,
+        runner_type_id: RunnerTypeId,
+        key: &RunnerTypeKey,
+    ) -> Result<Option<RunnerType>, PortError> {
+        let locked: Option<Uuid> =
+            sqlx::query_scalar("SELECT id::uuid FROM runner_types WHERE id = $1 FOR UPDATE")
+                .bind(runner_type_id.as_uuid())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        if locked.is_none() {
+            return Err(PortError::ConcurrentModification);
+        }
+        load_one(&mut *tx, key).await
+    }
+
     pub async fn apply_fleet_event(
         tx: &mut PgConnection,
         event: &FleetEvent,
@@ -99,8 +116,8 @@ impl PgStore {
             }
             FleetEvent::InstanceStatusReported(fact) => {
                 sqlx::query(
-                    "UPDATE runner_presence_sessions SET version = $2, last_observed_at = $3 \
-                     WHERE id = $1",
+                    "UPDATE runner_presence_sessions SET version = $2, \
+                     last_observed_at = greatest(last_observed_at, $3) WHERE id = $1",
                 )
                 .bind(fact.session_id.as_uuid())
                 .bind(fact.version.as_str())
@@ -120,7 +137,8 @@ impl PgStore {
             FleetEvent::InstanceDisconnected(fact) => {
                 sqlx::query(
                     "UPDATE runner_presence_sessions \
-                     SET disconnected_at = $2, disconnect_reason_code = $3 \
+                     SET disconnected_at = greatest(connected_at, $2), \
+                     disconnect_reason_code = $3 \
                      WHERE id = $1 AND disconnected_at IS NULL",
                 )
                 .bind(fact.session_id.as_uuid())
@@ -144,7 +162,7 @@ async fn status_change(
 ) -> Result<(), PortError> {
     sqlx::query(
         "INSERT INTO runner_status_changes (session_id, change_number, reported_status, \
-         observed_at) VALUES ($1, $2, $3, $4) ON CONFLICT (session_id, change_number) DO NOTHING",
+         observed_at) VALUES ($1, $2, $3, $4)",
     )
     .bind(session.as_uuid())
     .bind(change_number)

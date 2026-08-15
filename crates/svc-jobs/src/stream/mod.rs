@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 
 use bc_jobs::domain::ids::{JobId, RunId, RunLogId};
 use bc_jobs::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};
@@ -36,7 +36,7 @@ pub enum Fact {
 
 #[derive(Clone)]
 pub struct Hub {
-    sender: broadcast::Sender<Fact>,
+    sender: Arc<RwLock<broadcast::Sender<Fact>>>,
 }
 
 impl Default for Hub {
@@ -48,15 +48,26 @@ impl Default for Hub {
 impl Hub {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CAPACITY);
-        Self { sender }
+        Self {
+            sender: Arc::new(RwLock::new(sender)),
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Fact> {
-        self.sender.subscribe()
+        self.read_sender().subscribe()
+    }
+
+    pub fn end_every_subscription(&self) {
+        let (replacement, _) = broadcast::channel(CAPACITY);
+        *self.sender.write().unwrap_or_else(PoisonError::into_inner) = replacement;
     }
 
     fn publish(&self, fact: Fact) {
-        let _ = self.sender.send(fact);
+        let _ = self.read_sender().send(fact);
+    }
+
+    fn read_sender(&self) -> RwLockReadGuard<'_, broadcast::Sender<Fact>> {
+        self.sender.read().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

@@ -111,7 +111,7 @@ async fn next_version(
     Ok(row.get("version"))
 }
 
-// the columns of the shared DomainEvent envelope, written in one statement
+// eight parameters = the eight columns of the shared DomainEvent envelope, written in one statement
 #[allow(clippy::too_many_arguments)]
 async fn append(
     tx: &mut PgConnection,

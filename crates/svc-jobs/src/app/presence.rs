@@ -23,7 +23,7 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
     };
     let command = ObservePresence {
         runner_type_id,
-        runner_type: key,
+        runner_type: key.clone(),
         instance_key: InstanceKey::new(&presence.instance_key)?,
         session_id: PresenceSessionId::new(jobs.ids.next())?,
         version: RunnerVersion::new(&presence.runner_version)?,
@@ -33,8 +33,13 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
     recorded(
         write::commit_fleet_events(
             &jobs.store,
-            runner_type_id,
-            &result.events,
+            jobs.ids.as_ref(),
+            write::FleetChange {
+                runner_type_id,
+                runner_type: &key,
+                decided_on: known.as_ref(),
+                events: &result.events,
+            },
             &service_metadata(),
             jobs.clock.now(),
         )
@@ -75,8 +80,13 @@ pub async fn lost(
     let this_pod_recorded_the_loss = recorded(
         write::commit_fleet_events(
             &jobs.store,
-            known.id(),
-            &result.events,
+            jobs.ids.as_ref(),
+            write::FleetChange {
+                runner_type_id: known.id(),
+                runner_type: &key,
+                decided_on: Some(&known),
+                events: &result.events,
+            },
             &service_metadata(),
             jobs.clock.now(),
         )

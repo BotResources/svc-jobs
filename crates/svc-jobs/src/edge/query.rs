@@ -97,6 +97,11 @@ impl QueryRoot {
         let state = ctx.data::<EdgeState>()?;
         let job_id = JobId::new(job_id).map_err(edge_error)?;
         let run_id = run_id.map(RunId::new).transpose().map_err(edge_error)?;
+        if first.is_some() && last.is_some() {
+            return Err(async_graphql::Error::from(
+                EdgeError::bad_user_input().with_reason("first_and_last_together"),
+            ));
+        }
         let page = state
             .store
             .log_page(

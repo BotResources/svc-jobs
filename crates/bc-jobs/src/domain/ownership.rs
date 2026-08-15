@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::domain::ids::JobId;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::references::KnownUser;
+use crate::error::JobsError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JobOwner {
@@ -13,34 +15,7 @@ pub enum JobOwner {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Caller {
-    Producer(ProducerKey),
-    Runner {
-        runner_type: RunnerTypeKey,
-        executing_job_id: JobId,
-    },
-    Administrator(KnownUser),
-}
-
 impl JobOwner {
-    pub fn authorizes(&self, caller: &Caller) -> bool {
-        match (self, caller) {
-            (Self::Producer(owner), Caller::Producer(claimed)) => owner == claimed,
-            (
-                Self::Runner {
-                    parent_job_id,
-                    runner_type,
-                },
-                Caller::Runner {
-                    runner_type: claimed_type,
-                    executing_job_id,
-                },
-            ) => parent_job_id == executing_job_id && runner_type == claimed_type,
-            _ => false,
-        }
-    }
-
     pub fn parent_job_id(&self) -> Option<JobId> {
         match self {
             Self::Producer(_) => None,
@@ -49,67 +24,83 @@ impl JobOwner {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActorRef(Uuid);
+
+impl ActorRef {
+    pub fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationClaim {
+    declared_by: Option<ActorRef>,
+    claimed_by: ActorRef,
+}
+
+impl DeclarationClaim {
+    pub fn new(declared_by: Option<ActorRef>, claimed_by: ActorRef) -> Self {
+        Self {
+            declared_by,
+            claimed_by,
+        }
+    }
+
+    pub fn guard_owns_the_job(&self) -> Result<(), JobsError> {
+        if self.declared_by == Some(self.claimed_by) {
+            Ok(())
+        } else {
+            Err(JobsError::NotOwner)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelRequester {
     Administrator(KnownUser),
-    Owner(Caller),
+    Owner(DeclarationClaim),
     Cascade { originating_job_id: JobId },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::keys::DisplayName;
-    use br_core_events::UserId;
-    use uuid::Uuid;
 
-    fn job_id() -> JobId {
-        JobId::new(Uuid::now_v7()).unwrap()
+    fn actor() -> ActorRef {
+        ActorRef::new(Uuid::now_v7())
     }
 
     #[test]
-    fn a_producer_owned_job_answers_only_to_its_producer() {
-        // Given: a root job owned by the producer that declared it
-        let owner = JobOwner::Producer(ProducerKey::new("projects").unwrap());
-        // When: another bounded context claims to be the owner
-        // Then: only the declaring producer is authorized
-        assert!(owner.authorizes(&Caller::Producer(ProducerKey::new("projects").unwrap())));
-        assert!(!owner.authorizes(&Caller::Producer(ProducerKey::new("chat").unwrap())));
+    fn a_job_answers_to_the_actor_that_declared_it() {
+        // Given: the actor recorded on the job's declaration
+        let owner = actor();
+        // When: that same actor claims the job
+        let claim = DeclarationClaim::new(Some(owner), owner);
+        // Then: it owns it
+        assert_eq!(claim.guard_owns_the_job(), Ok(()));
     }
 
     #[test]
-    fn a_child_job_answers_only_to_the_runner_executing_its_parent() {
-        // Given: a child job whose owner is the runner of the parent job
-        let parent = job_id();
-        let owner = JobOwner::Runner {
-            parent_job_id: parent,
-            runner_type: RunnerTypeKey::new("analyst").unwrap(),
-        };
-        // When: the runner executing that parent speaks
-        let rightful = Caller::Runner {
-            runner_type: RunnerTypeKey::new("analyst").unwrap(),
-            executing_job_id: parent,
-        };
-        // Then: it is authorized, while the same runner type on another job is not
-        assert!(owner.authorizes(&rightful));
-        assert!(!owner.authorizes(&Caller::Runner {
-            runner_type: RunnerTypeKey::new("analyst").unwrap(),
-            executing_job_id: job_id(),
-        }));
+    fn another_actor_of_the_same_bounded_context_is_not_the_owner() {
+        // Given: a job declared by one actor
+        let declared_by = actor();
+        // When: a different actor claims it
+        let claim = DeclarationClaim::new(Some(declared_by), actor());
+        // Then: ownership is the declaring actor's, never a neighbour's
+        assert_eq!(claim.guard_owns_the_job(), Err(JobsError::NotOwner));
     }
 
     #[test]
-    fn an_administrator_never_owns_a_job() {
-        // Given: an owned job and a platform administrator
-        let owner = JobOwner::Producer(ProducerKey::new("projects").unwrap());
-        let admin = Caller::Administrator(
-            KnownUser::new(
-                UserId(Uuid::now_v7()),
-                DisplayName::new("Operator").unwrap(),
-            )
-            .unwrap(),
-        );
-        // When/Then: administration is not ownership — finishing stays the owner's act
-        assert!(!owner.authorizes(&admin));
+    fn a_job_whose_declaration_carries_no_actor_answers_to_nobody() {
+        // Given: no declaring actor on record
+        // When: anyone claims the job
+        let claim = DeclarationClaim::new(None, actor());
+        // Then: an unattributable declaration confers ownership on no one
+        assert_eq!(claim.guard_owns_the_job(), Err(JobsError::NotOwner));
     }
 }

@@ -135,12 +135,12 @@ async fn cancel(
 ) -> Result<(), ServiceError> {
     let job_id = JobId::new(payload.job_id)?;
     let job = jobs.require(job_id).await?;
-    let caller = resolve::owner_claim(jobs, &job, metadata).await?;
+    let claim = resolve::owner_claim(jobs, &job, metadata).await?;
     resolve::cancel(
         jobs,
         job_id,
         ResolutionId::new(jobs.ids.next())?,
-        CancelRequester::Owner(caller),
+        CancelRequester::Owner(claim),
         metadata,
     )
     .await

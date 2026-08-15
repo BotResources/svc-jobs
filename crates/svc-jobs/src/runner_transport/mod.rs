@@ -9,7 +9,7 @@ use async_nats::jetstream::{self, Context};
 use bc_jobs::ports::PortError;
 use contract_jobs::runner as wire;
 
-use crate::config::NatsCredentials;
+use crate::config::{ConsumerTuning, NatsCredentials};
 use crate::error::ServiceError;
 
 #[derive(Clone)]
@@ -18,12 +18,14 @@ pub struct RunnerChannels {
     triggers: Stream,
     cancel: Store,
     presence: Store,
+    tuning: ConsumerTuning,
 }
 
 impl RunnerChannels {
     pub async fn bind(
         nats_url: &str,
         credentials: Option<&NatsCredentials>,
+        tuning: ConsumerTuning,
     ) -> Result<Self, ServiceError> {
         let options = match credentials {
             Some(credentials) => async_nats::ConnectOptions::with_user_and_password(
@@ -42,11 +44,16 @@ impl RunnerChannels {
             cancel: bind_bucket(&jetstream, wire::CANCEL_BUCKET).await?,
             presence: bind_bucket(&jetstream, wire::PRESENCE_BUCKET).await?,
             jetstream,
+            tuning,
         })
     }
 
     pub fn context(&self) -> &Context {
         &self.jetstream
+    }
+
+    pub fn consumer_tuning(&self) -> ConsumerTuning {
+        self.tuning
     }
 
     pub fn triggers(&self) -> &Stream {

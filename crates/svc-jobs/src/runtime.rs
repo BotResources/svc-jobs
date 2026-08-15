@@ -24,7 +24,9 @@ pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimu
                 match fact {
                     Ok(fact) if !unblocks_dispatch(&fact) => continue,
                     Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        facts = hub.subscribe();
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 }
             }

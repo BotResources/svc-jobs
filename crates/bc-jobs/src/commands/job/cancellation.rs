@@ -43,8 +43,8 @@ impl Job {
             return Ok(absorbed);
         }
         self.guard_cancel()?;
-        if let CancelRequester::Owner(caller) = &command.requester {
-            self.guard_owner(caller)?;
+        if let CancelRequester::Owner(claim) = &command.requester {
+            claim.guard_owns_the_job()?;
         }
         let withdrawal = RunWithdrawal {
             reason_code: ReasonCode::new(CANCELLED_BY_JOB)?,
@@ -68,9 +68,9 @@ impl Job {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobResolution;
-    use crate::domain::keys::ProducerKey;
-    use crate::domain::ownership::Caller;
-    use crate::fixtures::{JobBuilder, RunBuilder, job_id, producer, resolution_id, ts, user};
+    use crate::domain::ownership::{ActorRef, DeclarationClaim};
+    use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts, user};
+    use uuid::Uuid;
 
     fn by_administrator() -> CancelRequester {
         CancelRequester::Administrator(user())
@@ -234,12 +234,15 @@ mod tests {
 
     #[test]
     fn an_owner_cancelling_a_job_it_does_not_own_is_refused() {
-        // Given: a job owned by the projects bounded context
+        // Given: a job declared by one actor
         let job = JobBuilder::new().build();
-        // When: another producer cancels it as if it were the owner
+        // When: another actor cancels it as if it were the owner
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
-            requester: CancelRequester::Owner(Caller::Producer(ProducerKey::new("chat").unwrap())),
+            requester: CancelRequester::Owner(DeclarationClaim::new(
+                Some(ActorRef::new(Uuid::now_v7())),
+                ActorRef::new(Uuid::now_v7()),
+            )),
         });
         // Then: ownership is checked before the cancellation is honoured
         assert_eq!(result, Err(JobsError::NotOwner));
@@ -247,12 +250,16 @@ mod tests {
 
     #[test]
     fn the_rightful_owner_may_cancel_its_own_job() {
-        // Given: a job owned by the producer that declared it
+        // Given: a job declared by a known actor
         let job = JobBuilder::new().build();
-        // When: that producer cancels it
+        let declared_by = ActorRef::new(Uuid::now_v7());
+        // When: that same actor cancels it
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
-            requester: CancelRequester::Owner(Caller::Producer(producer())),
+            requester: CancelRequester::Owner(DeclarationClaim::new(
+                Some(declared_by),
+                declared_by,
+            )),
         });
         // Then: the cancellation is honoured
         assert!(result.is_ok());

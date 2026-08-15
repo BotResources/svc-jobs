@@ -9,6 +9,7 @@ use futures::StreamExt;
 
 use super::RunnerChannels;
 use crate::app::{Jobs, logs, run_facts};
+use crate::config::ConsumerTuning;
 use crate::error::ServiceError;
 
 const STATUS_DURABLE: &str = "svc_jobs_status";
@@ -16,7 +17,13 @@ const LOG_DURABLE: &str = "svc_jobs_logs";
 
 pub async fn consume_status(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
     let stream = bind(channels.context(), wire::STATUS_STREAM).await?;
-    let consumer = durable(&stream, STATUS_DURABLE, wire::STATUS_FILTER).await?;
+    let consumer = durable(
+        &stream,
+        STATUS_DURABLE,
+        wire::STATUS_FILTER,
+        channels.consumer_tuning(),
+    )
+    .await?;
     run(consumer, move |subject, payload| {
         let jobs = Arc::clone(&jobs);
         async move { handle_status(&jobs, &subject, &payload).await }
@@ -26,7 +33,13 @@ pub async fn consume_status(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result
 
 pub async fn consume_logs(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
     let stream = bind(channels.context(), wire::LOG_STREAM).await?;
-    let consumer = durable(&stream, LOG_DURABLE, wire::LOG_FILTER).await?;
+    let consumer = durable(
+        &stream,
+        LOG_DURABLE,
+        wire::LOG_FILTER,
+        channels.consumer_tuning(),
+    )
+    .await?;
     run(consumer, move |_subject, payload| {
         let jobs = Arc::clone(&jobs);
         async move {
@@ -73,12 +86,16 @@ async fn durable(
     stream: &Stream,
     durable_name: &str,
     filter: &str,
+    tuning: ConsumerTuning,
 ) -> Result<PullConsumer, ServiceError> {
     stream
         .create_consumer(pull::Config {
             durable_name: Some(durable_name.to_owned()),
             filter_subject: filter.to_owned(),
             ack_policy: AckPolicy::Explicit,
+            ack_wait: tuning.ack_wait,
+            max_ack_pending: tuning.max_ack_pending,
+            max_deliver: tuning.max_deliver,
             ..Default::default()
         })
         .await

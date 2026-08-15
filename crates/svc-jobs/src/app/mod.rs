@@ -3,6 +3,7 @@ pub mod backstop;
 pub mod create;
 pub mod dispatch;
 pub mod environment;
+pub mod fingerprint;
 pub mod integration;
 pub mod logs;
 pub mod presence;
@@ -68,7 +69,7 @@ impl Jobs {
             .iter()
             .map(|change| (change.job_id, change.events.clone()))
             .collect();
-        write::commit_job_changes(&self.store, changes, metadata, at).await?;
+        write::commit_job_changes(&self.store, self.ids.as_ref(), changes, metadata, at).await?;
         for (job_id, events) in effects {
             self.after_commit(job_id, &events, metadata).await?;
         }
@@ -162,7 +163,14 @@ impl Jobs {
             return Ok(());
         }
         followups.sort_by_key(|change| change.job_id.as_uuid());
-        write::commit_job_changes(&self.store, followups, metadata, self.clock.now()).await
+        write::commit_job_changes(
+            &self.store,
+            self.ids.as_ref(),
+            followups,
+            metadata,
+            self.clock.now(),
+        )
+        .await
     }
 }
 

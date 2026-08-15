@@ -2,7 +2,7 @@ use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::ResolutionId;
 use crate::domain::job::Job;
 use crate::domain::job::resolution::{JobFailureCause, JobResolutionKind};
-use crate::domain::ownership::Caller;
+use crate::domain::ownership::DeclarationClaim;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::{JobCompleted, JobFailed};
@@ -10,13 +10,13 @@ use crate::event::job_facts::{JobCompleted, JobFailed};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinishJob {
     pub resolution_id: ResolutionId,
-    pub caller: Caller,
+    pub claim: DeclarationClaim,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailJob {
     pub resolution_id: ResolutionId,
-    pub caller: Caller,
+    pub claim: DeclarationClaim,
 }
 
 impl Job {
@@ -52,7 +52,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        self.guard_owner(&command.caller)?;
+        command.claim.guard_owns_the_job()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobCompleted(JobCompleted {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -67,7 +67,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        self.guard_owner(&command.caller)?;
+        command.claim.guard_owns_the_job()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -82,13 +82,16 @@ impl Job {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobResolution;
-    use crate::domain::keys::ProducerKey;
-    use crate::fixtures::{
-        JobBuilder, RunBuilder, job_id, producer, resolution_id, runner_type, ts,
-    };
+    use crate::domain::ownership::ActorRef;
+    use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
+    use uuid::Uuid;
 
-    fn owner() -> Caller {
-        Caller::Producer(producer())
+    fn declaring_actor() -> ActorRef {
+        ActorRef::new(Uuid::from_u128(0x019f_8137_e784_7320_87f3_1307_4aac_c4d4))
+    }
+
+    fn owner() -> DeclarationClaim {
+        DeclarationClaim::new(Some(declaring_actor()), declaring_actor())
     }
 
     #[test]
@@ -102,7 +105,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                caller: owner(),
+                claim: owner(),
             })
             .unwrap();
         // Then: exactly one completion fact is recorded, under the owner's resolution id
@@ -113,30 +116,27 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_that_is_not_the_owner_may_not_finish_the_job() {
-        // Given: a job owned by the projects bounded context
+    fn an_actor_that_did_not_declare_the_job_may_not_finish_it() {
+        // Given: a job declared by one actor
         let job = JobBuilder::new().build();
-        // When: another producer claims it finished
+        // When: another actor claims it finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            caller: Caller::Producer(ProducerKey::new("chat").unwrap()),
+            claim: DeclarationClaim::new(Some(declaring_actor()), ActorRef::new(Uuid::now_v7())),
         });
-        // Then: only the owner finishes a job
+        // Then: only the actor that declared the job resolves it
         assert_eq!(result, Err(JobsError::NotOwner));
     }
 
     #[test]
-    fn a_child_job_is_finished_by_the_runner_executing_its_parent() {
-        // Given: a child job whose owner is the runner of the parent
+    fn a_child_job_is_finished_by_the_actor_that_declared_it() {
+        // Given: a child job declared by the runner executing its parent
         let parent = job_id();
         let job = JobBuilder::new().with_parent(parent).build();
-        // When: that runner declares the child finished
+        // When: that same actor declares the child finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            caller: Caller::Runner {
-                runner_type: runner_type(),
-                executing_job_id: parent,
-            },
+            claim: owner(),
         });
         // Then: it is accepted
         assert!(result.is_ok());
@@ -150,7 +150,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                caller: owner(),
+                claim: owner(),
             })
             .unwrap();
         // Then: the recorded cause is the owner's declaration, with no run to blame
@@ -173,7 +173,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution_id(),
-                caller: owner(),
+                claim: owner(),
             })
             .unwrap();
         // Then: the runner is told to stop and the run is closed before the job resolves
@@ -207,7 +207,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                caller: owner(),
+                claim: owner(),
             })
             .unwrap();
         // Then: the queued run is closed outright, with nothing to stop
@@ -229,7 +229,7 @@ mod tests {
         // When: the owner sends a fresh failure declaration
         let result = job.declare_failed(FailJob {
             resolution_id: resolution_id(),
-            caller: owner(),
+            claim: owner(),
         });
         // Then: terminal resolutions are immutable
         assert_eq!(
@@ -251,7 +251,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                caller: owner(),
+                claim: owner(),
             })
             .unwrap();
         // Then: no second resolution and no duplicate history
@@ -272,7 +272,7 @@ mod tests {
         // When: a new resolution is attempted
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            caller: owner(),
+            claim: owner(),
         });
         // Then: the audit record stays as it was
         assert_eq!(result, Err(JobsError::JobDeleted));

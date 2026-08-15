@@ -4,7 +4,6 @@ use crate::domain::attempts::MaxAttempts;
 use crate::domain::ids::RunId;
 use crate::domain::job::Job;
 use crate::domain::job::status::JobStatus;
-use crate::domain::ownership::Caller;
 use crate::domain::policy::ServiceLimits;
 use crate::domain::references::SourceReference;
 use crate::domain::run::Run;
@@ -151,14 +150,6 @@ impl Job {
             Err(JobsError::JobNotTerminal {
                 status: self.status().as_db_str(),
             })
-        }
-    }
-
-    pub fn guard_owner(&self, caller: &Caller) -> Result<(), JobsError> {
-        if self.owner().authorizes(caller) {
-            Ok(())
-        } else {
-            Err(JobsError::NotOwner)
         }
     }
 }

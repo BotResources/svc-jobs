@@ -7,6 +7,8 @@ pub mod error;
 pub mod runner_transport;
 pub mod runtime;
 pub mod stream;
+pub mod supervision;
+pub mod tasks;
 
 use std::future::IntoFuture;
 use std::sync::{Arc, OnceLock};
@@ -14,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 use axum::Router;
 use axum::routing::{get, post};
 use br_util_axum_readiness::{ReadinessHandle, readiness_route};
-use br_util_nats_fabric::{Fabric, NatsAuth, OutboxRelay};
+use br_util_nats_fabric::{Fabric, NatsAuth};
 use br_util_observability::{http_metrics_layer, init_metrics, liveness_route, metrics_route};
 use br_util_postgres::{ensure_app_role, grant_app_access, init_migration_pool, init_pool};
 
@@ -26,6 +28,7 @@ use edge::HttpState;
 pub use error::ServiceError;
 use runner_transport::RunnerChannels;
 use stream::Hub;
+use supervision::Supervisor;
 
 const APP_ROLE: &str = "jobs_app";
 
@@ -77,8 +80,12 @@ async fn boot(
 
     readiness.set_not_ready("binding the declared NATS infrastructure");
     let fabric = connect_fabric(&settings).await?;
-    let channels =
-        RunnerChannels::bind(&settings.nats_url, settings.nats_credentials.as_ref()).await?;
+    let channels = RunnerChannels::bind(
+        &settings.nats_url,
+        settings.nats_credentials.as_ref(),
+        settings.consumer_tuning,
+    )
+    .await?;
     channels.verify_declared_streams().await?;
     bus::verify_durables(&fabric).await?;
 
@@ -93,14 +100,23 @@ async fn boot(
         retry: settings.retry_policy,
     });
 
-    spawn_background(&settings, &fabric, &channels, &jobs, &hub, pool);
+    let supervisor = Supervisor::new(readiness.clone(), settings.restart_policy);
+    tasks::spawn_supervised(
+        &supervisor,
+        &settings,
+        &fabric,
+        &channels,
+        &jobs,
+        &hub,
+        pool,
+    );
 
     let _ = schema.set(edge::build_schema(edge::state::EdgeState {
         store,
         jobs,
         hub,
     }));
-    readiness.set_ready();
+    supervisor.boot_complete();
     Ok(())
 }
 
@@ -143,99 +159,4 @@ async fn connect_fabric(settings: &Settings) -> Result<Fabric, ServiceError> {
         None => Fabric::connect(&settings.nats_url).await?,
     };
     Ok(fabric)
-}
-
-fn spawn_background(
-    settings: &Settings,
-    fabric: &Fabric,
-    channels: &RunnerChannels,
-    jobs: &Arc<Jobs>,
-    hub: &Hub,
-    pool: sqlx::PgPool,
-) {
-    let relay = OutboxRelay::new(pool.clone(), fabric.clone());
-    let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-    tokio::spawn(async move {
-        let _keep_open = shutdown;
-        if let Err(error) = relay.run(shutdown_rx).await {
-            tracing::error!(error = %error, "the integration outbox relay stopped");
-        }
-    });
-
-    let listening_hub = hub.clone();
-    tokio::spawn(async move {
-        if let Err(error) = stream::listen(pool, listening_hub).await {
-            tracing::error!(error = %error, "the durable fact listener stopped");
-        }
-    });
-
-    spawn_transport(channels.clone(), Arc::clone(jobs));
-    spawn_bus(fabric.clone(), Arc::clone(jobs));
-
-    tokio::spawn(runtime::dispatch_loop(
-        Arc::clone(jobs),
-        hub.clone(),
-        settings.backstop_interval,
-        settings.dispatch_minimum_wake,
-    ));
-    tokio::spawn(runtime::backstop_loop(
-        Arc::clone(jobs),
-        channels.clone(),
-        settings.backstop_interval,
-    ));
-}
-
-fn spawn_transport(channels: RunnerChannels, jobs: Arc<Jobs>) {
-    let presence_channels = channels.clone();
-    let presence_jobs = Arc::clone(&jobs);
-    tokio::spawn(async move {
-        if let Err(error) =
-            runner_transport::presence::watch(presence_channels, presence_jobs).await
-        {
-            tracing::error!(error = %error, "the runner presence watch stopped");
-        }
-    });
-    let status_channels = channels.clone();
-    let status_jobs = Arc::clone(&jobs);
-    tokio::spawn(async move {
-        if let Err(error) =
-            runner_transport::consume::consume_status(status_channels, status_jobs).await
-        {
-            tracing::error!(error = %error, "the runner status consumer stopped");
-        }
-    });
-    tokio::spawn(async move {
-        if let Err(error) = runner_transport::consume::consume_logs(channels, jobs).await {
-            tracing::error!(error = %error, "the runner log consumer stopped");
-        }
-    });
-}
-
-fn spawn_bus(fabric: Fabric, jobs: Arc<Jobs>) {
-    let creations = fabric.clone();
-    let creation_jobs = Arc::clone(&jobs);
-    tokio::spawn(async move {
-        if let Err(error) = bus::consume_creations(creations, creation_jobs).await {
-            tracing::error!(error = %error, "the job-creation consumer stopped");
-        }
-    });
-    let cancellations = fabric.clone();
-    let cancellation_jobs = Arc::clone(&jobs);
-    tokio::spawn(async move {
-        if let Err(error) = bus::consume_cancellations(cancellations, cancellation_jobs).await {
-            tracing::error!(error = %error, "the job-cancellation consumer stopped");
-        }
-    });
-    let completions = fabric.clone();
-    let completion_jobs = Arc::clone(&jobs);
-    tokio::spawn(async move {
-        if let Err(error) = bus::consume_completions(completions, completion_jobs).await {
-            tracing::error!(error = %error, "the job-completion consumer stopped");
-        }
-    });
-    tokio::spawn(async move {
-        if let Err(error) = bus::consume_failures(fabric, jobs).await {
-            tracing::error!(error = %error, "the job-failure consumer stopped");
-        }
-    });
 }

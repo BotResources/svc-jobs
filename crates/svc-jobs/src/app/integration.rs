@@ -134,6 +134,7 @@ fn published<T: Serialize>(
 
 pub fn record(
     published: Published,
+    record_id: Uuid,
     event_id: Uuid,
     metadata: &EventMetadata,
     occurred_at: DateTime<Utc>,
@@ -146,6 +147,6 @@ pub fn record(
         metadata.clone(),
         published.payload,
     );
-    OutboxRecord::stage_event(Uuid::now_v7(), published.coords, &envelope)
+    OutboxRecord::stage_event(record_id, published.coords, &envelope)
         .map_err(|error| ServiceError::Infra(error.to_string()))
 }

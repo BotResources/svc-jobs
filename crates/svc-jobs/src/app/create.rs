@@ -79,6 +79,7 @@ pub async fn reject_malformed(
 ) -> Result<(), ServiceError> {
     write::publish_rejection(
         &jobs.store,
+        jobs.ids.as_ref(),
         job_id,
         REASON_MALFORMED_PAYLOAD,
         json!({ "jobId": job_id }),
@@ -96,6 +97,7 @@ async fn reject(
 ) -> Result<(), ServiceError> {
     write::publish_rejection(
         &jobs.store,
+        jobs.ids.as_ref(),
         wire.job_id,
         published_code(refusal),
         rejection_params(wire, refusal),

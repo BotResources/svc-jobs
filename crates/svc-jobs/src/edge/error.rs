@@ -24,9 +24,7 @@ pub fn of_port(error: PortError) -> EdgeError {
         PortError::ConcurrentModification => {
             EdgeError::conflict().with_reason("concurrent_modification")
         }
-        PortError::Refused { detail } | PortError::Unavailable { detail } => {
-            EdgeError::internal(detail)
-        }
+        PortError::Unavailable { detail } => EdgeError::internal(detail),
     }
 }
 
