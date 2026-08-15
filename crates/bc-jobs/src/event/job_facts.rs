@@ -63,6 +63,7 @@ pub struct RunStepStarted {
     pub run_id: RunId,
     pub step_index: StepIndex,
     pub label: StepLabel,
+    pub started_at: DateTime<Utc>,
     pub closed_step_index: Option<StepIndex>,
 }
 

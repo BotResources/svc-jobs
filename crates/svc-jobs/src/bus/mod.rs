@@ -6,6 +6,8 @@ use br_core_integration::MessageOutcome;
 use br_util_nats_fabric::{CommandConsumer, Fabric};
 use contract_jobs::command as wire;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
+use uuid::Uuid;
 
 use crate::app::{Jobs, create, resolve};
 use crate::error::ServiceError;
@@ -16,7 +18,7 @@ const FINISH_DURABLE: &str = "svc_jobs_job_finish";
 const FAIL_DURABLE: &str = "svc_jobs_job_fail";
 
 pub async fn verify_durables(fabric: &Fabric) -> Result<(), ServiceError> {
-    open::<wire::CreateJob>(fabric, Verb::Create).await?;
+    open::<Value>(fabric, Verb::Create).await?;
     open::<wire::CancelJob>(fabric, Verb::Cancel).await?;
     open::<wire::FinishJob>(fabric, Verb::Finish).await?;
     open::<wire::FailJob>(fabric, Verb::Fail).await?;
@@ -63,15 +65,51 @@ async fn open<T: DeserializeOwned>(
 }
 
 pub async fn consume_creations(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
-    let mut consumer = open::<wire::CreateJob>(&fabric, Verb::Create).await?;
+    let mut consumer = open::<Value>(&fabric, Verb::Create).await?;
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
-            Ok(command) => settle(create::handle(&jobs, &command.payload, &command.metadata).await),
+            Ok(command) => {
+                let payload = command.payload.clone();
+                let metadata = command.metadata.clone();
+                create_outcome(&jobs, payload, &metadata).await
+            }
         };
         acknowledge(delivery, outcome).await;
     }
     Ok(())
+}
+
+async fn create_outcome(
+    jobs: &Jobs,
+    payload: Value,
+    metadata: &br_core_integration::EventMetadata,
+) -> MessageOutcome {
+    match serde_json::from_value::<wire::CreateJob>(payload.clone()) {
+        Ok(command) => settle(create::handle(jobs, &command, metadata).await),
+        Err(error) => {
+            let Some(job_id) = declared_job_id(&payload) else {
+                tracing::warn!(
+                    error = %error,
+                    "a job creation carried an unreadable payload and no job id, discarded"
+                );
+                return MessageOutcome::Term;
+            };
+            tracing::warn!(
+                error = %error,
+                job_id = %job_id,
+                "a job creation carried an unreadable payload, answered by a rejection"
+            );
+            settle(create::reject_malformed(jobs, job_id, metadata).await)
+        }
+    }
+}
+
+fn declared_job_id(payload: &Value) -> Option<Uuid> {
+    payload
+        .get("job_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| Uuid::parse_str(raw).ok())
 }
 
 pub async fn consume_cancellations(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
@@ -97,12 +135,12 @@ async fn cancel(
 ) -> Result<(), ServiceError> {
     let job_id = JobId::new(payload.job_id)?;
     let job = jobs.require(job_id).await?;
-    resolve::guard_declaring_service(jobs, &job, metadata).await?;
+    let caller = resolve::owner_claim(jobs, &job, metadata).await?;
     resolve::cancel(
         jobs,
         job_id,
-        ResolutionId::new(payload.id)?,
-        CancelRequester::Owner(resolve::caller_of(&job)),
+        ResolutionId::new(jobs.ids.next())?,
+        CancelRequester::Owner(caller),
         metadata,
     )
     .await
@@ -113,19 +151,29 @@ pub async fn consume_completions(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), 
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
-            Ok(command) => settle(
-                resolve::finish(
-                    &jobs,
-                    JobId::new(command.payload.job_id)?,
-                    ResolutionId::new(command.payload.id)?,
-                    &command.metadata,
-                )
-                .await,
-            ),
+            Ok(command) => {
+                let payload = command.payload.clone();
+                let metadata = command.metadata.clone();
+                settle(finish(&jobs, &payload, &metadata).await)
+            }
         };
         acknowledge(delivery, outcome).await;
     }
     Ok(())
+}
+
+async fn finish(
+    jobs: &Jobs,
+    payload: &wire::FinishJob,
+    metadata: &br_core_integration::EventMetadata,
+) -> Result<(), ServiceError> {
+    resolve::finish(
+        jobs,
+        JobId::new(payload.job_id)?,
+        ResolutionId::new(jobs.ids.next())?,
+        metadata,
+    )
+    .await
 }
 
 pub async fn consume_failures(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
@@ -133,20 +181,30 @@ pub async fn consume_failures(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), Ser
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
-            Ok(command) => settle(
-                resolve::fail(
-                    &jobs,
-                    JobId::new(command.payload.job_id)?,
-                    ResolutionId::new(command.payload.id)?,
-                    command.payload.note.clone(),
-                    &command.metadata,
-                )
-                .await,
-            ),
+            Ok(command) => {
+                let payload = command.payload.clone();
+                let metadata = command.metadata.clone();
+                settle(fail(&jobs, &payload, &metadata).await)
+            }
         };
         acknowledge(delivery, outcome).await;
     }
     Ok(())
+}
+
+async fn fail(
+    jobs: &Jobs,
+    payload: &wire::FailJob,
+    metadata: &br_core_integration::EventMetadata,
+) -> Result<(), ServiceError> {
+    resolve::fail(
+        jobs,
+        JobId::new(payload.job_id)?,
+        ResolutionId::new(jobs.ids.next())?,
+        payload.note.clone(),
+        metadata,
+    )
+    .await
 }
 
 fn settle(outcome: Result<(), ServiceError>) -> MessageOutcome {
@@ -154,6 +212,10 @@ fn settle(outcome: Result<(), ServiceError>) -> MessageOutcome {
         Ok(()) => MessageOutcome::Ack,
         Err(ServiceError::Infra(detail)) => {
             tracing::error!(detail, "an integration command failed on infrastructure");
+            MessageOutcome::Nak(None)
+        }
+        Err(ServiceError::Contended) => {
+            tracing::debug!("an integration command lost a write race, redelivered");
             MessageOutcome::Nak(None)
         }
         Err(refused) => {

@@ -15,6 +15,7 @@ pub const SCHEMA_VERSION: u8 = 1;
 
 pub const REASON_ID_REUSE: &str = "id_reuse";
 pub const REASON_DUPLICATE_ACTIVE_ENTITY: &str = "duplicate_active_entity";
+pub const REASON_MALFORMED_PAYLOAD: &str = "malformed_payload";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobQueued {

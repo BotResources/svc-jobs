@@ -8,7 +8,8 @@ pub mod runner_transport;
 pub mod runtime;
 pub mod stream;
 
-use std::sync::Arc;
+use std::future::IntoFuture;
+use std::sync::{Arc, OnceLock};
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -32,14 +33,52 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::from_environment()?;
     let metrics = init_metrics("svc-jobs")?;
     let readiness = ReadinessHandle::not_ready("migrating and opening the database pool");
+    let schema: Arc<OnceLock<edge::JobsSchema>> = Arc::new(OnceLock::new());
+    let port = settings.port;
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
 
+    let booting = Arc::clone(&schema);
+    let boot_readiness = readiness.clone();
+    let (report, boot_failure) = tokio::sync::oneshot::channel::<ServiceError>();
+    tokio::spawn(async move {
+        if let Err(error) = boot(settings, &booting, &boot_readiness).await {
+            tracing::error!(error = %error, "svc-jobs could not open its declared infrastructure");
+            boot_readiness.set_not_ready("the declared infrastructure could not be opened");
+            let _ = report.send(error);
+        }
+    });
+
+    let app = Router::new()
+        .route("/graphql", post(edge::graphql_route).get(edge::playground))
+        .layer(axum::middleware::from_fn(edge::auth::passport_layer))
+        .route("/livez", liveness_route())
+        .route("/readyz", readiness_route(readiness))
+        .route("/metrics", metrics_route(metrics))
+        .route("/sdl", get(|| async { edge::sdl() }))
+        .layer(http_metrics_layer())
+        .with_state(HttpState { schema });
+
+    tracing::info!(port, "svc-jobs listening");
+    tokio::select! {
+        served = axum::serve(listener, app).into_future() => served?,
+        Ok(failure) = boot_failure => return Err(Box::new(failure)),
+    }
+    Ok(())
+}
+
+async fn boot(
+    settings: Settings,
+    schema: &OnceLock<edge::JobsSchema>,
+    readiness: &ReadinessHandle,
+) -> Result<(), ServiceError> {
     migrate(&settings).await?;
-    let pool = init_pool(&settings.database_url).await?;
+    let pool = init_pool(&settings.database_url).await.map_err(infra)?;
     let store = PgStore::new(pool.clone());
 
     readiness.set_not_ready("binding the declared NATS infrastructure");
-    let fabric = connect_fabric(&settings.nats_url).await?;
-    let channels = RunnerChannels::bind(&settings.nats_url).await?;
+    let fabric = connect_fabric(&settings).await?;
+    let channels =
+        RunnerChannels::bind(&settings.nats_url, settings.nats_credentials.as_ref()).await?;
     channels.verify_declared_streams().await?;
     bus::verify_durables(&fabric).await?;
 
@@ -54,51 +93,54 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         retry: settings.retry_policy,
     });
 
-    spawn_background(&settings, &fabric, &channels, &jobs, &hub, pool.clone());
+    spawn_background(&settings, &fabric, &channels, &jobs, &hub, pool);
 
-    let schema = edge::build_schema(edge::state::EdgeState {
+    let _ = schema.set(edge::build_schema(edge::state::EdgeState {
         store,
-        jobs: Arc::clone(&jobs),
+        jobs,
         hub,
-    });
-    let sdl = schema.sdl();
+    }));
     readiness.set_ready();
-
-    let app = Router::new()
-        .route("/graphql", post(edge::graphql_route).get(edge::playground))
-        .layer(axum::middleware::from_fn(edge::auth::passport_layer))
-        .route("/livez", liveness_route())
-        .route("/readyz", readiness_route(readiness))
-        .route("/metrics", metrics_route(metrics))
-        .route("/sdl", get(move || async move { sdl }))
-        .layer(http_metrics_layer())
-        .with_state(HttpState { schema });
-
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", settings.port)).await?;
-    tracing::info!(port = settings.port, "svc-jobs listening");
-    axum::serve(listener, app).await?;
     Ok(())
 }
 
-async fn migrate(settings: &Settings) -> Result<(), Box<dyn std::error::Error>> {
-    let migration_pool = init_migration_pool().await?;
+async fn migrate(settings: &Settings) -> Result<(), ServiceError> {
+    let migration_pool = init_migration_pool().await.map_err(infra)?;
     if let Some(password) = settings.app_password.as_deref() {
-        ensure_app_role(&migration_pool, APP_ROLE, password).await?;
+        ensure_app_role(&migration_pool, APP_ROLE, password)
+            .await
+            .map_err(infra)?;
     }
-    sqlx::migrate!("./migrations").run(&migration_pool).await?;
+    sqlx::migrate!("./migrations")
+        .run(&migration_pool)
+        .await
+        .map_err(infra)?;
     if settings.app_password.is_some() {
-        grant_app_access(&migration_pool, APP_ROLE).await?;
+        grant_app_access(&migration_pool, APP_ROLE)
+            .await
+            .map_err(infra)?;
     }
     migration_pool.close().await;
     Ok(())
 }
 
-async fn connect_fabric(nats_url: &str) -> Result<Fabric, ServiceError> {
-    let fabric = match (std::env::var("NATS_USER"), std::env::var("NATS_PASSWORD")) {
-        (Ok(user), Ok(password)) => {
-            Fabric::connect_with(nats_url, &NatsAuth { user, password }).await?
+fn infra(error: impl std::fmt::Display) -> ServiceError {
+    ServiceError::Infra(error.to_string())
+}
+
+async fn connect_fabric(settings: &Settings) -> Result<Fabric, ServiceError> {
+    let fabric = match &settings.nats_credentials {
+        Some(credentials) => {
+            Fabric::connect_with(
+                &settings.nats_url,
+                &NatsAuth {
+                    user: credentials.user.clone(),
+                    password: credentials.password.clone(),
+                },
+            )
+            .await?
         }
-        _ => Fabric::connect(nats_url).await?,
+        None => Fabric::connect(&settings.nats_url).await?,
     };
     Ok(fabric)
 }
@@ -134,6 +176,7 @@ fn spawn_background(
         Arc::clone(jobs),
         hub.clone(),
         settings.backstop_interval,
+        settings.dispatch_minimum_wake,
     ));
     tokio::spawn(runtime::backstop_loop(
         Arc::clone(jobs),

@@ -14,7 +14,6 @@ use support::{
     FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, gql, infra,
     stream, subs, wire,
 };
-use uuid::Uuid;
 
 const BASE_DELAY_SECONDS: u64 = 2;
 
@@ -248,7 +247,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
 
     // When: the owner finishes the job
-    producer.finish(job_id, Uuid::now_v7()).await;
+    producer.finish(job_id).await;
     let job_completed =
         stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
     let final_projection = delta::projection(&job_completed, job_id, "COMPLETED");

@@ -28,6 +28,10 @@ pub enum JobsError {
     InvalidDuration {
         field: &'static str,
     },
+    OutOfRange {
+        field: &'static str,
+        value: i64,
+    },
     NotAJsonObject {
         field: &'static str,
     },
@@ -150,6 +154,7 @@ impl JobsError {
             Self::InvalidJitter => "invalid_jitter",
             Self::InvalidRetryFactor => "invalid_retry_factor",
             Self::InvalidDuration { .. } => "invalid_duration",
+            Self::OutOfRange { .. } => "out_of_range",
             Self::NotAJsonObject { .. } => "not_a_json_object",
             Self::JobIdConflict { .. } => "job_id_conflict",
             Self::SourceAlreadyActive { .. } => "source_already_active",
@@ -198,6 +203,7 @@ impl JobsError {
                 json!({ "field": field })
             }
             Self::InvalidSegment { field, value } => json!({ "field": field, "value": value }),
+            Self::OutOfRange { field, value } => json!({ "field": field, "value": value }),
             Self::ValueTooLong {
                 field,
                 length,

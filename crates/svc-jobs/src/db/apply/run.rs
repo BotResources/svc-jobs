@@ -80,11 +80,7 @@ pub async fn plan_declared(
     Ok(())
 }
 
-pub async fn step_started(
-    tx: &mut PgConnection,
-    fact: &RunStepStarted,
-    at: DateTime<Utc>,
-) -> Result<(), PortError> {
+pub async fn step_started(tx: &mut PgConnection, fact: &RunStepStarted) -> Result<(), PortError> {
     sqlx::query(
         "INSERT INTO steps (run_id, step_index, label, started_at) VALUES ($1, $2, $3, $4) \
          ON CONFLICT (run_id, step_index) DO NOTHING",
@@ -92,7 +88,7 @@ pub async fn step_started(
     .bind(fact.run_id.as_uuid())
     .bind(i32::try_from(fact.step_index.get()).unwrap_or(i32::MAX))
     .bind(fact.label.as_str())
-    .bind(at)
+    .bind(fact.started_at)
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;

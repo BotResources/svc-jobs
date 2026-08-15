@@ -11,8 +11,8 @@ pub const LOG_STREAM: &str = "JOBS_LOG";
 pub const TRIGGER_FILTER: &str = "jobs.trigger.>";
 pub const STATUS_FILTER: &str = "jobs.status.>";
 pub const LOG_FILTER: &str = "jobs.log.>";
-pub const CANCEL_BUCKET: &str = "JOBS_RUN_CANCEL";
-pub const PRESENCE_BUCKET: &str = "JOBS_RUNNER_PRESENCE";
+pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
+pub const PRESENCE_BUCKET: &str = "JOBS_PRESENCE";
 
 fn wire_version() -> u8 {
     WIRE_VERSION
@@ -83,7 +83,11 @@ pub struct RunFailed {
     pub version: u8,
     pub run_id: Uuid,
     pub report: FailureReport,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "retry_after",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub retry_after_seconds: Option<i64>,
 }
 

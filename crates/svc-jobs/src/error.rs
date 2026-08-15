@@ -16,6 +16,12 @@ pub enum ServiceError {
     #[error("job_not_found")]
     JobNotFound,
 
+    #[error("concurrent_modification")]
+    Contended,
+
+    #[error("write_refused: {0}")]
+    Refused(String),
+
     #[error("infrastructure_failure: {0}")]
     Infra(String),
 }
@@ -24,6 +30,8 @@ impl From<PortError> for ServiceError {
     fn from(error: PortError) -> Self {
         match error {
             PortError::StoredStateRejected(domain) => Self::Domain(domain),
+            PortError::ConcurrentModification => Self::Contended,
+            PortError::Refused { detail } => Self::Refused(detail),
             other => Self::Infra(other.to_string()),
         }
     }

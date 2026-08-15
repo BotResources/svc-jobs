@@ -11,7 +11,7 @@ use crate::edge::types::log::log_of;
 use crate::edge::types::stream::{GqlJobLogSnapshot, GqlJobLogStreamMessage, GqlRunLogAppended};
 use crate::stream::Fact;
 
-use super::{cursor, next_fact};
+use super::{cursor, next_unbroken_fact};
 
 pub fn log_stream(
     state: EdgeState,
@@ -29,7 +29,7 @@ pub fn log_stream(
                 return;
             }
         }
-        while let Some(fact) = next_fact(&mut facts).await {
+        while let Some(fact) = next_unbroken_fact(&mut facts).await {
             let Fact::Log { log_id, job_id: carried, run_id: carried_run } = fact else {
                 continue;
             };

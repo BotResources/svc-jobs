@@ -32,8 +32,7 @@ pub async fn started(
 }
 
 pub async fn plan_declared(jobs: &Jobs, fact: &wire::PlanDeclared) -> Result<(), ServiceError> {
-    let declaration_id =
-        PlanDeclarationId::new(fact.declaration_id.unwrap_or_else(|| jobs.ids.next()))?;
+    let declaration_id = declaration_identity(jobs, fact.declaration_id)?;
     let mut items = Vec::with_capacity(fact.steps.len());
     for (index, label) in fact.steps.iter().enumerate() {
         items.push(RunPlanItem::new(
@@ -106,6 +105,24 @@ pub async fn failed(jobs: &Jobs, fact: &wire::RunFailed) -> Result<(), ServiceEr
     .await;
     withdraw_stop(jobs, fact.run_id).await;
     outcome
+}
+
+fn declaration_identity(
+    jobs: &Jobs,
+    declared: Option<uuid::Uuid>,
+) -> Result<PlanDeclarationId, ServiceError> {
+    if let Some(declared) = declared {
+        match PlanDeclarationId::new(declared) {
+            Ok(identity) => return Ok(identity),
+            Err(refusal) => tracing::warn!(
+                declaration_id = %declared,
+                error = %refusal,
+                "a runner declared a plan under an identity a redelivery cannot be absorbed by; \
+                 the declaration is recorded under a minted one"
+            ),
+        }
+    }
+    Ok(PlanDeclarationId::new(jobs.ids.next())?)
 }
 
 fn object_or_empty(value: &serde_json::Value) -> serde_json::Value {

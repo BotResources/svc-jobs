@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use async_graphql::Result;
 use bc_jobs::event::job::JobEvent;
-use br_util_graphql::{Connection, Edge};
+use br_util_graphql::{Connection, Edge, PageInfo};
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use uuid::Uuid;
@@ -16,7 +16,7 @@ use crate::edge::types::job::GqlJobSummaryView;
 use crate::edge::types::stream::{GqlJobsDelta, GqlJobsSnapshot, GqlJobsStreamMessage};
 use crate::stream::Fact;
 
-use super::{cursor, next_fact};
+use super::{cursor, next_unbroken_fact};
 
 pub struct Window {
     pub filter: JobFilter,
@@ -44,7 +44,7 @@ pub fn list_stream(
                 return;
             }
         }
-        while let Some(fact) = next_fact(&mut facts).await {
+        while let Some(fact) = next_unbroken_fact(&mut facts).await {
             let Fact::Job { event_id, occurred_at, job_id, event } = fact else {
                 continue;
             };
@@ -87,8 +87,7 @@ async fn delta(
     if !matches && !present.contains(&job_id) {
         return Ok(None);
     }
-    let (connection, ids) = page(state, window).await?;
-    let page_info = connection.page_info;
+    let (ids, page_info) = window_of(state, window).await?;
     let (upserted, removed_ids) = if matches {
         present.insert(job_id);
         (upsert(state, job_id).await?, vec![])
@@ -104,6 +103,21 @@ async fn delta(
         removed_ids,
         page_info,
     })))
+}
+
+async fn window_of(state: &EdgeState, window: &Window) -> Result<(HashSet<Uuid>, PageInfo)> {
+    let matched = state
+        .store
+        .matching_window(&window.filter, window.first, window.after.as_deref())
+        .await
+        .map_err(edge_error)?;
+    let page_info = PageInfo {
+        has_next_page: matched.has_next_page,
+        has_previous_page: false,
+        start_cursor: matched.entries.first().map(|(_, cursor)| cursor.clone()),
+        end_cursor: matched.entries.last().map(|(_, cursor)| cursor.clone()),
+    };
+    Ok((matched.ids().into_iter().collect(), page_info))
 }
 
 async fn upsert(state: &EdgeState, job_id: Uuid) -> Result<Vec<GqlJobSummaryView>> {

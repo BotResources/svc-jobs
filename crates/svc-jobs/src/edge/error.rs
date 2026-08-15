@@ -12,6 +12,7 @@ pub fn of_service(error: ServiceError) -> EdgeError {
     match error {
         ServiceError::Domain(domain) => of_domain(&domain),
         ServiceError::JobNotFound => EdgeError::not_found().with_reason("job_not_found"),
+        ServiceError::Contended => EdgeError::conflict().with_reason("concurrent_modification"),
         ServiceError::Infra(detail) => EdgeError::internal(detail),
         other => EdgeError::internal(other.to_string()),
     }
@@ -23,7 +24,9 @@ pub fn of_port(error: PortError) -> EdgeError {
         PortError::ConcurrentModification => {
             EdgeError::conflict().with_reason("concurrent_modification")
         }
-        PortError::Unavailable { detail } => EdgeError::internal(detail),
+        PortError::Refused { detail } | PortError::Unavailable { detail } => {
+            EdgeError::internal(detail)
+        }
     }
 }
 
@@ -34,6 +37,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::InvalidSegment { .. }
         | JobsError::ValueTooLong { .. }
         | JobsError::InvalidDuration { .. }
+        | JobsError::OutOfRange { .. }
         | JobsError::InvalidJitter
         | JobsError::InvalidRetryFactor
         | JobsError::NotAJsonObject { .. }

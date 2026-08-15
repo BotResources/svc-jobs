@@ -1,8 +1,18 @@
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::fleet::RunnerType;
+use crate::domain::keys::RunnerTypeKey;
 use crate::error::JobsError;
 
 pub const DISPATCH: &str = "dispatch";
+
+pub fn unregistered_affordances(runner_type: &RunnerTypeKey) -> Vec<Affordance> {
+    vec![Affordance::new(
+        DISPATCH,
+        Availability::from_guard(Err(JobsError::RunnerTypeUnavailable {
+            runner_type: runner_type.as_str().to_owned(),
+        })),
+    )]
+}
 
 impl RunnerType {
     pub fn guard_dispatch(&self) -> Result<(), JobsError> {
@@ -66,6 +76,22 @@ mod tests {
         assert_eq!(
             empty.affordances().first().unwrap().reason_code(),
             Some("runner_type_unavailable")
+        );
+    }
+
+    #[test]
+    fn a_runner_type_never_seen_answers_the_same_dispatch_affordance_as_a_registered_idle_one() {
+        // Given: a runner type key no instance has ever announced
+        let never_seen = RunnerTypeKey::new("archivist").unwrap();
+        // When: the backend answers whether work may go out
+        let unregistered = unregistered_affordances(&never_seen);
+        // Then: it is the domain's own DISPATCH verdict, identical in shape to a registered type's
+        let registered = runner_type(vec![]);
+        assert_eq!(unregistered.len(), 1);
+        assert_eq!(unregistered.first().unwrap().action(), DISPATCH);
+        assert_eq!(
+            unregistered.first().unwrap().reason_code(),
+            registered.affordances().first().unwrap().reason_code()
         );
     }
 

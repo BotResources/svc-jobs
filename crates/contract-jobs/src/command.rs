@@ -36,7 +36,8 @@ impl TriggeredBy {
 pub struct CreateJob {
     pub job_id: Uuid,
     pub runner_type: String,
-    pub producer: String,
+    #[serde(default)]
+    pub producer: Option<String>,
     #[serde(default)]
     pub config: Option<Value>,
     #[serde(default)]
@@ -64,23 +65,24 @@ impl CreateJob {
             _ => Err(SourceError::HalfPair),
         }
     }
+
+    pub fn declared_producer(&self) -> Option<&str> {
+        self.producer.as_deref().or(self.source_bc.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelJob {
-    pub id: Uuid,
     pub job_id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinishJob {
-    pub id: Uuid,
     pub job_id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailJob {
-    pub id: Uuid,
     pub job_id: Uuid,
     #[serde(default)]
     pub note: Option<String>,

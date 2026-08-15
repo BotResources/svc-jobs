@@ -1,7 +1,7 @@
 mod support;
 
 use br_test_harness::{SseSubscription, verdict};
-use serde_json::json;
+use serde_json::{Value, json};
 use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::JobsFixture;
@@ -38,14 +38,20 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     let operator_id = Uuid::now_v7();
     let declaration = JobDeclaration::new(&runner_type)
         .with_config(json!({ "prompt": "summarise", "depth": 2 }))
-        .triggered_by(operator_id, "Amelie")
+        .triggered_by_user(operator_id)
         .with_source("projects", entity_id)
         .with_max_attempts(2);
     let job_id = declaration.job_id;
     producer.declare(&declaration).await;
 
     // Then: one acceptance, and the list stream carries the queued job with its affordances
-    events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
+    let accepted = events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
+    assert_eq!(
+        accepted.payload(),
+        json!({ "job_id": job_id.to_string(), "runner_type": runner_type }),
+        "the acceptance a producer waits for names the job and the type it was addressed to — \
+         nothing else, and nothing missing",
+    );
     let queued = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, LONG).await;
     delta::event_of(&queued, wire::EVT_QUEUED, job_id);
     let queued_row = delta::assert_upserted_summary(&queued, job_id, "PENDING");
@@ -76,7 +82,20 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     assert_eq!(job["config"], json!({ "prompt": "summarise", "depth": 2 }));
     assert_eq!(job["maxAttempts"], json!(2));
     assert_eq!(job["triggeredBy"]["id"], json!(operator_id.to_string()));
+    assert!(
+        job["triggeredBy"]["displayName"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty()),
+        "the declaration names the triggering user by id alone, and the administrator's view still \
+         answers with a display name for them: {job}",
+    );
     assert_eq!(job["source"]["entityId"], json!(entity_id.to_string()));
+    assert_eq!(
+        job["source"]["bc"],
+        json!("projects"),
+        "the source pair names the producing bounded context, which is the producer the read \
+         answers with: {job}",
+    );
     delta::assert_active_affordances(&view);
 
     support::views::assert_views_agree(&durable, &client, admin, job_id, "a job nobody serves yet")
@@ -162,7 +181,12 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     );
 
     instance.start_run(&trigger).await;
-    events.expect_one(wire::FACT_STARTED, job_id, LONG).await;
+    let job_started = events.expect_one(wire::FACT_STARTED, job_id, LONG).await;
+    assert_eq!(
+        job_started.payload(),
+        json!({ "job_id": job_id.to_string(), "run_id": run.to_string() }),
+        "the producer learns which attempt started, so it never queries jobs to know it",
+    );
     let started = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_STARTED, LONG).await;
     let projection = delta::projection(&started, job_id, "IN_PROGRESS");
     assert_eq!(projection["activeRunId"], json!(run.to_string()));
@@ -209,9 +233,31 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         json!([{ "index": 0, "label": "fetch" }, { "index": 1, "label": "store" }]),
         "the latest declaration replaces the plan, it never appends to it",
     );
-    events
+    let relayed_plans = events
         .expect_exactly(wire::FACT_PLAN_DECLARED, job_id, 2, LONG)
         .await;
+    let mut relayed_steps: Vec<Value> = relayed_plans
+        .iter()
+        .map(|event| {
+            assert_eq!(
+                event.payload()["run_id"],
+                json!(run.to_string()),
+                "a relayed plan names the run it segments: {}",
+                event.payload(),
+            );
+            event.payload()["steps"].clone()
+        })
+        .collect();
+    relayed_steps.sort_by_key(|steps| steps.as_array().map_or(0, Vec::len));
+    assert_eq!(
+        relayed_steps,
+        vec![
+            json!(["fetch", "store"]),
+            json!(["fetch", "summarise", "store"])
+        ],
+        "a consumer that never touches jobs' restricted surface derives its progression from the \
+         labels the relay carries, so both declarations travel with their full ordered plan",
+    );
 
     instance.start_step(&trigger, 0, "fetch").await;
     let step = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_STEP_STARTED, LONG).await;
@@ -245,9 +291,42 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         json!(1),
         "starting step 1 implicitly closes step 0",
     );
-    events
+    let relayed_cursor = events
         .expect_exactly(wire::FACT_STEP_STARTED, job_id, 2, LONG)
         .await;
+    let mut relayed_positions: Vec<(i64, String)> = relayed_cursor
+        .iter()
+        .map(|event| {
+            let payload = event.payload();
+            assert_eq!(
+                payload["run_id"],
+                json!(run.to_string()),
+                "a relayed cursor move names the run it advances: {payload}",
+            );
+            assert!(
+                payload["started_at"]
+                    .as_str()
+                    .is_some_and(|stamp| !stamp.is_empty()),
+                "a relayed cursor move carries the moment the runner reported: {payload}",
+            );
+            (
+                payload["index"].as_i64().unwrap_or_else(|| {
+                    panic!("a relayed cursor move carries its index: {payload}")
+                }),
+                payload["label"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("a relayed cursor move carries its label: {payload}"))
+                    .to_owned(),
+            )
+        })
+        .collect();
+    relayed_positions.sort();
+    assert_eq!(
+        relayed_positions,
+        vec![(0, "fetch".to_owned()), (1, "store".to_owned())],
+        "progression travels to the producers as index plus the runner's own words — a consumer \
+         renders the cursor from this event alone",
+    );
 
     let logs = gql::logs_of(&client, admin, job_id).await;
     assert_eq!(
@@ -290,19 +369,29 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, QUIET).await;
 
     // When: the owner declares the job finished — the only path to COMPLETED
-    let resolution_id = Uuid::now_v7();
-    producer.finish(job_id, resolution_id).await;
+    producer.finish(job_id).await;
     let completed = events.expect_one(wire::FACT_COMPLETED, job_id, LONG).await;
     let payload = completed.payload();
+    assert_eq!(
+        payload["job_id"],
+        json!(job_id.to_string()),
+        "the completion the producer hears names the job it declared: {payload}",
+    );
     assert!(
         payload["result"].is_null() && payload["output"].is_null(),
         "a completion event never carries a work product: {payload}",
     );
     let job_completed =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
-    assert_eq!(
-        delta::event_of(&job_completed, wire::EVT_JOB_COMPLETED, job_id)["resolutionId"],
-        json!(resolution_id.to_string())
+    let resolution_id =
+        delta::event_of(&job_completed, wire::EVT_JOB_COMPLETED, job_id)["resolutionId"].clone();
+    assert!(
+        resolution_id
+            .as_str()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+            .is_some(),
+        "the finish command declares only the job id, so the terminal resolution is identified by \
+         jobs itself: {job_completed}",
     );
     delta::projection(&job_completed, job_id, "COMPLETED");
     delta::assert_completed_affordances(&job_completed);
@@ -374,6 +463,11 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     assert!(!audited["job"]["deletion"]["deletedAt"].is_null());
     assert_eq!(audited["job"]["runs"].as_array().map(Vec::len), Some(1));
     assert_eq!(audited["job"]["resolution"]["kind"], json!("COMPLETED"));
+    assert_eq!(
+        audited["job"]["resolution"]["id"], resolution_id,
+        "the audit record answers with the very resolution identity the stream announced: \
+         {audited}",
+    );
     gql::assert_blocked(&audited, wire::ACTION_DELETE);
 
     let mut replay_tail =

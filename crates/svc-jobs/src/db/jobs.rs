@@ -18,6 +18,18 @@ const NO_ACTIVE_RUN: &str = "NOT EXISTS (SELECT 1 FROM runs r \
 const NOT_RESOLVED: &str = "NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
      AND NOT EXISTS (SELECT 1 FROM job_deletions jd WHERE jd.job_id = j.id)";
 
+const ACTIVE_FOR_SOURCE_SQL: &str = "SELECT j.id::uuid AS id FROM jobs j \
+     JOIN source_entities se ON se.id = j.source_entity_id \
+     JOIN producers p ON p.id = se.producer_id \
+     WHERE p.bc_key = $1 AND se.external_id = $2 \
+       AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
+     ORDER BY j.created_at DESC, j.id DESC LIMIT 1";
+
+const HAS_LIVE_INSTANCE: &str = "EXISTS (SELECT 1 FROM runner_instances ri \
+     JOIN runner_presence_sessions ps ON ps.instance_id = ri.id \
+         AND ps.disconnected_at IS NULL \
+     WHERE ri.runner_type_id = j.runner_type_id)";
+
 const UNCONSUMED_RETRY: &str = "SELECT s.due_at FROM run_retry_schedules s \
      JOIN runs fr ON fr.id = s.failed_run_id \
      LEFT JOIN runs dr ON dr.automatic_retry_schedule_id = s.id \
@@ -41,6 +53,18 @@ impl PgStore {
         }
     }
 
+    pub async fn active_job_for_source_in(
+        tx: &mut PgConnection,
+        source: &SourceReference,
+    ) -> Result<Option<Uuid>, PortError> {
+        sqlx::query_scalar(ACTIVE_FOR_SOURCE_SQL)
+            .bind(source.bc().as_str())
+            .bind(source.entity_id().as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)
+    }
+
     pub async fn load_in(tx: &mut PgConnection, job_id: JobId) -> Result<Option<Job>, PortError> {
         Ok(load_many(&mut *tx, &[job_id.as_uuid()]).await?.pop())
     }
@@ -54,7 +78,7 @@ impl PgStore {
         let sql = format!(
             "SELECT min(due.due_at) AS due_at FROM jobs j \
              JOIN LATERAL ({UNCONSUMED_RETRY}) due ON true \
-             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN}"
+             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} AND {HAS_LIVE_INSTANCE}"
         );
         let row = sqlx::query(&sql)
             .fetch_one(self.pool())
@@ -103,7 +127,7 @@ impl PgStore {
     }
 
     pub async fn active_jobs_of_type(&self, runner_type: &str) -> Result<Vec<Job>, PortError> {
-        let rows = sqlx::query(
+        let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT j.id::uuid AS id FROM jobs j \
              JOIN runner_types rt ON rt.id = j.runner_type_id \
              WHERE rt.type_key = $1 \
@@ -113,7 +137,17 @@ impl PgStore {
         .fetch_all(self.pool())
         .await
         .map_err(unavailable)?;
-        let ids: Vec<Uuid> = rows.iter().map(|row| row.get("id")).collect();
+        self.load_batch(&ids).await
+    }
+
+    pub async fn active_jobs(&self) -> Result<Vec<Job>, PortError> {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT j.id::uuid AS id FROM jobs j \
+             WHERE NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id)",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
         self.load_batch(&ids).await
     }
 
@@ -164,22 +198,15 @@ impl JobReader for PgStore {
         &self,
         source: &SourceReference,
     ) -> Result<Option<Job>, PortError> {
-        let row = sqlx::query(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             JOIN source_entities se ON se.id = j.source_entity_id \
-             JOIN producers p ON p.id = se.producer_id \
-             WHERE p.bc_key = $1 AND se.external_id = $2 \
-               AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
-             ORDER BY j.created_at DESC, j.id DESC LIMIT 1",
-        )
-        .bind(source.bc().as_str())
-        .bind(source.entity_id().as_uuid())
-        .fetch_optional(self.pool())
-        .await
-        .map_err(unavailable)?;
-        match row {
+        let found: Option<Uuid> = sqlx::query_scalar(ACTIVE_FOR_SOURCE_SQL)
+            .bind(source.bc().as_str())
+            .bind(source.entity_id().as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(unavailable)?;
+        match found {
             None => Ok(None),
-            Some(row) => Ok(self.load_batch(&[row.get("id")]).await?.pop()),
+            Some(id) => Ok(self.load_batch(&[id]).await?.pop()),
         }
     }
 }
@@ -189,11 +216,7 @@ impl DueWorkReader for PgStore {
     async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
         let sql = format!(
             "SELECT j.id::uuid AS id FROM jobs j \
-             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} \
-               AND EXISTS (SELECT 1 FROM runner_instances ri \
-                   JOIN runner_presence_sessions s ON s.instance_id = ri.id \
-                       AND s.disconnected_at IS NULL \
-                   WHERE ri.runner_type_id = j.runner_type_id) \
+             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} AND {HAS_LIVE_INSTANCE} \
                AND (NOT EXISTS (SELECT 1 FROM runs r WHERE r.job_id = j.id) \
                     OR EXISTS ({UNCONSUMED_RETRY} AND s.due_at <= $1)) \
              ORDER BY j.created_at, j.id LIMIT 200"

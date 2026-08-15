@@ -14,8 +14,8 @@ pub const TRIGGER_BIND: &str = "jobs.trigger.>";
 pub const STATUS_BIND: &str = "jobs.status.>";
 pub const LOG_BIND: &str = "jobs.log.>";
 
-pub const CANCEL_BUCKET: &str = "JOBS_RUN_CANCEL";
-pub const PRESENCE_BUCKET: &str = "JOBS_RUNNER_PRESENCE";
+pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
+pub const PRESENCE_BUCKET: &str = "JOBS_PRESENCE";
 
 pub const FACT_QUEUED: &str = "queued";
 pub const FACT_CREATION_REJECTED: &str = "creation_rejected";
@@ -42,9 +42,9 @@ pub const VERB_CANCEL: &str = "cancel";
 pub const VERB_FINISH: &str = "finish";
 pub const VERB_FAIL: &str = "fail";
 
-pub const ACTION_CANCEL: &str = "cancel";
-pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
-pub const ACTION_DELETE: &str = "delete";
+pub const ACTION_CANCEL: &str = "CANCEL_JOB";
+pub const ACTION_MANUAL_RETRY: &str = "MANUAL_RETRY_JOB";
+pub const ACTION_DELETE: &str = "DELETE_JOB";
 
 pub const EVT_QUEUED: &str = "JobsJobQueuedEvent";
 pub const EVT_RUN_DISPATCHED: &str = "JobsRunDispatchedEvent";

@@ -79,7 +79,7 @@ async fn write_job_event(
         JobEvent::RunDispatched(fact) => run::dispatched(tx, fact, at).await,
         JobEvent::RunStarted(fact) => run::started(tx, fact, at).await,
         JobEvent::RunPlanDeclared(fact) => run::plan_declared(tx, fact, at).await,
-        JobEvent::RunStepStarted(fact) => run::step_started(tx, fact, at).await,
+        JobEvent::RunStepStarted(fact) => run::step_started(tx, fact).await,
         JobEvent::RunCompleted(fact) => run::completed(tx, fact, at).await,
         JobEvent::RunFailed(fact) => run::failed(tx, fact, at).await,
         JobEvent::RunCancellationRequested(fact) => run::cancellation_requested(tx, fact, at).await,

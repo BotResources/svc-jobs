@@ -43,8 +43,8 @@ dotenvy = "0.15"
 br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.2.0", version = "1.2.0" }
 br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "v1.2.0", version = "1.2.0" }
 br-core-integration = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-integration", tag = "v1.2.0", version = "1.2.0" }
-br-util-axum-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-auth", tag = "v1.2.0", version = "1.2.0" }
 br-util-axum-readiness = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-axum-readiness", tag = "v1.2.0", version = "1.2.0" }
+br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.2.0", version = "1.2.0" }
 br-util-observability = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-observability", tag = "v1.2.0", version = "1.2.0" }
 br-util-postgres = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-postgres", tag = "v1.2.0", version = "1.2.0" }
 br-util-nats-fabric = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-nats-fabric", tag = "v1.2.0", version = "1.2.0" }

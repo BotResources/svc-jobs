@@ -17,9 +17,16 @@ every consumer, so each version is deliberate.
   `RunFailed`, `LogLine`, `CancelRun`, `Presence`) with the declared stream and
   bucket names.
 - Three shapes are supersets of the sealed offer text, each accepting a message
-  that follows the offer literally: `CreateJob.producer` (the domain and the
-  administrator surface both require the producing bounded context, which the
-  offer omits); `LogLine.id` and `PlanDeclared.declaration_id`, optional so an
-  at-least-once redelivery can be absorbed under the identity the runner already
-  gave it; and the resolution commands carry the client-minted `id` of the
-  resolution they open.
+  that follows the offer literally: `CreateJob.producer` names the producing
+  bounded context that the domain, the database and the administrator surface
+  all require and that the offer omits — a message without it is attributed all
+  the same, to the source reference's bounded context, else to the runner type
+  of the parent job, else to the reserved key `unattributed`; `LogLine.id` and
+  `PlanDeclared.declaration_id` are optional so an at-least-once redelivery can
+  be absorbed under the identity the runner already gave it, and a declaration
+  identity outside the platform's UUIDv7 rule is recorded under a minted one
+  rather than dropped.
+- The envelope's `command_id` constrains nothing beyond the envelope: the
+  resolution a `job.cancel`, `job.finish` or `job.fail` opens is identified by
+  an id svc-jobs mints, so a producer minting its command ids under any UUID
+  version is served.

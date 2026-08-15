@@ -88,6 +88,14 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
         json!("PENDING"),
         "this run is dispatched and never started — that is the state a withdrawal acts on",
     );
+    support::views::assert_views_agree(
+        &durable,
+        &client,
+        admin,
+        dispatched_child_id,
+        "a run dispatched and claimed by nobody",
+    )
+    .await;
 
     let mut watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(parent_id)).await;
@@ -430,8 +438,7 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
     // When: the producer that owns the root cancels it over the bus, not through the edge
-    let resolution_id = Uuid::now_v7();
-    producer.cancel(parent_id, resolution_id).await;
+    producer.cancel(parent_id).await;
 
     // Then: the same downward cancellation the administrator's mutation performs
     for job_id in [parent_id, running_child_id, unclaimed_child_id] {
@@ -454,10 +461,17 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
     );
     let root_cancelled =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, LONG).await;
-    assert_eq!(
-        delta::event_of(&root_cancelled, wire::EVT_JOB_CANCELLED, parent_id)["resolutionId"],
-        json!(resolution_id.to_string()),
-        "the root carries the resolution id the producer minted, exactly as the edge path does",
+    let resolution_id =
+        delta::event_of(&root_cancelled, wire::EVT_JOB_CANCELLED, parent_id)["resolutionId"]
+            .clone();
+    assert!(
+        resolution_id
+            .as_str()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+            .is_some(),
+        "the cancel command a producer sends declares only the job id, so every resolution on the \
+         bus path is identified by jobs itself, exactly as the descendants are on the edge path: \
+         {root_cancelled}",
     );
     let cancelled_tree = delta::projection(&root_cancelled, parent_id, "CANCELLED");
     delta::assert_cancelled_affordances(&root_cancelled);
@@ -474,9 +488,8 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
 
     let read_back = gql::job_view(&client, admin, parent_id).await;
     assert_eq!(
-        read_back["job"]["resolution"]["id"],
-        json!(resolution_id.to_string()),
-        "the read answers with the producer's own resolution id: {read_back}",
+        read_back["job"]["resolution"]["id"], resolution_id,
+        "the read answers with the very resolution the stream announced: {read_back}",
     );
     delta::assert_cancelled_affordances(&read_back);
     delta::assert_cancelled_affordances(&gql::child_of(&read_back["job"], running_child_id));
@@ -503,12 +516,24 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
             .await;
     }
 
-    let repeat = Uuid::now_v7();
-    producer.cancel(parent_id, repeat).await;
+    producer.cancel(parent_id).await;
     events
         .expect_exactly(wire::FACT_CANCELLED, parent_id, 1, QUIET)
         .await;
-    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_CANCELLED, QUIET).await;
+    stream::expect_no_delta_of(
+        &mut watch,
+        JOB_CHANGED,
+        wire::EVT_JOB_CANCELLED,
+        parent_id,
+        QUIET,
+    )
+    .await;
+    assert_eq!(
+        gql::job_view(&client, admin, parent_id).await["job"]["resolution"]["id"],
+        resolution_id,
+        "a terminal resolution is immutable, so a second cancel command never replaces the \
+         identity the first one settled on",
+    );
 
     for job_id in [parent_id, running_child_id, unclaimed_child_id] {
         durable

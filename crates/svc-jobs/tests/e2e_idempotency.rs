@@ -1,6 +1,7 @@
 mod support;
 
 use br_test_harness::{SseSubscription, wait_until};
+use chrono::Utc;
 use serde_json::json;
 use support::db::{self, Durable};
 use support::events::EventLog;
@@ -100,16 +101,11 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     instance.connect().await;
     let trigger = instance.next_trigger(LONG).await;
     let run = runner::run_id(&trigger);
-    let declaration_id = Uuid::now_v7();
 
     instance.start_run(&trigger).await;
     instance.start_run(&trigger).await;
-    instance
-        .declare_plan_with(&trigger, declaration_id, &["convert"])
-        .await;
-    instance
-        .declare_plan_with(&trigger, declaration_id, &["convert"])
-        .await;
+    instance.declare_plan(&trigger, &["convert"]).await;
+    instance.declare_plan(&trigger, &["convert"]).await;
     instance.start_step(&trigger, 0, "convert").await;
     instance.start_step(&trigger, 0, "convert").await;
 
@@ -150,45 +146,47 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     drop(listing);
     drop(fleet_watch);
 
-    let log_id = Uuid::now_v7();
+    let logged_at = Utc::now().to_rfc3339();
+    for _ in 0..2 {
+        instance
+            .log_line_at(
+                &trigger,
+                Some(0),
+                "INFO",
+                "one line, delivered twice",
+                logged_at.clone(),
+            )
+            .await;
+    }
     instance
-        .log_line_with(
-            &trigger,
-            log_id,
-            Some(0),
-            "INFO",
-            "one line, delivered twice",
-        )
-        .await;
-    instance
-        .log_line_with(
-            &trigger,
-            log_id,
-            Some(0),
-            "INFO",
-            "one line, delivered twice",
-        )
+        .log_line(&trigger, Some(0), "INFO", "the line that follows the pair")
         .await;
     instance.start_step(&trigger, 1, "store").await;
     gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
 
     let landed = wait_until(LONG, || async {
-        !gql::logs_of(&client, admin, job_id).await.is_empty()
+        gql::logs_of(&client, admin, job_id)
+            .await
+            .iter()
+            .any(|line| line["message"] == json!("the line that follows the pair"))
     })
     .await;
     assert!(
         landed,
-        "the line the runner logged must reach the audit record within {LONG:?}"
+        "the line published behind the pair must reach the audit record within {LONG:?} — the log \
+         stream is consumed in order, so its arrival is what proves both deliveries of the pair \
+         were already applied, without waiting on a clock"
     );
-    tokio::time::sleep(QUIET).await;
     let logs = gql::logs_of(&client, admin, job_id).await;
     let repeated = logs
         .iter()
-        .filter(|line| line["id"] == json!(log_id.to_string()))
+        .filter(|line| line["message"] == json!("one line, delivered twice"))
         .count();
     assert_eq!(
         repeated, 1,
-        "a redelivered log line is absorbed by its message id, and it is never lost: {logs:?}"
+        "the sealed LogLine carries no identity field of its own, so the identity a redelivery \
+         repeats is the one the stream carries: the same line delivered twice is one line in the \
+         audit record, and it is never lost: {logs:?}"
     );
 
     // Then: reopening reconstructs the state that moved, without one query
@@ -217,9 +215,15 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     ids.dedup();
     assert_eq!(
         (ids.len(), before_dedup),
-        (1, 1),
-        "a reconnecting log tail returns each line exactly once: {tailed}",
+        (2, 2),
+        "a reconnecting log tail returns each of the two logical lines exactly once, the \
+         redelivered one included: {tailed}",
     );
+    tail.expect_silence(
+        "a redelivered log line never appends a second time behind the snapshot",
+        QUIET,
+    )
+    .await;
 
     let mut listing =
         SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&runner_type)).await;
@@ -264,16 +268,25 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     delta::assert_active_affordances(&completed);
     stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, QUIET).await;
 
-    let resolution_id = Uuid::now_v7();
-    producer.finish(job_id, resolution_id).await;
-    producer.finish(job_id, resolution_id).await;
+    let finish_command = Uuid::now_v7();
+    producer.finish_as(finish_command, job_id).await;
+    producer.finish_as(finish_command, job_id).await;
     let job_completed =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
+    let resolution_id =
+        delta::event_of(&job_completed, wire::EVT_JOB_COMPLETED, job_id)["resolutionId"].clone();
     delta::projection(&job_completed, job_id, "COMPLETED");
     delta::assert_completed_affordances(&job_completed);
     events
         .expect_exactly(wire::FACT_COMPLETED, job_id, 1, QUIET)
         .await;
+    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, QUIET).await;
+    assert_eq!(
+        gql::job(&client, admin, job_id).await["resolution"]["id"],
+        resolution_id,
+        "the second finish command settles nothing of its own — the job keeps the single terminal \
+         resolution the first one produced",
+    );
 
     durable
         .assert_all(
@@ -282,7 +295,7 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
                 (db::JOBS_WITH_ID, 1, "one job"),
                 (db::RUNS_OF_JOB, 1, "one logical run"),
                 (db::PLAN_DECLARATIONS_OF_JOB, 1, "one plan declaration"),
-                (db::LOGS_OF_JOB, 2, "one copy of each log line"),
+                (db::LOGS_OF_JOB, 3, "one copy of each log line"),
                 (db::RESOLUTIONS_OF_JOB, 1, "one terminal resolution"),
             ],
         )

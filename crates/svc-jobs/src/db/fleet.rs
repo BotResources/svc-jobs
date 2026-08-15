@@ -19,15 +19,18 @@ const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
      FROM runner_types rt \
      JOIN runner_instances ri ON ri.runner_type_id = rt.id \
      JOIN runner_presence_sessions s ON s.instance_id = ri.id \
+     WHERE $1::text IS NULL OR rt.type_key = $1 \
      GROUP BY rt.id, rt.type_key";
 
 const INSTANCES_SQL: &str = "SELECT ri.runner_type_id::uuid AS runner_type_id, ri.instance_key, \
      s.id::uuid AS session_id, s.version, s.connected_at, s.last_observed_at, \
      c.reported_status AS reported_status, c.change_number AS change_number \
      FROM runner_instances ri \
+     JOIN runner_types rt ON rt.id = ri.runner_type_id \
      JOIN runner_presence_sessions s ON s.instance_id = ri.id AND s.disconnected_at IS NULL \
      LEFT JOIN LATERAL (SELECT reported_status, change_number FROM runner_status_changes \
-        WHERE session_id = s.id ORDER BY change_number DESC LIMIT 1) c ON true";
+        WHERE session_id = s.id ORDER BY change_number DESC LIMIT 1) c ON true \
+     WHERE $1::text IS NULL OR rt.type_key = $1";
 
 impl PgStore {
     pub async fn runner_type_keys_with_jobs(&self) -> Result<Vec<RunnerTypeKey>, PortError> {
@@ -153,10 +156,15 @@ async fn status_change(
     Ok(())
 }
 
-async fn load_all_types(executor: &mut PgConnection) -> Result<Vec<RunnerType>, PortError> {
+async fn load_types(
+    executor: &mut PgConnection,
+    only: Option<&RunnerTypeKey>,
+) -> Result<Vec<RunnerType>, PortError> {
+    let only = only.map(RunnerTypeKey::as_str);
     let mut instances: std::collections::HashMap<Uuid, Vec<RunnerInstance>> =
         std::collections::HashMap::new();
     for row in sqlx::query(INSTANCES_SQL)
+        .bind(only)
         .fetch_all(&mut *executor)
         .await
         .map_err(unavailable)?
@@ -181,6 +189,7 @@ async fn load_all_types(executor: &mut PgConnection) -> Result<Vec<RunnerType>, 
     }
     let mut types = Vec::new();
     for row in sqlx::query(TYPES_SQL)
+        .bind(only)
         .fetch_all(&mut *executor)
         .await
         .map_err(unavailable)?
@@ -200,10 +209,7 @@ async fn load_one(
     executor: &mut PgConnection,
     key: &RunnerTypeKey,
 ) -> Result<Option<RunnerType>, PortError> {
-    Ok(load_all_types(executor)
-        .await?
-        .into_iter()
-        .find(|runner_type| runner_type.key() == key))
+    Ok(load_types(executor, Some(key)).await?.pop())
 }
 
 #[async_trait]
@@ -215,6 +221,6 @@ impl FleetReader for PgStore {
 
     async fn load_all(&self) -> Result<Vec<RunnerType>, PortError> {
         let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        load_all_types(&mut connection).await
+        load_types(&mut connection, None).await
     }
 }

@@ -1,4 +1,5 @@
 use async_graphql::SimpleObject;
+use bc_jobs::domain::actions::fleet::unregistered_affordances;
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::fleet::view::{FleetView, fleet_view, unregistered_fleet_view};
 use bc_jobs::domain::job::Job;
@@ -62,16 +63,10 @@ pub fn view_of(key: &RunnerTypeKey, known: Option<&RunnerType>, jobs: &[Job]) ->
     };
     GqlRunnerTypeView {
         runner_type: runner_type_of(key, known, &projection),
-        affordances: match known {
-            Some(runner_type) => affordance_list(runner_type.affordances()),
-            None => affordance_list(vec![bc_jobs::domain::actions::Affordance::new(
-                bc_jobs::domain::actions::fleet::DISPATCH,
-                bc_jobs::domain::actions::Availability::Blocked {
-                    reason_code: "runner_type_unavailable".to_owned(),
-                    params: serde_json::json!({ "runnerType": key.as_str() }),
-                },
-            )]),
-        },
+        affordances: affordance_list(match known {
+            Some(runner_type) => runner_type.affordances(),
+            None => unregistered_affordances(key),
+        }),
     }
 }
 

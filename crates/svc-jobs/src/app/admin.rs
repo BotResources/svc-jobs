@@ -72,8 +72,9 @@ pub async fn manual_retry(
         Some(parent) => jobs.load(parent).await?,
         None => None,
     };
-    let active = match predecessor.source() {
-        Some(source) => JobReader::load_active_for_source(&jobs.store, &source).await?,
+    let claimed_source = predecessor.source();
+    let active = match &claimed_source {
+        Some(source) => JobReader::load_active_for_source(&jobs.store, source).await?,
         None => None,
     };
     let outcome = decide_manual_retry(
@@ -87,7 +88,8 @@ pub async fn manual_retry(
         ManualRetryOutcome::Started(plan) => {
             jobs.commit(
                 vec![
-                    JobChange::new(command.successor_job_id, None, plan.successor.events),
+                    JobChange::new(command.successor_job_id, None, plan.successor.events)
+                        .claiming_source(claimed_source),
                     JobChange::new(predecessor.id(), Some(predecessor), plan.predecessor.events),
                 ],
                 &metadata,

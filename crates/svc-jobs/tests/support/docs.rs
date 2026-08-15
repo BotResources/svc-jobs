@@ -14,7 +14,7 @@ query($id: UUID!) {
         id attemptNumber origin automaticRetryOfRunId status retryDueAt
         cancellationRequestedAt dispatchedAt startedAt finishedAt
         instance { runnerType instanceKey }
-        declaredPlan { declarationNumber items { index label } }
+        declaredPlan { declarationId declarationNumber items { index label } }
         progression { currentStep { index label } }
         steps { index label startedAt }
         failureReport { kind reasonCode params diagnostic retryAfterSeconds }

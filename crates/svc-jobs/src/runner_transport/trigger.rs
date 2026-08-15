@@ -1,3 +1,4 @@
+use async_nats::jetstream::stream::RawMessageErrorKind;
 use async_trait::async_trait;
 use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::keys::{ReasonCode, RunnerTypeKey};
@@ -64,8 +65,12 @@ impl RunnerTransport for RunnerChannels {
                 .sequence(sequence)
                 .send()
                 .await;
-            let Ok(message) = message else {
-                return Ok(());
+            let message = match message {
+                Ok(message) => message,
+                Err(error) if error.kind() == RawMessageErrorKind::NoMessageFound => {
+                    return Ok(());
+                }
+                Err(error) => return Err(transport_error(error)),
             };
             let carried: Value = serde_json::from_slice(&message.payload).unwrap_or(Value::Null);
             if carried["run_id"] == serde_json::json!(run_id.as_uuid().to_string()) {
@@ -77,6 +82,13 @@ impl RunnerTransport for RunnerChannels {
             }
             sequence = message.sequence + 1;
         }
+        tracing::warn!(
+            run_id = %run_id.as_uuid(),
+            runner_type = runner_type.as_str(),
+            scanned = WITHDRAWAL_SCAN_LIMIT,
+            "the undelivered trigger of a cancelled run was not found within the scan limit; \
+             a runner may still claim it and its start will be refused by the terminal job"
+        );
         Ok(())
     }
 }

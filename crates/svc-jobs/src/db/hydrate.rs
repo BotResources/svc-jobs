@@ -256,6 +256,20 @@ async fn fetch(
 }
 
 pub fn unavailable(error: sqlx::Error) -> PortError {
+    if error
+        .as_database_error()
+        .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
+    {
+        return PortError::ConcurrentModification;
+    }
+    if error
+        .as_database_error()
+        .is_some_and(sqlx::error::DatabaseError::is_check_violation)
+    {
+        return PortError::Refused {
+            detail: error.to_string(),
+        };
+    }
     PortError::Unavailable {
         detail: error.to_string(),
     }

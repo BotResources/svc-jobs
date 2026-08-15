@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_nats::jetstream::AckKind;
 use async_nats::jetstream::consumer::{AckPolicy, PullConsumer, pull};
 use async_nats::jetstream::stream::Stream;
 use bc_jobs::domain::keys::RunnerTypeKey;
@@ -106,26 +107,36 @@ where
         };
         let subject = message.subject.as_str().to_owned();
         let payload = message.payload.to_vec();
-        match handle(subject.clone(), payload).await {
-            Ok(()) => {
-                if let Err(error) = message.ack().await {
-                    tracing::warn!(error = %error, "acknowledging a runner fact failed");
-                }
-            }
-            Err(error) => {
-                tracing::error!(
-                    subject = %subject,
-                    error = %error,
-                    "a runner fact could not be recorded; it will be redelivered"
-                );
-                if let Err(error) = message
-                    .ack_with(async_nats::jetstream::AckKind::Nak(None))
-                    .await
-                {
-                    tracing::warn!(error = %error, "negative-acknowledging a runner fact failed");
-                }
-            }
+        let kind = settle(&subject, handle(subject.clone(), payload).await);
+        if let Err(error) = message.ack_with(kind).await {
+            tracing::warn!(error = %error, "settling a runner fact failed");
         }
     }
     Ok(())
+}
+
+fn settle(subject: &str, outcome: Result<(), ServiceError>) -> AckKind {
+    match outcome {
+        Ok(()) => AckKind::Ack,
+        Err(ServiceError::Infra(detail)) => {
+            tracing::error!(
+                subject = %subject,
+                detail,
+                "a runner fact failed on infrastructure; it will be redelivered"
+            );
+            AckKind::Nak(None)
+        }
+        Err(ServiceError::Contended) => {
+            tracing::debug!(subject = %subject, "a runner fact lost a write race, redelivered");
+            AckKind::Nak(None)
+        }
+        Err(permanent) => {
+            tracing::warn!(
+                subject = %subject,
+                error = %permanent,
+                "a runner fact was refused permanently, discarded"
+            );
+            AckKind::Term
+        }
+    }
 }

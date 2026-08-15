@@ -11,13 +11,13 @@ use crate::error::ServiceError;
 use crate::runner_transport::{RunnerChannels, cancel};
 use crate::stream::{Fact, Hub};
 
-pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration) {
+pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimum_wake: Duration) {
     let mut facts = hub.subscribe();
     loop {
         if let Err(error) = dispatch::dispatch_due_work(&jobs).await {
             tracing::error!(error = %error, "the dispatch pass failed");
         }
-        let wake = next_wake(&jobs, interval).await;
+        let wake = next_wake(&jobs, interval, minimum_wake).await;
         tokio::select! {
             () = sleep_until(wake) => {}
             fact = facts.recv() => {
@@ -32,19 +32,20 @@ pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration) {
     }
 }
 
-async fn next_wake(jobs: &Jobs, interval: Duration) -> Instant {
-    let ceiling = Instant::now() + interval;
-    match jobs.store.next_retry_due_at().await {
+async fn next_wake(jobs: &Jobs, interval: Duration, minimum_wake: Duration) -> Instant {
+    let ceiling = interval.max(minimum_wake);
+    let waited = match jobs.store.next_retry_due_at().await {
         Err(error) => {
             tracing::warn!(error = %error, "reading the next retry due time failed");
             ceiling
         }
         Ok(None) => ceiling,
-        Ok(Some(due)) => {
-            let remaining = (due - Utc::now()).to_std().unwrap_or(Duration::ZERO);
-            ceiling.min(Instant::now() + remaining)
-        }
-    }
+        Ok(Some(due)) => (due - Utc::now())
+            .to_std()
+            .unwrap_or(Duration::ZERO)
+            .clamp(minimum_wake, ceiling),
+    };
+    Instant::now() + waited
 }
 
 fn unblocks_dispatch(fact: &Fact) -> bool {

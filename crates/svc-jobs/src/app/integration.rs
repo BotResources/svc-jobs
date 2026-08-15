@@ -38,7 +38,6 @@ pub fn of_event(
     event: &JobEvent,
     before: Option<&Job>,
     note: Option<&str>,
-    occurred_at: DateTime<Utc>,
 ) -> Result<Option<Published>, ServiceError> {
     let published = match event {
         JobEvent::JobQueued(fact) => Some(published(
@@ -78,7 +77,7 @@ pub fn of_event(
                 run_id: fact.run_id.as_uuid(),
                 index: fact.step_index.get(),
                 label: fact.label.as_str().to_owned(),
-                started_at: occurred_at,
+                started_at: fact.started_at,
             },
         )?),
         JobEvent::JobCompleted(fact) => Some(published(

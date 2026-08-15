@@ -4,6 +4,7 @@ use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::policies::fleet::fleet_signals;
+use br_util_graphql::EdgeError;
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use uuid::Uuid;
@@ -16,7 +17,7 @@ use crate::edge::types::fleet::GqlFleetEvent;
 use crate::edge::types::stream::{GqlFleetSnapshot, GqlFleetStreamMessage, GqlRunnerTypeDelta};
 use crate::stream::Fact;
 
-use super::{cursor, next_fact};
+use super::{cursor, next_unbroken_fact};
 
 pub fn fleet_stream(
     state: EdgeState,
@@ -31,7 +32,7 @@ pub fn fleet_stream(
                 return;
             }
         }
-        while let Some(fact) = next_fact(&mut facts).await {
+        while let Some(fact) = next_unbroken_fact(&mut facts).await {
             let messages = match fact {
                 Fact::Fleet { event_id, occurred_at, event } => {
                     fleet_deltas(&state, runner_type.as_deref(), event_id, occurred_at, &event).await
@@ -151,9 +152,9 @@ async fn delta(
     event: GqlFleetEvent,
 ) -> Result<GqlFleetStreamMessage> {
     let mut views = project::fleet_views(&state.store, Some(key.as_str())).await?;
-    let view = views.pop().ok_or_else(|| {
-        async_graphql::Error::new("the fleet projection of a live runner type is always present")
-    })?;
+    let view = views
+        .pop()
+        .ok_or_else(|| async_graphql::Error::from(EdgeError::internal("fleet_view_absent")))?;
     Ok(GqlFleetStreamMessage::Delta(GqlRunnerTypeDelta {
         cursor: cursor(event.id),
         event,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, Json, Object, Result, SimpleObject};
+use async_graphql::{Json, Object, Result, SimpleObject};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::KnownUser;
 use br_util_graphql::Affordance;
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::enums::{GqlJobFailureCause, GqlJobResolutionKind, GqlJobStatus};
 use super::run::{GqlRun, GqlRunProgression, run_of};
 use crate::edge::project;
+use crate::edge::tree::JobTree;
 
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "JobsKnownUser")]
@@ -86,6 +87,7 @@ pub struct GqlJobSummary {
 
 pub struct GqlJobDetail {
     pub job: Arc<Job>,
+    pub tree: Arc<JobTree>,
 }
 
 #[Object(name = "JobsJobDetail")]
@@ -177,14 +179,23 @@ impl GqlJobDetail {
             .collect()
     }
 
-    async fn children(&self, ctx: &Context<'_>) -> Result<Vec<GqlJobView>> {
-        project::children_of(ctx, Arc::clone(&self.job)).await
+    async fn children(&self) -> Vec<GqlJobView> {
+        self.tree
+            .children_of(self.job.id())
+            .iter()
+            .map(|child| GqlJobView {
+                job: Arc::clone(child),
+                parent: Some(Arc::clone(&self.job)),
+                tree: Arc::clone(&self.tree),
+            })
+            .collect()
     }
 }
 
 pub struct GqlJobView {
     pub job: Arc<Job>,
     pub parent: Option<Arc<Job>>,
+    pub tree: Arc<JobTree>,
 }
 
 #[Object(name = "JobsJobView")]
@@ -192,6 +203,7 @@ impl GqlJobView {
     async fn job(&self) -> GqlJobDetail {
         GqlJobDetail {
             job: Arc::clone(&self.job),
+            tree: Arc::clone(&self.tree),
         }
     }
 

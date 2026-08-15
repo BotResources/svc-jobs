@@ -274,9 +274,9 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
 
     // When: a bounded context that owns nothing here issues the Owner's own commands
     let intruder = Producer::new(fixture.fabric(), "chat");
-    intruder.finish(running_id, Uuid::now_v7()).await;
-    intruder.fail(running_id, Uuid::now_v7()).await;
-    intruder.cancel(running_id, Uuid::now_v7()).await;
+    intruder.finish(running_id).await;
+    intruder.fail(running_id, None).await;
+    intruder.cancel(running_id).await;
 
     // Then: one authorization code, shared by every refusal and distinct from a state refusal
     let authorization_code = action_refusals[0].clone();
@@ -352,7 +352,7 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         0,
         1,
     );
-    producer.finish(running_id, Uuid::now_v7()).await;
+    producer.finish(running_id).await;
     let completed =
         stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
     delta::projection(&completed, running_id, "COMPLETED");

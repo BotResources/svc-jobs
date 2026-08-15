@@ -28,6 +28,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     let owner = Producer::new(fixture.fabric(), "jobs");
     let mut orchestrator = FakeRunner::new(fixture.nats(), &parent_type, "orchestrator-a");
     let mut worker = FakeRunner::new(fixture.nats(), &child_type, "worker-a");
+    let mut sibling_worker = FakeRunner::new(fixture.nats(), &sibling_type, "sibling-a");
 
     let mut listing = SseSubscription::open(
         fixture.url(),
@@ -126,6 +127,12 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         let listed = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, LONG).await;
         delta::assert_active_affordances(&delta::upserted(&listed, descendant));
     }
+    sibling_worker.connect().await;
+    let sibling_trigger = sibling_worker.next_trigger(LONG).await;
+    let sibling_run = runner::run_id(&sibling_trigger);
+    sibling_worker.start_run(&sibling_trigger).await;
+    gql::wait_for_status(&client, admin, sibling_id, "IN_PROGRESS", LONG).await;
+
     let tree = gql::job_view(&client, admin, parent_id).await;
     assert_eq!(tree["job"]["status"], json!("IN_PROGRESS"));
     for descendant in [child_id, sibling_id] {
@@ -192,11 +199,20 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     );
     assert!(parent_view["job"]["resolution"].is_null());
     delta::assert_active_affordances(&parent_view);
+    let sibling_view = gql::job(&client, admin, sibling_id).await;
     assert_eq!(
-        gql::job(&client, admin, sibling_id).await["status"],
-        json!("PENDING"),
+        sibling_view["status"],
+        json!("IN_PROGRESS"),
         "no sibling is failed or cancelled automatically",
     );
+    assert_eq!(
+        gql::run_by_id(&sibling_view, sibling_run)["status"],
+        json!("STARTED"),
+        "a brother executing at the moment of the failure keeps its own run alive",
+    );
+    sibling_worker
+        .expect_no_cancel_entry(sibling_run, QUIET)
+        .await;
     assert_eq!(
         gql::run_by_id(&gql::job(&client, admin, parent_id).await, parent_run)["status"],
         json!("STARTED"),
@@ -207,7 +223,14 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
             events.expect_none(fact, job_id, QUIET).await;
         }
     }
-    stream::expect_no_delta(&mut parent_watch, JOB_CHANGED, wire::EVT_JOB_FAILED, QUIET).await;
+    stream::expect_no_delta_of(
+        &mut parent_watch,
+        JOB_CHANGED,
+        wire::EVT_JOB_FAILED,
+        parent_id,
+        QUIET,
+    )
+    .await;
 
     // When: the parent runner decides to spawn an alternative child instead
     let alternative = JobDeclaration::new(&child_type).with_parent(parent_id);
@@ -216,7 +239,34 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     events
         .expect_one(wire::FACT_QUEUED, alternative_id, LONG)
         .await;
+    let alternative_queued = stream::await_delta_of(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_QUEUED,
+        alternative_id,
+        LONG,
+    )
+    .await;
+    delta::assert_active_affordances(&delta::upserted(&alternative_queued, alternative_id));
     let alternative_trigger = worker.next_trigger(LONG).await;
+    let alternative_dispatched = stream::await_delta_of(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_RUN_DISPATCHED,
+        alternative_id,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::event_of(
+            &alternative_dispatched,
+            wire::EVT_RUN_DISPATCHED,
+            alternative_id
+        )["runId"],
+        json!(runner::run_id(&alternative_trigger).to_string()),
+        "the dispatch of the alternative child is pushed as its own delta, so a client never has \
+         to refetch to learn a run exists",
+    );
     let mut alternative_watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(alternative_id)).await;
     let alternative_opening = stream::snapshot(&mut alternative_watch, JOB_CHANGED, SHORT).await;
@@ -246,7 +296,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     delta::projection(&alternative_done, alternative_id, "IN_PROGRESS");
 
     // When: the owner finishes the alternative child and then the parent
-    owner.finish(alternative_id, Uuid::now_v7()).await;
+    owner.finish(alternative_id).await;
     events
         .expect_one(wire::FACT_COMPLETED, alternative_id, LONG)
         .await;
@@ -258,16 +308,37 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     events
         .expect_none(wire::FACT_COMPLETED, parent_id, QUIET)
         .await;
-    stream::expect_no_delta(
+    stream::expect_no_delta_of(
         &mut parent_watch,
         JOB_CHANGED,
         wire::EVT_JOB_COMPLETED,
+        parent_id,
         QUIET,
     )
     .await;
 
-    let parent_resolution = Uuid::now_v7();
-    producer.finish(parent_id, parent_resolution).await;
+    // When: the owner closes the parent while its own run is still executing
+    producer.finish(parent_id).await;
+    let parent_stopped = stream::await_delta(
+        &mut parent_watch,
+        JOB_CHANGED,
+        wire::EVT_RUN_CANCELLED,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::event_of(&parent_stopped, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
+        json!(parent_run.to_string()),
+        "a job resolved by its owner withdraws the run it left executing, before it closes",
+    );
+    let stop_order = orchestrator.await_cancel_entry(parent_run, LONG).await;
+    assert_eq!(
+        stop_order["run_id"],
+        json!(parent_run.to_string()),
+        "the instance still executing the parent is told to stop through the desired-state \
+         bucket — without that entry it burns compute for ever on a job that is already \
+         COMPLETED: {stop_order}",
+    );
     let parent_completed = stream::await_delta(
         &mut parent_watch,
         JOB_CHANGED,
@@ -275,9 +346,16 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         LONG,
     )
     .await;
-    assert_eq!(
-        delta::event_of(&parent_completed, wire::EVT_JOB_COMPLETED, parent_id)["resolutionId"],
-        json!(parent_resolution.to_string())
+    let parent_resolution = delta::event_of(&parent_completed, wire::EVT_JOB_COMPLETED, parent_id)
+        ["resolutionId"]
+        .clone();
+    assert!(
+        parent_resolution
+            .as_str()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+            .is_some(),
+        "the finish command declares only the job id, so jobs identifies the resolution itself: \
+         {parent_completed}",
     );
     delta::projection(&parent_completed, parent_id, "COMPLETED");
     delta::assert_completed_affordances(&parent_completed);
@@ -285,12 +363,43 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         .expect_one(wire::FACT_COMPLETED, parent_id, LONG)
         .await;
 
+    let closed_parent = gql::job(&client, admin, parent_id).await;
+    assert_eq!(
+        closed_parent["resolution"]["id"], parent_resolution,
+        "the read answers with the very resolution the stream announced: {closed_parent}",
+    );
+    let withdrawn = gql::run_by_id(&closed_parent, parent_run);
+    assert_eq!(
+        withdrawn["status"],
+        json!("CANCELLED"),
+        "the run the owner's decision withdrew is closed, never left STARTED for ever: \
+         {closed_parent}",
+    );
+    assert!(
+        !withdrawn["cancellationRequestedAt"].is_null(),
+        "the withdrawal is recorded on the run as a request, not only as a terminal status: \
+         {withdrawn}",
+    );
+    support::views::assert_views_agree(
+        &durable,
+        &client,
+        admin,
+        parent_id,
+        "a job closed over a run that was still executing",
+    )
+    .await;
+
     durable
         .assert_all(
             parent_id,
             &[
                 (db::JOBS_WITH_ID, 1, "one parent"),
                 (db::RUNS_OF_JOB, 1, "one run per dispatch"),
+                (
+                    db::CANCEL_REQUESTS_OF_JOB,
+                    1,
+                    "one durable stop request for the run the resolution withdrew",
+                ),
                 (db::RESOLUTIONS_OF_JOB, 1, "one owner-declared resolution"),
             ],
         )
@@ -307,11 +416,18 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     durable
         .assert_all(
             sibling_id,
-            &[(
-                db::RESOLUTIONS_OF_JOB,
-                0,
-                "no resolution ever reached the untouched sibling",
-            )],
+            &[
+                (
+                    db::RUNS_OF_JOB,
+                    1,
+                    "the sibling's own dispatch, still alive",
+                ),
+                (
+                    db::RESOLUTIONS_OF_JOB,
+                    0,
+                    "no resolution ever reached the untouched sibling",
+                ),
+            ],
         )
         .await;
     durable.close().await;
@@ -376,8 +492,8 @@ async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_repor
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
     // When: the parent's Owner judges the report unrecoverable and fails its own job on the bus
-    let resolution_id = Uuid::now_v7();
-    producer.fail(parent_id, resolution_id).await;
+    let note = "the provider refused the only source this job had";
+    producer.fail(parent_id, Some(note)).await;
 
     // Then: the failure is published as declared, carrying no run report the parent never produced
     let declared = events.expect_one(wire::FACT_FAILED, parent_id, LONG).await;
@@ -392,11 +508,25 @@ async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_repor
         "no run of this job failed, so there is no report to escalate — a copied child report \
          would tell the producer a run failed here when none did: {payload}",
     );
+    assert_eq!(
+        payload["note"],
+        json!(note),
+        "the Owner's own words on why are carried to every consumer of the failure — they are the \
+         only explanation an Owner-declared failure has: {payload}",
+    );
 
     let failed = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_JOB_FAILED, LONG).await;
     let pushed = delta::event_of(&failed, wire::EVT_JOB_FAILED, parent_id);
     assert_eq!(pushed["failureCause"], json!("DECLARED_BY_OWNER"));
-    assert_eq!(pushed["resolutionId"], json!(resolution_id.to_string()));
+    let resolution_id = pushed["resolutionId"].clone();
+    assert!(
+        resolution_id
+            .as_str()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+            .is_some(),
+        "the fail command declares the job and the Owner's note, so the resolution identity is \
+         jobs' own: {pushed}",
+    );
     delta::projection(&failed, parent_id, "FAILED");
     delta::assert_failed_affordances(&failed);
     delta::assert_failed_affordances(&delta::assert_upserted_summary(
@@ -407,7 +537,10 @@ async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_repor
 
     let view = gql::job_view(&client, admin, parent_id).await;
     let resolution = view["job"]["resolution"].clone();
-    assert_eq!(resolution["id"], json!(resolution_id.to_string()));
+    assert_eq!(
+        resolution["id"], resolution_id,
+        "the read answers with the very resolution the stream announced: {resolution}",
+    );
     assert_eq!(resolution["kind"], json!("FAILED"));
     assert_eq!(resolution["failureCause"], json!("DECLARED_BY_OWNER"));
     assert!(

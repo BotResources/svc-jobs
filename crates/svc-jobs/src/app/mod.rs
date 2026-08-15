@@ -152,12 +152,16 @@ impl Jobs {
         }
         for event in descendant_affordances_changed(job, &children) {
             let child = event.job_id();
-            let before = self.load(child).await?;
+            let before = children
+                .iter()
+                .find(|candidate| candidate.id() == child)
+                .cloned();
             followups.push(JobChange::new(child, before, vec![event]));
         }
         if followups.is_empty() {
             return Ok(());
         }
+        followups.sort_by_key(|change| change.job_id.as_uuid());
         write::commit_job_changes(&self.store, followups, metadata, self.clock.now()).await
     }
 }

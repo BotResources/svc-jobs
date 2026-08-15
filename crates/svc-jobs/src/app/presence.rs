@@ -1,6 +1,7 @@
 use bc_jobs::commands::fleet::{ObserveLoss, ObservePresence, observe_loss, observe_presence};
 use bc_jobs::commands::job::backstop::ReclaimRun;
-use bc_jobs::domain::ids::{PresenceSessionId, ResolutionId, RetryScheduleId, RunnerTypeId};
+use bc_jobs::domain::ids::{PresenceSessionId, ResolutionId, RetryScheduleId, RunId, RunnerTypeId};
+use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::{
     InstanceKey, ReasonCode, ReportedStatus, RunnerTypeKey, RunnerVersion,
 };
@@ -29,14 +30,25 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
         reported_status: ReportedStatus::new(&presence.status)?,
     };
     let result = observe_presence(known.as_ref(), command)?;
-    write::commit_fleet_events(
-        &jobs.store,
-        runner_type_id,
-        &result.events,
-        &service_metadata(),
-        jobs.clock.now(),
+    recorded(
+        write::commit_fleet_events(
+            &jobs.store,
+            runner_type_id,
+            &result.events,
+            &service_metadata(),
+            jobs.clock.now(),
+        )
+        .await,
     )
-    .await
+    .map(|_| ())
+}
+
+fn recorded(outcome: Result<(), ServiceError>) -> Result<bool, ServiceError> {
+    match outcome {
+        Ok(()) => Ok(true),
+        Err(ServiceError::Contended) => Ok(false),
+        Err(other) => Err(other),
+    }
 }
 
 pub async fn lost(
@@ -60,14 +72,19 @@ pub async fn lost(
             reason_code: ReasonCode::new(reason_code)?,
         },
     )?;
-    write::commit_fleet_events(
-        &jobs.store,
-        known.id(),
-        &result.events,
-        &service_metadata(),
-        jobs.clock.now(),
-    )
-    .await?;
+    let this_pod_recorded_the_loss = recorded(
+        write::commit_fleet_events(
+            &jobs.store,
+            known.id(),
+            &result.events,
+            &service_metadata(),
+            jobs.clock.now(),
+        )
+        .await,
+    )?;
+    if !this_pod_recorded_the_loss {
+        return Ok(());
+    }
     reclaim_runs(jobs, &key, &instance_key).await
 }
 
@@ -83,22 +100,34 @@ async fn reclaim_runs(
         let Some(job) = active.iter().find(|job| job.id() == orphan.job_id) else {
             continue;
         };
-        let result = job.fail_run_for_instance_loss(
-            ReclaimRun {
-                run_id: orphan.run_id,
-                retry_schedule_id: RetryScheduleId::new(jobs.ids.next())?,
-                resolution_id: ResolutionId::new(jobs.ids.next())?,
-                jitter: jobs.jitter.draw(),
-                at: jobs.clock.now(),
-            },
-            &jobs.retry,
-            &jobs.limits,
-        )?;
-        jobs.commit(
-            vec![JobChange::new(job.id(), Some(job.clone()), result.events)],
-            &service_metadata(),
-        )
-        .await?;
+        if let Err(error) = reclaim_one(jobs, job, orphan.run_id).await {
+            tracing::warn!(
+                job_id = %job.id().as_uuid(),
+                run_id = %orphan.run_id.as_uuid(),
+                error = %error,
+                "reclaiming a run orphaned by a lost instance failed; the remaining orphans are \
+                 still reclaimed and the backstop covers this one"
+            );
+        }
     }
     Ok(())
+}
+
+async fn reclaim_one(jobs: &Jobs, job: &Job, run_id: RunId) -> Result<(), ServiceError> {
+    let result = job.fail_run_for_instance_loss(
+        ReclaimRun {
+            run_id,
+            retry_schedule_id: RetryScheduleId::new(jobs.ids.next())?,
+            resolution_id: ResolutionId::new(jobs.ids.next())?,
+            jitter: jobs.jitter.draw(),
+            at: jobs.clock.now(),
+        },
+        &jobs.retry,
+        &jobs.limits,
+    )?;
+    jobs.commit(
+        vec![JobChange::new(job.id(), Some(job.clone()), result.events)],
+        &service_metadata(),
+    )
+    .await
 }

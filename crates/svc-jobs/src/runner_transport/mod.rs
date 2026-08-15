@@ -9,6 +9,7 @@ use async_nats::jetstream::{self, Context};
 use bc_jobs::ports::PortError;
 use contract_jobs::runner as wire;
 
+use crate::config::NatsCredentials;
 use crate::error::ServiceError;
 
 #[derive(Clone)]
@@ -20,8 +21,19 @@ pub struct RunnerChannels {
 }
 
 impl RunnerChannels {
-    pub async fn bind(nats_url: &str) -> Result<Self, ServiceError> {
-        let client = async_nats::connect(nats_url)
+    pub async fn bind(
+        nats_url: &str,
+        credentials: Option<&NatsCredentials>,
+    ) -> Result<Self, ServiceError> {
+        let options = match credentials {
+            Some(credentials) => async_nats::ConnectOptions::with_user_and_password(
+                credentials.user.clone(),
+                credentials.password.clone(),
+            ),
+            None => async_nats::ConnectOptions::new(),
+        };
+        let client = options
+            .connect(nats_url)
             .await
             .map_err(|error| ServiceError::Infra(error.to_string()))?;
         let jetstream = jetstream::new(client);

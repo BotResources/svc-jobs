@@ -203,28 +203,16 @@ impl<'a> FakeRunner<'a> {
         .await;
     }
 
-    pub async fn declare_plan(&self, trigger: &Value, labels: &[&str]) -> Uuid {
-        self.declare_plan_with(trigger, Uuid::now_v7(), labels)
-            .await
-    }
-
-    pub async fn declare_plan_with(
-        &self,
-        trigger: &Value,
-        declaration_id: Uuid,
-        labels: &[&str],
-    ) -> Uuid {
+    pub async fn declare_plan(&self, trigger: &Value, labels: &[&str]) {
         self.publish_status(
             wire::FACT_PLAN_DECLARED,
             json!({
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
-                "declaration_id": declaration_id.to_string(),
                 "steps": labels,
             }),
         )
         .await;
-        declaration_id
     }
 
     pub async fn start_step(&self, trigger: &Value, index: i64, label: &str) {
@@ -293,35 +281,33 @@ impl<'a> FakeRunner<'a> {
         step_index: Option<i64>,
         level: &str,
         message: &str,
-    ) -> Uuid {
-        self.log_line_with(trigger, Uuid::now_v7(), step_index, level, message)
-            .await
+    ) {
+        self.log_line_at(trigger, step_index, level, message, Utc::now().to_rfc3339())
+            .await;
     }
 
-    pub async fn log_line_with(
+    pub async fn log_line_at(
         &self,
         trigger: &Value,
-        id: Uuid,
         step_index: Option<i64>,
         level: &str,
         message: &str,
-    ) -> Uuid {
+        logged_at: String,
+    ) {
         self.nats
             .publish_raw(
                 &wire::log_subject(&self.runner_type),
                 serde_json::to_vec(&json!({
-                    "id": id.to_string(),
                     "run_id": run_id(trigger).to_string(),
                     "job_id": job_id(trigger).to_string(),
                     "step_index": step_index,
                     "level": level,
                     "message": message,
-                    "logged_at": Utc::now().to_rfc3339(),
+                    "logged_at": logged_at,
                 }))
                 .expect("a log line serializes"),
             )
             .await;
-        id
     }
 
     pub async fn cancel_entry(&self, run: Uuid) -> Option<Value> {

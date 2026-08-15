@@ -86,14 +86,17 @@ pub fn cursor(event_id: Uuid) -> String {
     event_id.to_string()
 }
 
-pub async fn next_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {
-    loop {
-        match facts.recv().await {
-            Ok(fact) => return Some(fact),
-            Err(RecvError::Lagged(missed)) => {
-                tracing::warn!(missed, "a subscriber fell behind the durable fact stream");
-            }
-            Err(RecvError::Closed) => return None,
+pub async fn next_unbroken_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {
+    match facts.recv().await {
+        Ok(fact) => Some(fact),
+        Err(RecvError::Lagged(missed)) => {
+            tracing::warn!(
+                missed,
+                "a subscriber fell behind the durable fact stream; its subscription ends so the \
+                 client reconnects onto a fresh snapshot"
+            );
+            None
         }
+        Err(RecvError::Closed) => None,
     }
 }

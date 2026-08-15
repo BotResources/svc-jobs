@@ -87,7 +87,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     );
 
     // When: the owner also declares the failure it just received
-    producer.fail(predecessor_id, Uuid::now_v7()).await;
+    producer.fail(predecessor_id, None).await;
     events
         .expect_exactly(wire::FACT_FAILED, predecessor_id, 1, QUIET)
         .await;
@@ -95,6 +95,12 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     instance.expect_no_trigger(QUIET).await;
 
     let failed_view = gql::job_view(&client, admin, predecessor_id).await;
+    assert_eq!(
+        failed_view["job"]["triggeredBy"],
+        json!({ "id": operator_id.to_string(), "displayName": "Amelie" }),
+        "the user the work runs on behalf of is named as the declaration named them — an \
+         administrator reading a failed job sees a person, not an opaque id: {failed_view}",
+    );
     let failed_resolution_id = uuid_at(&failed_view["job"]["resolution"]["id"]);
     assert_eq!(
         failed_view["job"]["resolution"]["causedByRunId"],
@@ -379,7 +385,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
     );
 
     // When: the successor's owner finishes it, the predecessor's affordances change alone
-    producer.finish(successor_id, Uuid::now_v7()).await;
+    producer.finish(successor_id).await;
     let successor_completed = stream::await_delta(
         &mut successor_watch,
         JOB_CHANGED,

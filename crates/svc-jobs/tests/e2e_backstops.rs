@@ -11,7 +11,6 @@ use support::{
     FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, codes, delta, gql,
     stream, subs, wire,
 };
-use uuid::Uuid;
 
 const RUN_MAX_DURATION_SECONDS: u64 = 3;
 const INACTIVITY_TIMEOUT_SECONDS: u64 = 4;
@@ -199,8 +198,8 @@ async fn safety_backstops_reclaim_abandoned_work() {
 
     // When: both owners answer far too late
     for job_id in [runner_job_id, owner_job_id] {
-        producer.finish(job_id, Uuid::now_v7()).await;
-        producer.fail(job_id, Uuid::now_v7()).await;
+        producer.finish(job_id).await;
+        producer.fail(job_id, None).await;
     }
     events
         .expect_none(wire::FACT_COMPLETED, runner_job_id, QUIET)

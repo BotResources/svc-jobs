@@ -211,6 +211,7 @@ fn starting_a_step_implicitly_closes_the_previous_one() {
         Some(JobEvent::RunStepStarted(fact)) => {
             assert_eq!(fact.step_index, StepIndex::new(1));
             assert_eq!(fact.closed_step_index, Some(StepIndex::FIRST));
+            assert_eq!(fact.started_at, ts(20));
         }
         other => panic!("expected a RunStepStarted fact, got {other:?}"),
     }

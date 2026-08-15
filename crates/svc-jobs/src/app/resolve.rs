@@ -11,11 +11,11 @@ use super::Jobs;
 use super::write::JobChange;
 use crate::error::ServiceError;
 
-pub async fn guard_declaring_service(
+pub async fn owner_claim(
     jobs: &Jobs,
     job: &Job,
     metadata: &EventMetadata,
-) -> Result<(), ServiceError> {
+) -> Result<Caller, ServiceError> {
     let mut bound = job.clone();
     while let Some(predecessor) = bound.predecessor_job_id() {
         match jobs.load(predecessor).await? {
@@ -24,13 +24,13 @@ pub async fn guard_declaring_service(
         }
     }
     match jobs.store.declaring_actor(bound.id()).await? {
-        Some(declared_by) if declared_by == metadata.actor.id() => Ok(()),
+        Some(declared_by) if declared_by == metadata.actor.id() => Ok(claim_of(job.owner())),
         _ => Err(ServiceError::Domain(bc_jobs::JobsError::NotOwner)),
     }
 }
 
-pub fn caller_of(job: &Job) -> Caller {
-    match job.owner() {
+fn claim_of(owner: &JobOwner) -> Caller {
+    match owner {
         JobOwner::Producer(producer) => Caller::Producer(producer.clone()),
         JobOwner::Runner {
             parent_job_id,
@@ -49,8 +49,7 @@ pub async fn finish(
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    guard_declaring_service(jobs, &job, metadata).await?;
-    let caller = caller_of(&job);
+    let caller = owner_claim(jobs, &job, metadata).await?;
     let result = job.finish(FinishJob {
         resolution_id,
         caller,
@@ -70,8 +69,7 @@ pub async fn fail(
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    guard_declaring_service(jobs, &job, metadata).await?;
-    let caller = caller_of(&job);
+    let caller = owner_claim(jobs, &job, metadata).await?;
     let result = job.declare_failed(FailJob {
         resolution_id,
         caller,
@@ -96,7 +94,7 @@ pub async fn cancel(
         requester,
     })?;
     let descendants = JobReader::load_descendants(&jobs.store, job_id).await?;
-    let mut changes = vec![JobChange::new(job_id, Some(job.clone()), result.events)];
+    let mut cascaded: Vec<JobChange> = Vec::new();
     for order in cancellation_cascade(&job, &descendants) {
         let Some(descendant) = descendants
             .iter()
@@ -110,12 +108,14 @@ pub async fn cancel(
                 originating_job_id: order.originating_job_id,
             },
         })?;
-        changes.push(JobChange::new(
+        cascaded.push(JobChange::new(
             order.job_id,
             Some(descendant.clone()),
             cascade.events,
         ));
     }
-    changes.sort_by_key(|change| change.job_id.as_uuid());
+    cascaded.sort_by_key(|change| change.job_id.as_uuid());
+    let mut changes = vec![JobChange::new(job_id, Some(job.clone()), result.events)];
+    changes.append(&mut cascaded);
     jobs.commit(changes, metadata).await
 }

@@ -36,12 +36,23 @@ pub struct JobPage {
     pub has_next_page: bool,
 }
 
+pub struct JobWindow {
+    pub entries: Vec<(Uuid, String)>,
+    pub has_next_page: bool,
+}
+
+impl JobWindow {
+    pub fn ids(&self) -> Vec<Uuid> {
+        self.entries.iter().map(|(id, _)| *id).collect()
+    }
+}
+
 pub fn cursor_of(job: &Job) -> String {
-    format!(
-        "{}|{}",
-        job.created_at().timestamp_micros(),
-        job.id().as_uuid()
-    )
+    cursor(job.created_at(), job.id().as_uuid())
+}
+
+fn cursor(created_at: DateTime<Utc>, id: Uuid) -> String {
+    format!("{}|{}", created_at.timestamp_micros(), id)
 }
 
 fn parse_cursor(cursor: &str) -> Option<(DateTime<Utc>, Uuid)> {
@@ -54,12 +65,12 @@ fn parse_cursor(cursor: &str) -> Option<(DateTime<Utc>, Uuid)> {
 }
 
 impl PgStore {
-    pub async fn matching_ids(
+    pub async fn matching_window(
         &self,
         filter: &JobFilter,
         first: i64,
         after: Option<&str>,
-    ) -> Result<(Vec<Uuid>, bool), PortError> {
+    ) -> Result<JobWindow, PortError> {
         let limit = first.clamp(1, 200);
         let (at, id) = after
             .and_then(parse_cursor)
@@ -75,13 +86,19 @@ impl PgStore {
             .fetch_all(self.pool())
             .await
             .map_err(unavailable)?;
-        let more = rows.len() as i64 > limit;
-        let ids = rows
+        let has_next_page = rows.len() as i64 > limit;
+        let entries = rows
             .iter()
             .take(limit as usize)
-            .map(|row| row.get::<Uuid, _>("id"))
+            .map(|row| {
+                let id: Uuid = row.get("id");
+                (id, cursor(row.get::<DateTime<Utc>, _>("created_at"), id))
+            })
             .collect();
-        Ok((ids, more))
+        Ok(JobWindow {
+            entries,
+            has_next_page,
+        })
     }
 
     pub async fn job_page(
@@ -90,8 +107,9 @@ impl PgStore {
         first: i64,
         after: Option<&str>,
     ) -> Result<JobPage, PortError> {
-        let (ids, has_next_page) = self.matching_ids(filter, first, after).await?;
-        let mut jobs = self.load_batch(&ids).await?;
+        let window = self.matching_window(filter, first, after).await?;
+        let has_next_page = window.has_next_page;
+        let mut jobs = self.load_batch(&window.ids()).await?;
         jobs.sort_by(|left, right| {
             right
                 .created_at()

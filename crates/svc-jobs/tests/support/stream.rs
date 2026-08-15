@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use br_test_harness::SseSubscription;
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 pub async fn snapshot(watch: &mut SseSubscription, field: &str, timeout: Duration) -> Value {
     let message = watch.expect_event_on(field, timeout).await;
@@ -43,6 +44,27 @@ pub async fn await_delta(
             seen.push(carried);
         }
     }
+}
+
+#[must_use]
+pub async fn await_delta_of(
+    watch: &mut SseSubscription,
+    field: &str,
+    event_type: &str,
+    job_id: Uuid,
+    timeout: Duration,
+) -> Value {
+    await_message(
+        watch,
+        field,
+        &format!("{event_type} for job {job_id}"),
+        |message| {
+            message["event"]["__typename"] == json!(event_type)
+                && message["event"]["jobId"] == json!(job_id.to_string())
+        },
+        timeout,
+    )
+    .await
 }
 
 pub async fn await_message(
@@ -91,6 +113,31 @@ pub async fn expect_no_delta(
             message["event"]["__typename"],
             json!(event_type),
             "no {event_type} may reach a subscriber here: {message}"
+        );
+    }
+}
+
+pub async fn expect_no_delta_of(
+    watch: &mut SseSubscription,
+    field: &str,
+    event_type: &str,
+    job_id: Uuid,
+    quiet: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + quiet;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        let Some(event) = watch.next_event(remaining).await else {
+            return;
+        };
+        let message = event[field].clone();
+        assert!(
+            message["event"]["__typename"] != json!(event_type)
+                || message["event"]["jobId"] != json!(job_id.to_string()),
+            "no {event_type} may reach a subscriber for job {job_id} here: {message}"
         );
     }
 }

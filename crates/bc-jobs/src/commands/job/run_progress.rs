@@ -150,6 +150,7 @@ impl Job {
                 run_id: fact.run_id,
                 step_index: fact.step_index,
                 label: fact.label,
+                started_at: fact.started_at,
                 closed_step_index: current,
             },
         )))

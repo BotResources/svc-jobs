@@ -6,8 +6,10 @@ pub mod project;
 pub mod query;
 pub mod state;
 pub mod subscription;
+pub mod tree;
 pub mod types;
 
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_graphql::http::GraphiQLSource;
@@ -43,7 +45,7 @@ pub fn sdl() -> String {
 
 #[derive(Clone)]
 pub struct HttpState {
-    pub schema: JobsSchema,
+    pub schema: Arc<OnceLock<JobsSchema>>,
 }
 
 pub async fn graphql_route(
@@ -58,12 +60,18 @@ pub async fn graphql_route(
     if !is_platform_administrator(&passport) {
         return refusal(StatusCode::FORBIDDEN, EdgeError::forbidden());
     }
+    let Some(schema) = state.schema.get() else {
+        return refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            EdgeError::internal("not_ready"),
+        );
+    };
     let request = match parse(&body) {
         Ok(request) => request.data(passport),
         Err(response) => return *response,
     };
     if wants_event_stream(&headers) {
-        let stream = state.schema.execute_stream(request).map(|response| {
+        let stream = schema.execute_stream(request).map(|response| {
             let rendered = serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_owned());
             Ok::<Event, std::convert::Infallible>(Event::default().event("next").data(rendered))
         });
@@ -71,7 +79,7 @@ pub async fn graphql_route(
             .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
             .into_response();
     }
-    Json(state.schema.execute(request).await).into_response()
+    Json(schema.execute(request).await).into_response()
 }
 
 pub async fn playground() -> Html<String> {

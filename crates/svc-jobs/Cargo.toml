@@ -18,7 +18,7 @@ bc-jobs.workspace = true
 contract-jobs.workspace = true
 br-core-events.workspace = true
 br-core-integration.workspace = true
-br-util-graphql = { git = "https://github.com/BotResources/br-rust-common", package = "br-util-graphql", tag = "v1.2.0", version = "1.2.0", features = ["graphql"] }
+br-util-graphql = { workspace = true, features = ["graphql"] }
 async-nats.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
