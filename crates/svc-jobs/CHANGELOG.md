@@ -33,7 +33,8 @@ to `## Unreleased`).
   `JOBS_CONSUMER_MAX_DELIVER`; and the background-task supervision knobs
   `JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS`,
   `JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS`, `JOBS_TASK_RESTART_BUDGET`,
-  `JOBS_TASK_STABILITY_SECONDS`.
+  `JOBS_TASK_STABILITY_SECONDS`; and the capacity knob
+  `JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS`.
 - The runner-transport durable consumers declare their own `ack_wait`,
   `max_ack_pending` and `max_deliver` instead of inheriting the server
   defaults, so a handler slower than the server's grace period is never
@@ -56,6 +57,17 @@ to `## Unreleased`).
 - A `CHECK` violation from PostgreSQL is treated as an infrastructure failure —
   redelivered and alerted — never as a domain refusal that discards a lifecycle
   fact.
+- Settling a job writes the affordance changes it causes on its predecessor and
+  on its descendants in the SAME transaction as the settling fact, on rows
+  locked in one sorted pass with it. A crash can no longer land a terminal fact
+  while losing the affordance refresh that fact caused, and no client is left
+  with a stale action until it reconnects.
+- Boot reports the `run_logs` partition horizon read from the live schema: the
+  service says loudly how long log ingestion is covered, and errors once the
+  remaining margin falls under `JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS` or the
+  horizon is exhausted. It never refuses to boot on it — the sealed spec ranks
+  a lost log line below a lost lifecycle fact, so log capacity never takes the
+  lifecycle path down.
 - `jobsLogs` refuses `first` and `last` together with `first_and_last_together`
   instead of silently mixing one argument's direction with the other's limit.
 - A subscriber that falls irrecoverably behind the in-process fact stream ends

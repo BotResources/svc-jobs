@@ -25,6 +25,7 @@ const DEFAULT_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS: u64 = 250;
 const DEFAULT_TASK_RESTART_MAX_BACKOFF_SECONDS: u64 = 30;
 const DEFAULT_TASK_RESTART_BUDGET: u32 = 10;
 const DEFAULT_TASK_STABILITY_SECONDS: u64 = 60;
+const DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS: i64 = 180;
 
 pub struct Settings {
     pub port: u16,
@@ -38,6 +39,7 @@ pub struct Settings {
     pub dispatch_minimum_wake: Duration,
     pub consumer_tuning: ConsumerTuning,
     pub restart_policy: RestartPolicy,
+    pub log_partition_horizon_warning: TimeDelta,
 }
 
 #[derive(Clone, Copy)]
@@ -140,6 +142,10 @@ impl Settings {
             dispatch_minimum_wake: Duration::from_millis(dispatch_minimum_wake_milliseconds.max(1)),
             consumer_tuning: consumer_tuning()?,
             restart_policy: restart_policy()?,
+            log_partition_horizon_warning: TimeDelta::days(read(
+                "JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS",
+                DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS,
+            )?),
         })
     }
 }

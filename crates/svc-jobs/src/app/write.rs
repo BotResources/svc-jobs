@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::ids::{EventId, JobId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
@@ -11,7 +13,7 @@ use br_util_nats_fabric::stage;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::app::{fingerprint, integration};
+use crate::app::{fingerprint, followups, integration};
 use crate::db::{PgStore, apply};
 use crate::error::ServiceError;
 
@@ -60,38 +62,53 @@ pub async fn commit_job_changes(
         return Ok(());
     }
     let mut tx = store.begin().await?;
-    let mut hydrated: Vec<&JobChange> = changes
-        .iter()
-        .filter(|change| change.before.is_some())
-        .collect();
-    hydrated.sort_by_key(|change| change.job_id.as_uuid());
-    for change in hydrated {
-        let locked = PgStore::lock_job(&mut tx, change.job_id).await?;
-        guard_decision_still_holds(change.before.as_ref(), locked.as_ref())?;
+    let held = followups::rows_to_lock(&mut tx, &changes).await?;
+    let mut locked: HashMap<Uuid, Job> = HashMap::new();
+    for row in &held {
+        if let Some(job) = PgStore::lock_job(&mut tx, JobId::new(*row)?).await? {
+            locked.insert(*row, job);
+        }
+    }
+    for change in changes.iter().filter(|change| change.before.is_some()) {
+        guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
     }
     for change in &changes {
-        if let Some(source) = &change.claimed_source {
-            claim_source(&mut tx, change.job_id, source).await?;
-        }
-        let recorded: Vec<(EventId, JobEvent)> = change
-            .events
-            .iter()
-            .map(|event| Ok((EventId::new(ids.next())?, event.clone())))
-            .collect::<Result<_, bc_jobs::JobsError>>()?;
-        apply::apply_job_events(&mut tx, change.job_id, &recorded, metadata, at).await?;
-        for (event_id, event) in &recorded {
-            if let Some(published) =
-                integration::of_event(event, change.before.as_ref(), change.note.as_deref())?
-            {
-                let record =
-                    integration::record(published, ids.next(), event_id.as_uuid(), metadata, at)?;
-                stage(&mut *tx, &record)
-                    .await
-                    .map_err(|error| ServiceError::Infra(error.to_string()))?;
-            }
-        }
+        apply_change(&mut tx, ids, change, metadata, at).await?;
+    }
+    for followup in followups::of_settled_jobs(&mut tx, &changes, &held).await? {
+        apply_change(&mut tx, ids, &followup, metadata, at).await?;
     }
     tx.commit().await?;
+    Ok(())
+}
+
+async fn apply_change(
+    tx: &mut sqlx::PgConnection,
+    ids: &dyn IdFactory,
+    change: &JobChange,
+    metadata: &EventMetadata,
+    at: DateTime<Utc>,
+) -> Result<(), ServiceError> {
+    if let Some(source) = &change.claimed_source {
+        claim_source(tx, change.job_id, source).await?;
+    }
+    let recorded: Vec<(EventId, JobEvent)> = change
+        .events
+        .iter()
+        .map(|event| Ok((EventId::new(ids.next())?, event.clone())))
+        .collect::<Result<_, bc_jobs::JobsError>>()?;
+    apply::apply_job_events(tx, change.job_id, &recorded, metadata, at).await?;
+    for (event_id, event) in &recorded {
+        if let Some(published) =
+            integration::of_event(event, change.before.as_ref(), change.note.as_deref())?
+        {
+            let record =
+                integration::record(published, ids.next(), event_id.as_uuid(), metadata, at)?;
+            stage(&mut *tx, &record)
+                .await
+                .map_err(|error| ServiceError::Infra(error.to_string()))?;
+        }
+    }
     Ok(())
 }
 

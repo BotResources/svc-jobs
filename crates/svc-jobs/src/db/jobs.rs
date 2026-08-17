@@ -53,6 +53,15 @@ impl PgStore {
         }
     }
 
+    pub async fn child_ids(tx: &mut PgConnection, job_id: JobId) -> Result<Vec<Uuid>, PortError> {
+        let rows = sqlx::query("SELECT id::uuid AS id FROM jobs WHERE parent_job_id = $1")
+            .bind(job_id.as_uuid())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        Ok(rows.iter().map(|row| row.get("id")).collect())
+    }
+
     pub async fn active_job_for_source_in(
         tx: &mut PgConnection,
         source: &SourceReference,
@@ -165,16 +174,6 @@ impl PgStore {
 impl JobReader for PgStore {
     async fn load(&self, id: JobId) -> Result<Option<Job>, PortError> {
         Ok(self.load_batch(&[id.as_uuid()]).await?.pop())
-    }
-
-    async fn load_children(&self, id: JobId) -> Result<Vec<Job>, PortError> {
-        let rows = sqlx::query("SELECT id::uuid AS id FROM jobs WHERE parent_job_id = $1")
-            .bind(id.as_uuid())
-            .fetch_all(self.pool())
-            .await
-            .map_err(unavailable)?;
-        let ids: Vec<Uuid> = rows.iter().map(|row| row.get("id")).collect();
-        self.load_batch(&ids).await
     }
 
     async fn load_descendants(&self, id: JobId) -> Result<Vec<Job>, PortError> {

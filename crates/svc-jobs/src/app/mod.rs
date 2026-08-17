@@ -4,6 +4,7 @@ pub mod create;
 pub mod dispatch;
 pub mod environment;
 pub mod fingerprint;
+pub mod followups;
 pub mod integration;
 pub mod logs;
 pub mod presence;
@@ -17,9 +18,6 @@ use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
 use bc_jobs::event::job::JobEvent;
-use bc_jobs::policies::affordances::{
-    descendant_affordances_changed, predecessor_affordances_changed,
-};
 use bc_jobs::ports::environment::{Clock, IdFactory, JitterSource};
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
@@ -71,22 +69,17 @@ impl Jobs {
             .collect();
         write::commit_job_changes(&self.store, self.ids.as_ref(), changes, metadata, at).await?;
         for (job_id, events) in effects {
-            self.after_commit(job_id, &events, metadata).await?;
+            self.after_commit(job_id, &events).await?;
         }
         Ok(())
     }
 
-    async fn after_commit(
-        &self,
-        job_id: JobId,
-        events: &[JobEvent],
-        metadata: &EventMetadata,
-    ) -> Result<(), ServiceError> {
+    async fn after_commit(&self, job_id: JobId, events: &[JobEvent]) -> Result<(), ServiceError> {
         let Some(job) = self.load(job_id).await? else {
             return Ok(());
         };
         self.transport_effects(&job, events).await;
-        self.affordance_followups(&job, events, metadata).await
+        Ok(())
     }
 
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {
@@ -134,49 +127,4 @@ impl Jobs {
             }
         }
     }
-
-    async fn affordance_followups(
-        &self,
-        job: &Job,
-        events: &[JobEvent],
-        metadata: &EventMetadata,
-    ) -> Result<(), ServiceError> {
-        if !events.iter().any(settles_job) || !job.is_terminal() {
-            return Ok(());
-        }
-        let children = JobReader::load_children(&self.store, job.id()).await?;
-        let mut followups: Vec<JobChange> = Vec::new();
-        if let Some(event) = predecessor_affordances_changed(job) {
-            let predecessor = event.job_id();
-            let before = self.load(predecessor).await?;
-            followups.push(JobChange::new(predecessor, before, vec![event]));
-        }
-        for event in descendant_affordances_changed(job, &children) {
-            let child = event.job_id();
-            let before = children
-                .iter()
-                .find(|candidate| candidate.id() == child)
-                .cloned();
-            followups.push(JobChange::new(child, before, vec![event]));
-        }
-        if followups.is_empty() {
-            return Ok(());
-        }
-        followups.sort_by_key(|change| change.job_id.as_uuid());
-        write::commit_job_changes(
-            &self.store,
-            self.ids.as_ref(),
-            followups,
-            metadata,
-            self.clock.now(),
-        )
-        .await
-    }
-}
-
-fn settles_job(event: &JobEvent) -> bool {
-    matches!(
-        event,
-        JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_)
-    )
 }

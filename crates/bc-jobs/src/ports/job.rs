@@ -12,8 +12,6 @@ use crate::ports::PortError;
 pub trait JobReader: Send + Sync {
     async fn load(&self, id: JobId) -> Result<Option<Job>, PortError>;
 
-    async fn load_children(&self, id: JobId) -> Result<Vec<Job>, PortError>;
-
     async fn load_descendants(&self, id: JobId) -> Result<Vec<Job>, PortError>;
 
     async fn load_active_for_source(

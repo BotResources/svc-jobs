@@ -77,6 +77,12 @@ async fn boot(
     migrate(&settings).await?;
     let pool = init_pool(&settings.database_url).await.map_err(infra)?;
     let store = PgStore::new(pool.clone());
+    db::partitions::report_run_log_horizon(
+        &pool,
+        settings.log_partition_horizon_warning,
+        chrono::Utc::now(),
+    )
+    .await;
 
     readiness.set_not_ready("binding the declared NATS infrastructure");
     let fabric = connect_fabric(&settings).await?;

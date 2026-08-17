@@ -5,6 +5,7 @@ pub mod jobs;
 pub mod list;
 pub mod logs;
 pub mod notify;
+pub mod partitions;
 pub mod rows;
 
 use sqlx::PgPool;
