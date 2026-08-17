@@ -131,6 +131,12 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         "an instance winding down takes no new work, so its type stops being available while it \
          is the only one live: {reported}",
     );
+    assert_eq!(
+        gql::assert_blocked(&reported, wire::ACTION_DISPATCH),
+        wire::REASON_RUNNER_TYPE_UNAVAILABLE,
+        "the drain flip is pushed with the backend's own dispatch verdict, so no client has to \
+         infer 'nothing can go out' from a flag: {reported}",
+    );
     delta::assert_instance(
         &rewritten,
         "instance-lost",

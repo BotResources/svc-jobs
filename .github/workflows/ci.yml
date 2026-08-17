@@ -117,6 +117,12 @@ jobs:
       # `--lib --bins` only: the e2e suites need a real Postgres and a real
       # NATS, and each service's own `e2e-<service>` job is where they get them.
       # They still compile under `--all-targets` above, which gates type drift.
+      - name: cargo check contract-jobs (runner footprint, no br-rust-common)
+        run: cargo check -p contract-jobs --locked --no-default-features
+
+      - name: cargo check contract-jobs (platform footprint, integration)
+        run: cargo check -p contract-jobs --locked --features integration
+
       - name: cargo test (unit)
         run: cargo test --workspace --locked --lib --bins
 

@@ -18,6 +18,24 @@ pub async fn provision_runner_transport(nats: &TestNats) {
     declare_expiring_presence_bucket(nats).await;
 }
 
+pub async fn evict_presence_entry_unnoticed(
+    nats: &TestNats,
+    runner_type: &str,
+    instance_key: &str,
+) {
+    let purged = jetstream_api(
+        nats,
+        &format!("$JS.API.STREAM.PURGE.KV_{}", wire::PRESENCE_BUCKET),
+        json!({ "filter": format!("$KV.{}.{}", wire::PRESENCE_BUCKET, wire::presence_key(runner_type, instance_key)) }),
+    )
+    .await;
+    assert!(
+        purged["error"].is_null(),
+        "the entry must leave the bucket without a delete marker, which is the one thing a \
+         watching service never learns about: an eviction it was not there to see. {purged}"
+    );
+}
+
 async fn declare_expiring_presence_bucket(nats: &TestNats) {
     let stream = format!("KV_{}", wire::PRESENCE_BUCKET);
     jetstream_api(nats, &format!("$JS.API.STREAM.DELETE.{stream}"), json!({})).await;

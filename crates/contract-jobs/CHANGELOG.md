@@ -9,6 +9,11 @@ every consumer, so each version is deliberate. Release headings are plain
 
 - The offered subjects and KV key templates as constants, plus typed
   `CommandCoords`/`EventCoords` constructors for every integration subject.
+- Two audiences, one crate: by default it carries the runner wire and the
+  subject constants alone and depends on no BotResources library, so a runner
+  binary never compiles `br-rust-common`; a platform service that publishes or
+  consumes the integration subjects enables the `integration` feature, which
+  adds the typed `CommandCoords`/`EventCoords` constructors.
 - Payload types for the whole wire, transcribed from the sealed offers of 0.1:
   the four integration commands (`CreateJob`, `CancelJob`, `FinishJob`,
   `FailJob`), the eight integration events (`JobQueued`,

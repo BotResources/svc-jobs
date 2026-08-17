@@ -69,7 +69,8 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunWithinMaxDuration { .. }
         | JobsError::RunnerTypeUnavailable { .. }
         | JobsError::RunnerTypeMismatch { .. }
-        | JobsError::InstanceNotLive { .. } => EdgeError::invalid_state(),
+        | JobsError::InstanceNotLive { .. }
+        | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),
 
         JobsError::RunNotFound { .. } | JobsError::ParentJobUnknown { .. } => {
             EdgeError::not_found()

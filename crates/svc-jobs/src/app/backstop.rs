@@ -5,10 +5,11 @@ use bc_jobs::domain::run::Run;
 use bc_jobs::ports::job::DueWorkReader;
 
 use super::write::JobChange;
-use super::{Jobs, service_metadata};
+use super::{Jobs, reconcile, service_metadata};
 use crate::error::ServiceError;
 
 pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
+    reconcile::presence_sessions(jobs).await?;
     reclaim_outrun_runs(jobs).await?;
     fail_inactive_jobs(jobs).await
 }

@@ -16,8 +16,13 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   (`READY` | `DRAINING`); a runner type is available only while at least one of
   its live instances is `READY`, so an all-draining type blocks dispatch while
   the runs its instances already carry keep going untouched.
-- A runner instance declares a `Capacity` (at least 1) alongside its status. An
-  instance is busy once its current runs reach that capacity, and a runner type
+- An observed presence loss names the session it was observed on: closing a
+  session the instance no longer holds is refused (`stale_loss`), so a loss
+  that finds the process reconnected under a new session cannot close it or
+  orphan the runs it is carrying.
+- A runner instance declares a `Capacity` (at least 1, at most 10 000, so the
+  stored number is exact by construction) alongside its status. An instance is
+  busy once its current runs reach that capacity, and a runner type
   reports the total capacity of its live, non-draining instances. A capacity
   change is recorded as the same presence fact as a status change: presence is
   one self-declared record the runner rewrites whole, so the fleet keeps one

@@ -7,12 +7,9 @@ license.workspace = true
 publish.workspace = true
 description = "jobs service — the binary: composition root, GraphQL edge, adapters, projectors."
 
-# Only what the skeleton actually references. `cargo-machete` fails CI on a
-# dependency nothing uses, so the crate a projector or a publisher needs is
-# added by whoever writes it, in the same commit.
 [dependencies]
 bc-jobs.workspace = true
-contract-jobs.workspace = true
+contract-jobs = { workspace = true, features = ["integration"] }
 br-core-events.workspace = true
 br-core-integration.workspace = true
 br-util-graphql = { workspace = true, features = ["graphql"] }
@@ -38,12 +35,7 @@ tracing.workspace = true
 br-util-nats-fabric = { workspace = true, features = ["outbox"] }
 
 [dev-dependencies]
-# The e2e suite: it spawns the real binary by `CARGO_BIN_EXE_svc-jobs`, provisions
-# its database and its NATS through the shared harness, plays the producer over
-# the fabric and a runner instance over the runner transport, and drives the
-# admin edge over HTTP + SSE.
 br-test-harness = { workspace = true, features = ["graphql", "sse", "nats", "nats-fabric"] }
-# Inherits the workspace reqwest (rustls + json).
 reqwest.workspace = true
 tokio.workspace = true
 async-graphql.workspace = true

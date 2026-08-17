@@ -25,14 +25,31 @@ to `## Unreleased`).
   live and keeps the runs it already carries, but is excluded from its runner
   type's availability: while every live instance of a type drains, the type
   reports unavailable and dispatch waits instead of publishing a trigger nobody
-  would take. An unknown status code is refused at ingest — the entry is ignored
-  and logged, never read as `READY`.
+  would take. An unknown status code is refused at ingest and logged, never
+  read as `READY`.
 - A presence entry also declares a `capacity` (required, at least 1): how many
   runs the instance carries at once. It is declarative — dispatch stays
   pull-based and capacity never gates delivery — and feeds the fleet reads: an
   instance is busy once its runs reach its declared capacity, and a runner type
   totals the capacity of its live, non-draining instances. A capacity that is
-  absent, zero or negative is refused at ingest with the entry.
+  absent, zero or negative is refused at ingest with the entry; one above the
+  domain ceiling of 10 000 is logged and dropped, leaving the instance on the
+  report it last made.
+- A presence entry an instance rewrote in an unreadable form is treated as
+  `DRAINING` when that instance holds a live session: it keeps its session and
+  its runs but takes no new work, instead of staying dispatchable for ever on
+  the last readable report it managed to write. An unreadable entry naming no
+  live instance is still ignored and logged.
+- The backstop reconciles the presence bucket with the open sessions: a session
+  the bucket no longer backs is closed under `presence_expired` and its runs
+  are reclaimed. It covers the two evictions no watch can see — one that lands
+  while the pod is down, and one whose recording was abandoned under
+  contention.
+- The dispatch loop no longer spins when a runner type is fully draining: a
+  pass that skipped a job because nobody would take it waits its full interval
+  and is woken by the fleet fact of an instance reporting ready again, rather
+  than re-reading a retry that is due but undispatchable every few hundred
+  milliseconds.
 - Every knob is configuration, validated once at boot. The declared
   environment: `PORT`, `DATABASE_URL`, `DATABASE_URL_OWNER`, `NATS_URL`,
   `NATS_USER`, `NATS_PASSWORD`, `JOBS_APP_PASSWORD`; the domain and timing

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod codes;
+pub mod contention;
 pub mod db;
 pub mod delta;
 pub mod docs;

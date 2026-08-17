@@ -93,7 +93,7 @@ fn runner_type_of(
                     reported_status: announced
                         .map(|live| live.reported_status().as_str().to_owned())
                         .unwrap_or_default(),
-                    capacity: count(load.capacity().get()),
+                    capacity: load.capacity().get_i32(),
                     is_busy: load.is_busy(),
                     current_run_ids: load
                         .current_run_ids()

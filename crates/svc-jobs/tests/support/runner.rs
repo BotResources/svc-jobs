@@ -85,6 +85,39 @@ impl<'a> FakeRunner<'a> {
         self.stop_refreshing();
     }
 
+    pub async fn presence_entry(&self) -> Option<Value> {
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::PRESENCE_BUCKET)
+            .await
+            .expect("the presence bucket is declared before the service boots");
+        store
+            .get(self.presence_key())
+            .await
+            .expect("reading the presence bucket")
+            .map(|bytes| {
+                serde_json::from_slice(&bytes)
+                    .unwrap_or_else(|e| panic!("a presence entry is JSON: {e}"))
+            })
+    }
+
+    pub async fn write_unreadable_presence(&self) {
+        let store = self
+            .nats
+            .jetstream()
+            .get_key_value(wire::PRESENCE_BUCKET)
+            .await
+            .expect("the presence bucket is declared before the service boots");
+        store
+            .put(
+                self.presence_key(),
+                b"not a presence entry at all".to_vec().into(),
+            )
+            .await
+            .expect("writing the presence entry");
+    }
+
     async fn start_refreshing(&mut self) {
         self.stop_refreshing();
         let key = self.presence_key();

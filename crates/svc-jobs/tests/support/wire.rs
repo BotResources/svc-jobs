@@ -48,6 +48,7 @@ pub const VERB_FAIL: &str = "fail";
 pub const ACTION_CANCEL: &str = "CANCEL_JOB";
 pub const ACTION_MANUAL_RETRY: &str = "MANUAL_RETRY_JOB";
 pub const ACTION_DELETE: &str = "DELETE_JOB";
+pub const ACTION_DISPATCH: &str = "dispatch";
 
 pub const EVT_QUEUED: &str = "JobsJobQueuedEvent";
 pub const EVT_RUN_DISPATCHED: &str = "JobsRunDispatchedEvent";
@@ -75,6 +76,7 @@ pub const KIND_JOB_BEGAN_EXECUTING: &str = "JOB_BEGAN_EXECUTING";
 pub const KIND_JOB_STOPPED_EXECUTING: &str = "JOB_STOPPED_EXECUTING";
 
 pub const REASON_INSTANCE_LOST: &str = "instance_lost";
+pub const REASON_RUNNER_TYPE_UNAVAILABLE: &str = "runner_type_unavailable";
 pub const REASON_ID_REUSE: &str = "id_reuse";
 
 pub fn trigger_subject(runner_type: &str) -> String {

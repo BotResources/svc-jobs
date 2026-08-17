@@ -28,6 +28,7 @@ pub struct ObservePresence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObserveLoss {
     pub instance_key: InstanceKey,
+    pub session_id: PresenceSessionId,
     pub reason_code: ReasonCode,
 }
 
@@ -86,12 +87,19 @@ pub fn observe_loss(
             .ok_or_else(|| JobsError::InstanceNotLive {
                 instance_key: command.instance_key.as_str().to_owned(),
             })?;
+    if live.session_id() != command.session_id {
+        return Err(JobsError::StaleLoss {
+            instance_key: command.instance_key.as_str().to_owned(),
+            observed_session_id: command.session_id.as_uuid(),
+            live_session_id: live.session_id().as_uuid(),
+        });
+    }
     Ok(CommandResult::from_event(FleetEvent::InstanceDisconnected(
         InstanceDisconnected {
             runner_type_id: runner_type.id(),
             runner_type: runner_type.key().clone(),
             instance_key: command.instance_key.clone(),
-            session_id: live.session_id(),
+            session_id: command.session_id,
             reason_code: command.reason_code,
         },
     )))

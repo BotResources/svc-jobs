@@ -18,7 +18,7 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
 
 | Crate | Role |
 |---|---|
-| [`contract-jobs`](crates/contract-jobs) | The published language: integration subjects, runner-transport wire shapes, stream/bucket names. The only crate consumers import — released by git tag `contract-jobs/v*`, semver-gated in CI. |
+| [`contract-jobs`](crates/contract-jobs) | The published language: integration subjects, runner-transport wire shapes, stream/bucket names. The only crate consumers import — released by git tag `contract-jobs/v*`, semver-gated in CI. Two audiences: by default it carries the runner wire alone and pulls no BotResources library, so a runner binary stays free of `br-rust-common`; platform services publishing or consuming the integration subjects enable the `integration` feature for the typed `CommandCoords`/`EventCoords` constructors. |
 | [`bc-jobs`](crates/bc-jobs) | The pure domain: the Job and RunnerType aggregates, commands, events, affordances, policies, ports. No I/O. |
 | [`svc-jobs`](crates/svc-jobs) | The service binary: composition root, PostgreSQL adapters and migrations, GraphQL edge, integration bus, runner transport, dispatch and backstop loops. |
 
@@ -107,8 +107,17 @@ Draining is a status change, never a disconnection: the instance keeps its
 presence session and its running runs are not reclaimed. When every live
 instance of a type is `DRAINING`, the type reports `isAvailable: false` and
 dispatch waits — no trigger is published that nobody would take. Any other
-status code is refused at ingest: the presence entry is ignored and logged,
-never read as `READY`.
+status code is refused at ingest and logged, never read as `READY`: an entry
+rewritten by an instance that already holds a live session is recorded as
+`DRAINING` — it keeps its session and the runs it carries but takes no new
+work until a readable entry says otherwise — and an entry naming no live
+instance is ignored.
+
+`idleInstanceCount` counts the live instances carrying no run, draining ones
+included: idle is about load, not about willingness to take more. Availability
+is carried by `isAvailable` and by the room a type offers
+(`totalCapacity`, which counts non-draining instances only), so a fleet that is
+entirely draining reads as idle, unavailable, and offering no capacity.
 
 `capacity` is the number of runs the instance carries at once — required, at
 least 1, refreshed with every heartbeat and free to change over a session (a
@@ -119,7 +128,9 @@ instance is busy once it carries as many runs as it declared
 (`JobsRunnerInstance.capacity`), and a runner type totals the capacity of its
 live, non-draining instances (`JobsRunnerType.totalCapacity`). A missing, zero
 or negative capacity is refused at ingest like an unknown status — the entry is
-ignored and logged, never defaulted.
+never read with a defaulted room. A capacity above 10 000 parses on the wire but
+is refused by the domain: the entry is logged and dropped, and the instance
+keeps the report it last made.
 
 ## GraphQL surface — platform administrators only
 

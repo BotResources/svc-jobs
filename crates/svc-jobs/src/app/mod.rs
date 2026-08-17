@@ -8,6 +8,8 @@ pub mod followups;
 pub mod integration;
 pub mod logs;
 pub mod presence;
+pub mod reclaim;
+pub mod reconcile;
 pub mod resolve;
 pub mod run_facts;
 pub mod write;

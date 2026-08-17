@@ -5,9 +5,8 @@ use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::fleet::{RunnerType, RunnerTypeState};
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
 use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
-use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::fleet::FleetReader;
+use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -23,6 +22,12 @@ const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
      JOIN runner_presence_sessions s ON s.instance_id = ri.id \
      WHERE $1::text IS NULL OR rt.type_key = $1 \
      GROUP BY rt.id, rt.type_key";
+
+const OPEN_SESSIONS_SQL: &str = "SELECT rt.type_key, ri.instance_key, s.id::uuid AS session_id \
+     FROM runner_presence_sessions s \
+     JOIN runner_instances ri ON ri.id = s.instance_id \
+     JOIN runner_types rt ON rt.id = ri.runner_type_id \
+     WHERE s.disconnected_at IS NULL";
 
 const INSTANCES_SQL: &str = "SELECT ri.runner_type_id::uuid AS runner_type_id, ri.instance_key, \
      s.id::uuid AS session_id, s.version, s.connected_at, s.last_observed_at, \
@@ -82,111 +87,6 @@ impl PgStore {
         }
         load_one(&mut *tx, key).await
     }
-
-    pub async fn apply_fleet_event(
-        tx: &mut PgConnection,
-        event: &FleetEvent,
-        at: DateTime<Utc>,
-    ) -> Result<(), PortError> {
-        match event {
-            FleetEvent::RunnerTypeRegistered(fact) => {
-                sqlx::query(
-                    "INSERT INTO runner_types (id, type_key) VALUES ($1, $2) \
-                     ON CONFLICT (type_key) DO NOTHING",
-                )
-                .bind(fact.runner_type_id.as_uuid())
-                .bind(fact.runner_type.as_str())
-                .execute(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-            }
-            FleetEvent::InstanceConnected(fact) => {
-                let instance =
-                    refs::runner_instance_id(tx, fact.runner_type_id.as_uuid(), &fact.instance_key)
-                        .await?;
-                sqlx::query(
-                    "INSERT INTO runner_presence_sessions \
-                     (id, instance_id, version, connected_at, last_observed_at) \
-                     VALUES ($1, $2, $3, $4, $4)",
-                )
-                .bind(fact.session_id.as_uuid())
-                .bind(instance)
-                .bind(fact.version.as_str())
-                .bind(at)
-                .execute(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-                status_change(
-                    tx,
-                    fact.session_id,
-                    1,
-                    fact.reported_status.as_str(),
-                    fact.capacity,
-                    at,
-                )
-                .await?;
-            }
-            FleetEvent::InstanceStatusReported(fact) => {
-                sqlx::query(
-                    "UPDATE runner_presence_sessions SET version = $2, \
-                     last_observed_at = greatest(last_observed_at, $3) WHERE id = $1",
-                )
-                .bind(fact.session_id.as_uuid())
-                .bind(fact.version.as_str())
-                .bind(at)
-                .execute(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-                status_change(
-                    tx,
-                    fact.session_id,
-                    i32::try_from(fact.change_number).unwrap_or(i32::MAX),
-                    fact.reported_status.as_str(),
-                    fact.capacity,
-                    at,
-                )
-                .await?;
-            }
-            FleetEvent::InstanceDisconnected(fact) => {
-                sqlx::query(
-                    "UPDATE runner_presence_sessions \
-                     SET disconnected_at = greatest(connected_at, $2), \
-                     disconnect_reason_code = $3 \
-                     WHERE id = $1 AND disconnected_at IS NULL",
-                )
-                .bind(fact.session_id.as_uuid())
-                .bind(at)
-                .bind(fact.reason_code.as_str())
-                .execute(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-async fn status_change(
-    tx: &mut PgConnection,
-    session: PresenceSessionId,
-    change_number: i32,
-    status: &str,
-    capacity: Capacity,
-    at: DateTime<Utc>,
-) -> Result<(), PortError> {
-    sqlx::query(
-        "INSERT INTO runner_status_changes (session_id, change_number, reported_status, \
-         capacity, observed_at) VALUES ($1, $2, $3, $4, $5)",
-    )
-    .bind(session.as_uuid())
-    .bind(change_number)
-    .bind(status)
-    .bind(i32::try_from(capacity.get()).unwrap_or(i32::MAX))
-    .bind(at)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    Ok(())
 }
 
 async fn load_types(
@@ -263,5 +163,21 @@ impl FleetReader for PgStore {
     async fn load_all(&self) -> Result<Vec<RunnerType>, PortError> {
         let mut connection = self.pool().acquire().await.map_err(unavailable)?;
         load_types(&mut connection, None).await
+    }
+
+    async fn open_presence_sessions(&self) -> Result<Vec<OpenPresenceSession>, PortError> {
+        let rows = sqlx::query(OPEN_SESSIONS_SQL)
+            .fetch_all(self.pool())
+            .await
+            .map_err(unavailable)?;
+        rows.iter()
+            .map(|row| {
+                Ok(OpenPresenceSession {
+                    runner_type: RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
+                    instance_key: InstanceKey::new(row.get::<String, _>("instance_key"))?,
+                    session_id: PresenceSessionId::new(row.get("session_id"))?,
+                })
+            })
+            .collect()
     }
 }

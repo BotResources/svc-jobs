@@ -1,18 +1,14 @@
+use bc_jobs::JobsError;
 use bc_jobs::commands::fleet::{ObserveLoss, ObservePresence, observe_loss, observe_presence};
-use bc_jobs::commands::job::backstop::ReclaimRun;
 use bc_jobs::domain::fleet::capacity::Capacity;
 use bc_jobs::domain::fleet::status::ReportedStatus;
-use bc_jobs::domain::ids::{PresenceSessionId, ResolutionId, RetryScheduleId, RunId, RunnerTypeId};
-use bc_jobs::domain::job::Job;
+use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
 use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
-use bc_jobs::domain::run::parts::RunnerInstanceReference;
-use bc_jobs::policies::fleet::runs_lost_with_instance;
 use bc_jobs::ports::environment::{Clock, IdFactory};
-use bc_jobs::ports::fleet::FleetReader;
+use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
 use contract_jobs::runner as wire;
 
-use super::write::JobChange;
-use super::{Jobs, service_metadata, write};
+use super::{Jobs, reclaim, service_metadata, write};
 use crate::db::PgStore;
 use crate::error::ServiceError;
 
@@ -51,6 +47,57 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
     .map(|_| ())
 }
 
+pub async fn unreadable(
+    jobs: &Jobs,
+    runner_type: &str,
+    instance_key: &str,
+) -> Result<(), ServiceError> {
+    let key = RunnerTypeKey::new(runner_type)?;
+    let instance_key = InstanceKey::new(instance_key)?;
+    let Some(known) = FleetReader::load(&jobs.store, &key).await? else {
+        return Ok(());
+    };
+    let Some(live) = known.instance(&instance_key) else {
+        return Ok(());
+    };
+    let command = ObservePresence {
+        runner_type_id: known.id(),
+        runner_type: key.clone(),
+        instance_key: instance_key.clone(),
+        session_id: live.session_id(),
+        version: live.version().clone(),
+        reported_status: ReportedStatus::Draining,
+        capacity: live.capacity(),
+    };
+    let result = observe_presence(Some(&known), command)?;
+    if result.events.is_empty() {
+        return Ok(());
+    }
+    tracing::warn!(
+        runner_type = %key.as_str(),
+        instance_key = %instance_key.as_str(),
+        "a live instance rewrote its presence entry in a form this service cannot read; it is \
+         recorded as draining, so it keeps its session and its runs but takes no new work until \
+         a readable entry says otherwise"
+    );
+    recorded(
+        write::commit_fleet_events(
+            &jobs.store,
+            jobs.ids.as_ref(),
+            write::FleetChange {
+                runner_type_id: known.id(),
+                runner_type: &key,
+                decided_on: Some(&known),
+                events: &result.events,
+            },
+            &service_metadata(),
+            jobs.clock.now(),
+        )
+        .await,
+    )
+    .map(|_| ())
+}
+
 fn recorded(outcome: Result<(), ServiceError>) -> Result<bool, ServiceError> {
     match outcome {
         Ok(()) => Ok(true),
@@ -61,6 +108,13 @@ fn recorded(outcome: Result<(), ServiceError>) -> Result<bool, ServiceError> {
 
 const LOSS_DECISION_ATTEMPTS: usize = 5;
 
+pub struct ObservedLoss<'a> {
+    pub runner_type: &'a RunnerTypeKey,
+    pub instance_key: &'a InstanceKey,
+    pub reason_code: &'a ReasonCode,
+    pub session_id: Option<PresenceSessionId>,
+}
+
 pub async fn lost(
     jobs: &Jobs,
     runner_type: &str,
@@ -70,50 +124,94 @@ pub async fn lost(
     let key = RunnerTypeKey::new(runner_type)?;
     let instance_key = InstanceKey::new(instance_key)?;
     let reason_code = ReasonCode::new(reason_code)?;
+    settle(
+        jobs,
+        ObservedLoss {
+            runner_type: &key,
+            instance_key: &instance_key,
+            reason_code: &reason_code,
+            session_id: None,
+        },
+    )
+    .await
+}
+
+pub async fn lost_session(
+    jobs: &Jobs,
+    session: &OpenPresenceSession,
+    reason_code: &ReasonCode,
+) -> Result<(), ServiceError> {
+    settle(
+        jobs,
+        ObservedLoss {
+            runner_type: &session.runner_type,
+            instance_key: &session.instance_key,
+            reason_code,
+            session_id: Some(session.session_id),
+        },
+    )
+    .await
+}
+
+async fn settle(jobs: &Jobs, observed: ObservedLoss<'_>) -> Result<(), ServiceError> {
+    let runner_type = observed.runner_type.clone();
+    let instance_key = observed.instance_key.clone();
     let this_pod_recorded_the_loss = record_loss(
         &jobs.store,
         jobs.ids.as_ref(),
         jobs.clock.as_ref(),
-        &key,
-        &instance_key,
-        &reason_code,
+        observed,
     )
     .await?;
     if !this_pod_recorded_the_loss {
         return Ok(());
     }
-    reclaim_runs(jobs, &key, &instance_key).await
+    reclaim::runs_of(jobs, &runner_type, &instance_key).await
 }
 
 pub async fn record_loss(
     store: &PgStore,
     ids: &dyn IdFactory,
     clock: &dyn Clock,
-    runner_type: &RunnerTypeKey,
-    instance_key: &InstanceKey,
-    reason_code: &ReasonCode,
+    observed: ObservedLoss<'_>,
 ) -> Result<bool, ServiceError> {
+    let mut pinned = observed.session_id;
     for _ in 0..LOSS_DECISION_ATTEMPTS {
-        let Some(known) = FleetReader::load(store, runner_type).await? else {
+        let Some(known) = FleetReader::load(store, observed.runner_type).await? else {
             return Ok(false);
         };
-        if known.instance(instance_key).is_none() {
+        let Some(live) = known.instance(observed.instance_key) else {
             return Ok(false);
-        }
-        let result = observe_loss(
+        };
+        let session_id = *pinned.get_or_insert(live.session_id());
+        let result = match observe_loss(
             &known,
             ObserveLoss {
-                instance_key: instance_key.clone(),
-                reason_code: reason_code.clone(),
+                instance_key: observed.instance_key.clone(),
+                session_id,
+                reason_code: observed.reason_code.clone(),
             },
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(JobsError::StaleLoss { .. }) => {
+                tracing::debug!(
+                    runner_type = %observed.runner_type.as_str(),
+                    instance_key = %observed.instance_key.as_str(),
+                    session_id = %session_id.as_uuid(),
+                    "the session this loss was observed on is already closed and the instance is \
+                     live again; the loss belongs to whoever closed it"
+                );
+                return Ok(false);
+            }
+            Err(other) => return Err(other.into()),
+        };
         let written = recorded(
             write::commit_fleet_events(
                 store,
                 ids,
                 write::FleetChange {
                     runner_type_id: known.id(),
-                    runner_type,
+                    runner_type: observed.runner_type,
                     decided_on: Some(&known),
                     events: &result.events,
                 },
@@ -127,55 +225,11 @@ pub async fn record_loss(
         }
     }
     tracing::error!(
-        runner_type = %runner_type.as_str(),
-        instance_key = %instance_key.as_str(),
+        runner_type = %observed.runner_type.as_str(),
+        instance_key = %observed.instance_key.as_str(),
         attempts = LOSS_DECISION_ATTEMPTS,
         "an instance loss found the fleet moving under every attempt; its presence session stays \
          open and its runs wait for the backstop instead of being reclaimed"
     );
     Err(ServiceError::Contended)
-}
-
-async fn reclaim_runs(
-    jobs: &Jobs,
-    runner_type: &RunnerTypeKey,
-    instance_key: &InstanceKey,
-) -> Result<(), ServiceError> {
-    let instance = RunnerInstanceReference::new(runner_type.clone(), instance_key.clone());
-    let active = jobs.store.active_jobs_of_type(runner_type.as_str()).await?;
-    let lost = runs_lost_with_instance(&instance, &active);
-    for orphan in lost {
-        let Some(job) = active.iter().find(|job| job.id() == orphan.job_id) else {
-            continue;
-        };
-        if let Err(error) = reclaim_one(jobs, job, orphan.run_id).await {
-            tracing::warn!(
-                job_id = %job.id().as_uuid(),
-                run_id = %orphan.run_id.as_uuid(),
-                error = %error,
-                "reclaiming a run orphaned by a lost instance failed; the remaining orphans are \
-                 still reclaimed and the backstop covers this one"
-            );
-        }
-    }
-    Ok(())
-}
-
-async fn reclaim_one(jobs: &Jobs, job: &Job, run_id: RunId) -> Result<(), ServiceError> {
-    let result = job.fail_run_for_instance_loss(
-        ReclaimRun {
-            run_id,
-            retry_schedule_id: RetryScheduleId::new(jobs.ids.next())?,
-            resolution_id: ResolutionId::new(jobs.ids.next())?,
-            jitter: jobs.jitter.draw(),
-            at: jobs.clock.now(),
-        },
-        &jobs.retry,
-        &jobs.limits,
-    )?;
-    jobs.commit(
-        vec![JobChange::new(job.id(), Some(job.clone()), result.events)],
-        &service_metadata(),
-    )
-    .await
 }

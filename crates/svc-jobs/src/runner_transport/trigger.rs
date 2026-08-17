@@ -1,7 +1,7 @@
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use async_trait::async_trait;
 use bc_jobs::domain::ids::RunId;
-use bc_jobs::domain::keys::{ReasonCode, RunnerTypeKey};
+use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
 use contract_jobs::runner as wire;
@@ -48,6 +48,14 @@ impl RunnerTransport for RunnerChannels {
 
     async fn withdraw_stop(&self, run_id: RunId) -> Result<(), PortError> {
         super::cancel::withdraw_stop(self, run_id).await
+    }
+
+    async fn presence_is_live(
+        &self,
+        runner_type: &RunnerTypeKey,
+        instance_key: &InstanceKey,
+    ) -> Result<bool, PortError> {
+        super::presence::is_live(self, runner_type, instance_key).await
     }
 
     async fn withdraw_trigger(

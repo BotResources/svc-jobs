@@ -1,3 +1,4 @@
+pub mod fleet;
 pub mod job;
 pub mod refs;
 pub mod run;
@@ -49,7 +50,7 @@ pub async fn apply_fleet_events(
     occurred_at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     for (event_id, event) in events {
-        crate::db::PgStore::apply_fleet_event(tx, event, occurred_at).await?;
+        fleet::write(tx, event, occurred_at).await?;
         let version =
             next_version(tx, RUNNER_TYPE_AGGREGATE_TYPE, runner_type_id.as_uuid()).await?;
         append(

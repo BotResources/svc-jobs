@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{JobId, RunId};
-use crate::domain::keys::{ReasonCode, RunnerTypeKey};
+use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::references::KnownUser;
 use crate::ports::PortError;
 
@@ -30,4 +30,10 @@ pub trait RunnerTransport: Send + Sync {
         run_id: RunId,
         runner_type: &RunnerTypeKey,
     ) -> Result<(), PortError>;
+
+    async fn presence_is_live(
+        &self,
+        runner_type: &RunnerTypeKey,
+        instance_key: &InstanceKey,
+    ) -> Result<bool, PortError>;
 }

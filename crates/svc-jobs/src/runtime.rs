@@ -6,6 +6,7 @@ use bc_jobs::event::job::JobEvent;
 use chrono::Utc;
 use tokio::time::{Instant, sleep_until};
 
+use crate::app::dispatch::DispatchPass;
 use crate::app::{Jobs, backstop, dispatch};
 use crate::error::ServiceError;
 use crate::runner_transport::{RunnerChannels, cancel};
@@ -14,10 +15,14 @@ use crate::stream::{Fact, Hub};
 pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimum_wake: Duration) {
     let mut facts = hub.subscribe();
     loop {
-        if let Err(error) = dispatch::dispatch_due_work(&jobs).await {
-            tracing::error!(error = %error, "the dispatch pass failed");
-        }
-        let wake = next_wake(&jobs, interval, minimum_wake).await;
+        let pass = match dispatch::dispatch_due_work(&jobs).await {
+            Ok(pass) => pass,
+            Err(error) => {
+                tracing::error!(error = %error, "the dispatch pass failed");
+                DispatchPass::default()
+            }
+        };
+        let wake = next_wake(&jobs, interval, minimum_wake, pass).await;
         tokio::select! {
             () = sleep_until(wake) => {}
             fact = facts.recv() => {
@@ -34,7 +39,12 @@ pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimu
     }
 }
 
-async fn next_wake(jobs: &Jobs, interval: Duration, minimum_wake: Duration) -> Instant {
+async fn next_wake(
+    jobs: &Jobs,
+    interval: Duration,
+    minimum_wake: Duration,
+    pass: DispatchPass,
+) -> Instant {
     let ceiling = interval.max(minimum_wake);
     let waited = match jobs.store.next_retry_due_at().await {
         Err(error) => {
@@ -42,12 +52,24 @@ async fn next_wake(jobs: &Jobs, interval: Duration, minimum_wake: Duration) -> I
             ceiling
         }
         Ok(None) => ceiling,
-        Ok(Some(due)) => (due - Utc::now())
-            .to_std()
-            .unwrap_or(Duration::ZERO)
-            .clamp(minimum_wake, ceiling),
+        Ok(Some(due)) => match (due - Utc::now()).to_std() {
+            Ok(remaining) => remaining.clamp(minimum_wake, ceiling),
+            Err(_) => wait_on_a_retry_already_due(pass, minimum_wake, ceiling),
+        },
     };
     Instant::now() + waited
+}
+
+fn wait_on_a_retry_already_due(
+    pass: DispatchPass,
+    minimum_wake: Duration,
+    ceiling: Duration,
+) -> Duration {
+    if pass.skipped_for_unavailability {
+        ceiling
+    } else {
+        minimum_wake
+    }
 }
 
 fn unblocks_dispatch(fact: &Fact) -> bool {

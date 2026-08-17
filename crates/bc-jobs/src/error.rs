@@ -122,6 +122,11 @@ pub enum JobsError {
     InstanceNotLive {
         instance_key: String,
     },
+    StaleLoss {
+        instance_key: String,
+        observed_session_id: Uuid,
+        live_session_id: Uuid,
+    },
     CorruptState {
         reason_code: &'static str,
     },
@@ -188,6 +193,7 @@ impl JobsError {
             Self::EmptyPlan => "empty_plan",
             Self::DuplicatePlanStepIndex { .. } => "duplicate_plan_step_index",
             Self::InstanceNotLive { .. } => "instance_not_live",
+            Self::StaleLoss { .. } => "stale_loss",
             Self::CorruptState { .. } => "corrupt_state",
             Self::UnknownEnumValue { .. } => "unknown_enum_value",
             Self::Serialization { .. } => "serialization_failed",
@@ -254,6 +260,15 @@ impl JobsError {
             Self::RetryNotDue { due_at } => json!({ "dueAt": due_at }),
             Self::DuplicatePlanStepIndex { step_index } => json!({ "stepIndex": step_index }),
             Self::InstanceNotLive { instance_key } => json!({ "instanceKey": instance_key }),
+            Self::StaleLoss {
+                instance_key,
+                observed_session_id,
+                live_session_id,
+            } => json!({
+                "instanceKey": instance_key,
+                "observedSessionId": observed_session_id,
+                "liveSessionId": live_session_id,
+            }),
             Self::CorruptState { reason_code } => json!({ "reasonCode": reason_code }),
             Self::UnknownEnumValue { field, value } => json!({ "field": field, "value": value }),
             Self::Serialization {

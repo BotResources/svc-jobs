@@ -191,6 +191,7 @@ fn losing_an_instance_closes_the_session_it_had_open() {
         &known,
         ObserveLoss {
             instance_key: InstanceKey::new("pod-7").unwrap(),
+            session_id: session,
             reason_code: ReasonCode::new(PRESENCE_EXPIRED).unwrap(),
         },
     )
@@ -214,6 +215,7 @@ fn losing_an_instance_that_is_not_live_is_refused() {
         &known,
         ObserveLoss {
             instance_key: InstanceKey::new("pod-9").unwrap(),
+            session_id: session_id(),
             reason_code: ReasonCode::new(GRACEFUL_SHUTDOWN).unwrap(),
         },
     );
@@ -222,6 +224,34 @@ fn losing_an_instance_that_is_not_live_is_refused() {
         result,
         Err(JobsError::InstanceNotLive {
             instance_key: "pod-9".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_loss_naming_a_session_the_instance_no_longer_holds_is_refused() {
+    // Given: an instance that reconnected under a new session since the loss was observed
+    let observed = session_id();
+    let reconnected = live(ReportedStatus::Ready, 0);
+    let current = reconnected.session_id();
+    let known = fleet(vec![reconnected]);
+    // When: the loss observed on the previous session finally reaches the domain
+    let result = observe_loss(
+        &known,
+        ObserveLoss {
+            instance_key: InstanceKey::new("pod-7").unwrap(),
+            session_id: observed,
+            reason_code: ReasonCode::new(PRESENCE_EXPIRED).unwrap(),
+        },
+    );
+    // Then: it is refused — the loss belongs to the session that was seen, so it can never
+    // close the fresh session of a process that is alive, nor orphan the runs it carries
+    assert_eq!(
+        result,
+        Err(JobsError::StaleLoss {
+            instance_key: "pod-7".to_owned(),
+            observed_session_id: observed.as_uuid(),
+            live_session_id: current.as_uuid(),
         })
     );
 }

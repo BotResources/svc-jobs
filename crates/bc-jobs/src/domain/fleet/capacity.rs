@@ -7,11 +7,13 @@ use crate::error::JobsError;
 pub struct Capacity(u32);
 
 impl Capacity {
+    pub const MAXIMUM: u32 = 10_000;
+
     pub fn new(value: u32) -> Result<Self, JobsError> {
-        if value == 0 {
+        if value == 0 || value > Self::MAXIMUM {
             return Err(JobsError::OutOfRange {
                 field: "capacity",
-                value: 0,
+                value: i64::from(value),
             });
         }
         Ok(Self(value))
@@ -19,6 +21,10 @@ impl Capacity {
 
     pub fn get(self) -> u32 {
         self.0
+    }
+
+    pub fn get_i32(self) -> i32 {
+        i32::try_from(self.0).expect("a capacity is bounded by Capacity::MAXIMUM at construction")
     }
 
     pub fn is_saturated_by(self, current_runs: usize) -> bool {
@@ -60,6 +66,25 @@ mod tests {
     }
 
     #[test]
+    fn a_capacity_beyond_the_declared_ceiling_is_refused_so_the_stored_number_is_exact() {
+        // Given: a runner announcing more room than any fleet this service serves could hold
+        // When/Then: the declaration is refused at the ceiling, never truncated on the way to
+        // storage — a number the domain accepted is a number the database holds unchanged
+        assert_eq!(
+            Capacity::new(Capacity::MAXIMUM + 1),
+            Err(JobsError::OutOfRange {
+                field: "capacity",
+                value: i64::from(Capacity::MAXIMUM) + 1
+            })
+        );
+        assert_eq!(
+            Capacity::new(Capacity::MAXIMUM).unwrap().get_i32(),
+            10_000,
+            "the widest accepted declaration still crosses to storage as itself"
+        );
+    }
+
+    #[test]
     fn an_instance_is_saturated_only_once_it_holds_as_many_runs_as_it_declared() {
         // Given: an instance that declared room for three runs
         let capacity = Capacity::new(3).unwrap();
@@ -84,5 +109,6 @@ mod tests {
         );
         assert!(serde_json::from_str::<Capacity>("0").is_err());
         assert!(serde_json::from_str::<Capacity>("-1").is_err());
+        assert!(serde_json::from_str::<Capacity>("100000").is_err());
     }
 }
