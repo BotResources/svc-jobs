@@ -1,5 +1,6 @@
 mod support;
 
+use bc_jobs::domain::fleet::capacity::Capacity;
 use br_test_harness::SseSubscription;
 use serde_json::json;
 use support::events::EventLog;
@@ -63,6 +64,77 @@ async fn an_unreadable_entry_from_a_live_instance_drains_it_instead_of_leaving_i
     );
 
     // Then: a job declared while the fleet is mute waits instead of being handed to nobody
+    let waiting = JobDeclaration::new(&runner_type).with_max_attempts(1);
+    producer.declare(&waiting).await;
+    instance.expect_no_trigger(QUIET).await;
+    assert_eq!(
+        gql::status_of(&fixture.gql(), admin, job_id).await,
+        "IN_PROGRESS",
+        "the run the drained instance already carries is untouched",
+    );
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_capacity_the_domain_refuses_drains_the_instance_instead_of_leaving_it_dispatchable() {
+    // Given: an instance with room for two runs, executing one, watched from the fleet
+    let fixture = JobsFixture::start_with(Knobs::default()).await;
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("overcapacity");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut instance =
+        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(2);
+    let announced_version = instance.version.clone();
+    instance.connect().await;
+
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+
+    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(2);
+    let job_id = declaration.job_id;
+    producer.declare(&declaration).await;
+    let trigger = instance.next_trigger(LONG).await;
+    let claimed_run = runner::run_id(&trigger);
+    instance.start_run(&trigger).await;
+    stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await;
+
+    // When: it keeps heartbeating but declares more room than the domain will ever accept
+    instance.announce_capacity(Capacity::MAXIMUM + 1).await;
+
+    // Then: the refusal drains it exactly like an entry nobody can read — its session and its run
+    // survive, and the number the domain refused never reaches the projection
+    let drained =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_STATUS_REPORTED, LONG)
+            .await;
+    let projection = delta::fleet_projection(&drained, &runner_type);
+    let live = delta::assert_instance(
+        &projection,
+        "instance-a",
+        false,
+        &[claimed_run],
+        &announced_version,
+    );
+    assert_eq!(
+        live["reportedStatus"],
+        json!(wire::STATUS_DRAINING),
+        "a declaration the domain refuses is never taken for READY, and a live instance is never \
+         silently left dispatchable on the last report it managed to get accepted: {drained}",
+    );
+    assert_eq!(
+        live["capacity"],
+        json!(2),
+        "the fleet keeps the last capacity it accepted; a refused number is never stored: {live}",
+    );
+    assert_eq!(projection["isAvailable"], json!(false));
+    assert_eq!(
+        gql::assert_blocked(&drained, wire::ACTION_DISPATCH),
+        wire::REASON_RUNNER_TYPE_UNAVAILABLE,
+    );
+
+    // Then: the idle slot it still had is not handed any work while it is drained
     let waiting = JobDeclaration::new(&runner_type).with_max_attempts(1);
     producer.declare(&waiting).await;
     instance.expect_no_trigger(QUIET).await;

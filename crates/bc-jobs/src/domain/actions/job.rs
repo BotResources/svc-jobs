@@ -4,9 +4,9 @@ use crate::domain::job::parenting::{ParentContext, guard_admits_work};
 use crate::domain::job::status::JobStatus;
 use crate::error::JobsError;
 
-pub const CANCEL: &str = "CANCEL_JOB";
-pub const MANUAL_RETRY: &str = "MANUAL_RETRY_JOB";
-pub const DELETE: &str = "DELETE_JOB";
+pub const CANCEL: &str = "cancel";
+pub const MANUAL_RETRY: &str = "manual_retry";
+pub const DELETE: &str = "delete";
 
 impl Job {
     pub fn guard_cancel(&self) -> Result<(), JobsError> {

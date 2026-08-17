@@ -106,12 +106,7 @@ A presence entry declares two things about the instance that wrote it: a
 Draining is a status change, never a disconnection: the instance keeps its
 presence session and its running runs are not reclaimed. When every live
 instance of a type is `DRAINING`, the type reports `isAvailable: false` and
-dispatch waits — no trigger is published that nobody would take. Any other
-status code is refused at ingest and logged, never read as `READY`: an entry
-rewritten by an instance that already holds a live session is recorded as
-`DRAINING` — it keeps its session and the runs it carries but takes no new
-work until a readable entry says otherwise — and an entry naming no live
-instance is ignored.
+dispatch waits — no trigger is published that nobody would take.
 
 `idleInstanceCount` counts the live instances carrying no run, draining ones
 included: idle is about load, not about willingness to take more. Availability
@@ -127,10 +122,18 @@ capacity never gates trigger delivery. It feeds what the fleet reads: an
 instance is busy once it carries as many runs as it declared
 (`JobsRunnerInstance.capacity`), and a runner type totals the capacity of its
 live, non-draining instances (`JobsRunnerType.totalCapacity`). A missing, zero
-or negative capacity is refused at ingest like an unknown status — the entry is
-never read with a defaulted room. A capacity above 10 000 parses on the wire but
-is refused by the domain: the entry is logged and dropped, and the instance
-keeps the report it last made.
+or negative capacity never parses on the wire; a capacity above 10 000 parses
+but is refused by the domain. Either way the entry is refused, and an entry is
+never read with a defaulted room.
+
+**A presence entry this service refuses is never read as `READY`, and never
+silently dropped.** Unreadable bytes, an unknown status code and a capacity
+outside the accepted range all take the same path: an entry written by an
+instance that already holds a live session records that instance as `DRAINING`
+— it keeps its session and the runs it carries but takes no new work until an
+entry the domain accepts says otherwise — and an entry naming no live instance
+is ignored. Either way the refusal is logged with its code, and the fleet keeps
+the last report it accepted: a refused number never reaches the projection.
 
 ## GraphQL surface — platform administrators only
 
@@ -160,7 +163,7 @@ segment that blocks direct external access.
   reconnecting starts with a fresh snapshot, so clients never need a separate
   refetch. Watching a job watches its whole tree.
 - **Affordances** — every job snapshot and delta carries the backend-owned
-  affordances (`CANCEL_JOB`, `MANUAL_RETRY_JOB`, `DELETE_JOB` — allowed or
+  affordances (`cancel`, `manual_retry`, `delete` — allowed or
   blocked with a reason code); when affordances change without a job state
   change, a dedicated `JobsJobAffordancesChangedEvent` is emitted. Clients
   render these decisions, they never derive them.

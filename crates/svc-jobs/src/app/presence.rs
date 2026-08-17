@@ -13,6 +13,13 @@ use crate::db::PgStore;
 use crate::error::ServiceError;
 
 pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceError> {
+    match accepted(jobs, presence).await {
+        Err(ServiceError::Domain(refusal)) => refused(jobs, presence, &refusal).await,
+        outcome => outcome,
+    }
+}
+
+async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceError> {
     let key = RunnerTypeKey::new(&presence.runner_type)?;
     let known = FleetReader::load(&jobs.store, &key).await?;
     let runner_type_id = match &known {
@@ -47,7 +54,24 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
     .map(|_| ())
 }
 
-pub async fn unreadable(
+async fn refused(
+    jobs: &Jobs,
+    presence: &wire::Presence,
+    refusal: &JobsError,
+) -> Result<(), ServiceError> {
+    tracing::warn!(
+        runner_type = %presence.runner_type,
+        instance_key = %presence.instance_key,
+        refusal_code = refusal.code(),
+        refusal_params = %refusal.params(),
+        "a presence entry the domain refuses is never taken for READY: a live instance is drained \
+         so it takes no new work while keeping the runs it holds, and an entry naming no live \
+         instance is ignored"
+    );
+    drained(jobs, &presence.runner_type, &presence.instance_key).await
+}
+
+pub async fn drained(
     jobs: &Jobs,
     runner_type: &str,
     instance_key: &str,
@@ -76,9 +100,9 @@ pub async fn unreadable(
     tracing::warn!(
         runner_type = %key.as_str(),
         instance_key = %instance_key.as_str(),
-        "a live instance rewrote its presence entry in a form this service cannot read; it is \
-         recorded as draining, so it keeps its session and its runs but takes no new work until \
-         a readable entry says otherwise"
+        "a live instance whose presence entry this service refuses is recorded as draining, so it \
+         keeps its session and its runs but takes no new work until an entry the domain accepts \
+         says otherwise"
     );
     recorded(
         write::commit_fleet_events(

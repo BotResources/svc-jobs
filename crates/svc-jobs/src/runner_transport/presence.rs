@@ -67,7 +67,7 @@ async fn unreadable(jobs: &Jobs, key: &str) -> Result<(), ServiceError> {
     let Some((runner_type, instance_key)) = key.split_once('.') else {
         return Ok(());
     };
-    presence::unreadable(jobs, runner_type, instance_key).await
+    presence::drained(jobs, runner_type, instance_key).await
 }
 
 async fn lost(jobs: &Jobs, key: &str, reason_code: &str) -> Result<(), ServiceError> {
