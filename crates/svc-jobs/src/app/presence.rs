@@ -180,17 +180,17 @@ pub async fn lost_session(
 async fn settle(jobs: &Jobs, observed: ObservedLoss<'_>) -> Result<(), ServiceError> {
     let runner_type = observed.runner_type.clone();
     let instance_key = observed.instance_key.clone();
-    let this_pod_recorded_the_loss = record_loss(
+    let closed_by_this_pod = record_loss(
         &jobs.store,
         jobs.ids.as_ref(),
         jobs.clock.as_ref(),
         observed,
     )
     .await?;
-    if !this_pod_recorded_the_loss {
+    let Some(session_id) = closed_by_this_pod else {
         return Ok(());
-    }
-    reclaim::runs_of(jobs, &runner_type, &instance_key).await
+    };
+    reclaim::runs_of(jobs, &runner_type, &instance_key, session_id).await
 }
 
 pub async fn record_loss(
@@ -198,14 +198,14 @@ pub async fn record_loss(
     ids: &dyn IdFactory,
     clock: &dyn Clock,
     observed: ObservedLoss<'_>,
-) -> Result<bool, ServiceError> {
+) -> Result<Option<PresenceSessionId>, ServiceError> {
     let mut pinned = observed.session_id;
     for _ in 0..LOSS_DECISION_ATTEMPTS {
         let Some(known) = FleetReader::load(store, observed.runner_type).await? else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(live) = known.instance(observed.instance_key) else {
-            return Ok(false);
+            return Ok(None);
         };
         let session_id = *pinned.get_or_insert(live.session_id());
         let result = match observe_loss(
@@ -225,7 +225,7 @@ pub async fn record_loss(
                     "the session this loss was observed on is already closed and the instance is \
                      live again; the loss belongs to whoever closed it"
                 );
-                return Ok(false);
+                return Ok(None);
             }
             Err(other) => return Err(other.into()),
         };
@@ -245,7 +245,7 @@ pub async fn record_loss(
             .await,
         )?;
         if written {
-            return Ok(true);
+            return Ok(Some(session_id));
         }
     }
     tracing::error!(

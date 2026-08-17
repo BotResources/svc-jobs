@@ -1,11 +1,11 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_nats::jetstream::kv::Operation;
 use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::transport::AnnouncedInstance;
 use contract_jobs::runner as wire;
-use contract_jobs::runner_transport::runner_presence_key;
-use contract_jobs::segment::SubjectSegment;
 use futures::StreamExt;
 
 use super::{RunnerChannels, transport_error};
@@ -77,19 +77,32 @@ async fn lost(jobs: &Jobs, key: &str, reason_code: &str) -> Result<(), ServiceEr
     presence::lost(jobs, runner_type, instance_key, reason_code).await
 }
 
-pub async fn is_live(
-    channels: &RunnerChannels,
-    runner_type: &RunnerTypeKey,
-    instance_key: &InstanceKey,
-) -> Result<bool, PortError> {
-    let key = runner_presence_key(
-        &SubjectSegment::runner_type(runner_type.as_str()).map_err(transport_error)?,
-        &SubjectSegment::instance_key(instance_key.as_str()).map_err(transport_error)?,
-    );
-    Ok(channels
+pub async fn announced(channels: &RunnerChannels) -> Result<HashSet<AnnouncedInstance>, PortError> {
+    let keys = channels
         .presence_bucket()
-        .get(key)
+        .keys()
         .await
-        .map_err(transport_error)?
-        .is_some())
+        .map_err(transport_error)?;
+    let mut keys = std::pin::pin!(keys);
+    let mut announced = HashSet::new();
+    while let Some(key) = keys.next().await {
+        let key = key.map_err(transport_error)?;
+        if let Some(instance) = instance_of(&key) {
+            announced.insert(instance);
+        } else {
+            tracing::warn!(
+                key = %key,
+                "a presence key no runner instance could have written is ignored"
+            );
+        }
+    }
+    Ok(announced)
+}
+
+fn instance_of(key: &str) -> Option<AnnouncedInstance> {
+    let (runner_type, instance_key) = key.split_once('.')?;
+    Some(AnnouncedInstance {
+        runner_type: RunnerTypeKey::new(runner_type).ok()?,
+        instance_key: InstanceKey::new(instance_key).ok()?,
+    })
 }

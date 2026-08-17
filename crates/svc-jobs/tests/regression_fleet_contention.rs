@@ -8,7 +8,9 @@ use bc_jobs::domain::ids::{EventId, PresenceSessionId};
 use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use bc_jobs::event::fleet::FleetEvent;
+use bc_jobs::policies::fleet::{LostPresenceSession, runs_lost_with_instance};
 use bc_jobs::ports::environment::IdFactory;
+use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use chrono::Utc;
 use svc_jobs::ServiceError;
@@ -251,7 +253,7 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
     // Then: the loss is not dropped — a moved fleet makes it re-decide, never abandon
     let outcome = losing.await.expect("the loss task finishes");
     assert!(
-        matches!(outcome, Ok(true)),
+        matches!(outcome, Ok(Some(_))),
         "a disconnection is delivered once and never replayed, so a fleet that moved under the \
          decision must be re-read, not treated as somebody else's write: {outcome:?}",
     );
@@ -376,7 +378,7 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
     // Then: the blocked loss re-reads the fleet, finds a session it never observed, and stops
     let outcome = losing.await.expect("the loss task finishes");
     assert!(
-        matches!(outcome, Ok(false)),
+        matches!(outcome, Ok(None)),
         "a loss observed on one session may not be re-decided against the session that replaced \
          it: the process is alive again, and the caller must not reclaim its runs: {outcome:?}",
     );
@@ -424,4 +426,121 @@ fn recorded(events: &[FleetEvent]) -> Vec<(EventId, FleetEvent)> {
             )
         })
         .collect()
+}
+
+#[tokio::test]
+async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
+    // Given: an instance executing a run under the session that is about to be lost
+    let fixture = Fixture::start().await;
+    let runner_type = "salvager";
+    let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
+    let fleet = a_registered_instance(&fixture, runner_type).await;
+    let lost_session = fleet
+        .instance(&instance_a())
+        .expect("the instance is live")
+        .session_id();
+    let (job, carried_run) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
+    let started = job
+        .record_run_started(RunStartedFact {
+            run_id: carried_run,
+            instance: RunnerInstanceReference::new(key.clone(), instance_a()),
+        })
+        .expect("the run start is decided");
+    commit(
+        &fixture,
+        vec![JobChange::new(job.id(), Some(job.clone()), started.events)],
+    )
+    .await
+    .expect("the run is executing on the session about to be lost");
+
+    // When: that session is closed and the same process comes back under a new one, taking work
+    let disconnected = observe_loss(
+        &fleet,
+        ObserveLoss {
+            instance_key: instance_a(),
+            session_id: lost_session,
+            reason_code: expired(),
+        },
+    )
+    .expect("the loss of the session is decided");
+    write::commit_fleet_events(
+        &fixture.store,
+        &ids(),
+        FleetChange {
+            runner_type_id: fleet.id(),
+            runner_type: &key,
+            decided_on: Some(&fleet),
+            events: &disconnected.events,
+        },
+        &metadata(),
+        Utc::now(),
+    )
+    .await
+    .expect("the loss is recorded");
+    let emptied = RunnerType::hydrate(RunnerTypeState {
+        id: fleet.id(),
+        key: key.clone(),
+        registered_at: fleet.registered_at(),
+        instances: vec![],
+    })
+    .expect("a runner type with no live instance loads");
+    let reconnected = observe_presence(Some(&emptied), announcing(fleet.id(), &key, "instance-a"))
+        .expect("the process announces itself again");
+    write::commit_fleet_events(
+        &fixture.store,
+        &ids(),
+        FleetChange {
+            runner_type_id: fleet.id(),
+            runner_type: &key,
+            decided_on: Some(&emptied),
+            events: &reconnected.events,
+        },
+        &metadata(),
+        Utc::now(),
+    )
+    .await
+    .expect("the replacement session opens");
+    let (successor, successor_run) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
+    let taken = successor
+        .record_run_started(RunStartedFact {
+            run_id: successor_run,
+            instance: RunnerInstanceReference::new(key.clone(), instance_a()),
+        })
+        .expect("the replacement session claims a run");
+    commit(
+        &fixture,
+        vec![JobChange::new(
+            successor.id(),
+            Some(successor.clone()),
+            taken.events,
+        )],
+    )
+    .await
+    .expect("the replacement session is executing a run of its own");
+
+    // Then: the reclaim of the closed session names its own run, and leaves the successor's alone
+    let window = FleetReader::closed_presence_session(&fixture.store, lost_session)
+        .await
+        .expect("the closed session reads back")
+        .expect("the session this pod closed is closed");
+    let active = fixture
+        .store
+        .active_jobs_of_type(runner_type)
+        .await
+        .expect("the active jobs of the type load");
+    let lost = runs_lost_with_instance(
+        &LostPresenceSession::new(
+            RunnerInstanceReference::new(key.clone(), instance_a()),
+            window.connected_at,
+            window.disconnected_at,
+        ),
+        &active,
+    );
+    assert_eq!(
+        lost.iter().map(|run| run.run_id).collect::<Vec<_>>(),
+        vec![carried_run],
+        "an instance key outlives its sessions: a reclaim that took every run the key ever \
+         carried would fail the run the replacement session is executing right now — {lost:?}",
+    );
+    fixture.shutdown().await;
 }

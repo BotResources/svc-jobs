@@ -25,31 +25,43 @@ to `## Unreleased`).
   live and keeps the runs it already carries, but is excluded from its runner
   type's availability: while every live instance of a type drains, the type
   reports unavailable and dispatch waits instead of publishing a trigger nobody
-  would take. An unknown status code is refused at ingest and logged, never
-  read as `READY`.
+  would take. An unknown status code does not parse, so the entry takes the
+  unreadable path: it is logged, never read as `READY`, and it drains the live
+  instance that wrote it.
 - A presence entry also declares a `capacity` (required, at least 1): how many
   runs the instance carries at once. It is declarative — dispatch stays
   pull-based and capacity never gates delivery — and feeds the fleet reads: an
   instance is busy once its runs reach its declared capacity, and a runner type
   totals the capacity of its live, non-draining instances. A capacity that is
-  absent, zero or negative is refused at ingest with the entry; one above the
-  domain ceiling of 10 000 is logged and dropped, leaving the instance on the
-  report it last made.
+  absent, zero or negative never parses on the wire; one above the domain
+  ceiling of 10 000 parses but is refused by the domain. Either way the entry
+  is logged and refused, and the refusal drains the live instance that wrote it
+  — the instance keeps its session and its runs, takes no new work, and the
+  fleet keeps the last capacity it accepted.
 - A presence entry an instance rewrote in an unreadable form is treated as
   `DRAINING` when that instance holds a live session: it keeps its session and
   its runs but takes no new work, instead of staying dispatchable for ever on
   the last readable report it managed to write. An unreadable entry naming no
   live instance is still ignored and logged.
-- The backstop reconciles the presence bucket with the open sessions: a session
-  the bucket no longer backs is closed under `presence_expired` and its runs
-  are reclaimed. It covers the two evictions no watch can see — one that lands
-  while the pod is down, and one whose recording was abandoned under
-  contention.
+- The backstop reconciles the presence bucket with the open sessions: it reads
+  the bucket's keys once per sweep and closes, under `presence_expired`, every
+  open session the bucket no longer backs, reclaiming its runs. It covers the
+  two evictions no watch can see — one that lands while the pod is down, and
+  one whose recording was abandoned under contention. The reconciliation is
+  best-effort: a broker the sweep cannot reach is logged, and the backstops
+  that need PostgreSQL alone still run.
+- A reclaim takes the runs of the session that was lost, not every run the
+  instance key ever carried: only a run started inside the closed session's
+  window is failed for instance loss, so a run the replacement session is
+  executing survives its predecessor's reclaim.
 - The dispatch loop no longer spins when a runner type is fully draining: a
   pass that skipped a job because nobody would take it waits its full interval
   and is woken by the fleet fact of an instance reporting ready again, rather
   than re-reading a retry that is due but undispatchable every few hundred
-  milliseconds.
+  milliseconds. That long wait is taken only when nothing else in the pass asks
+  for a sooner one — a dispatch that failed, or one that filled its batch,
+  keeps the short wake, so a due retry on an available type is never delayed by
+  an unrelated skip.
 - Every knob is configuration, validated once at boot. The declared
   environment: `PORT`, `DATABASE_URL`, `DATABASE_URL_OWNER`, `NATS_URL`,
   `NATS_USER`, `NATS_PASSWORD`, `JOBS_APP_PASSWORD`; the domain and timing

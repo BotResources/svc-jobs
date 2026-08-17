@@ -31,6 +31,8 @@ pub trait JobWriter: Send + Sync {
     ) -> Result<(), PortError>;
 }
 
+pub const DUE_WORK_BATCH: usize = 200;
+
 #[async_trait]
 pub trait DueWorkReader: Send + Sync {
     async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;

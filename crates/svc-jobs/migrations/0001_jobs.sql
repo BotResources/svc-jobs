@@ -128,7 +128,7 @@ CREATE TABLE runner_status_changes (
     PRIMARY KEY (session_id, change_number),
     CHECK (change_number > 0),
     CHECK (reported_status <> ''),
-    CHECK (capacity >= 1)
+    CHECK (capacity BETWEEN 1 AND 10000)
 );
 
 CREATE TABLE jobs (

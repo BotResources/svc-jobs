@@ -123,6 +123,9 @@ jobs:
       - name: cargo check contract-jobs (platform footprint, integration)
         run: cargo check -p contract-jobs --locked --features integration
 
+      - name: cargo test contract-jobs (integration subject grammar)
+        run: cargo test -p contract-jobs --locked --features integration
+
       - name: cargo test (unit)
         run: cargo test --workspace --locked --lib --bins
 

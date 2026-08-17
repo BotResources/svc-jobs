@@ -5,7 +5,7 @@ use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::ports::fleet::FleetReader;
-use bc_jobs::ports::job::DueWorkReader;
+use bc_jobs::ports::job::{DUE_WORK_BATCH, DueWorkReader};
 
 use super::write::JobChange;
 use super::{Jobs, service_metadata};
@@ -14,6 +14,8 @@ use crate::error::ServiceError;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DispatchPass {
     pub skipped_for_unavailability: bool,
+    pub failed: bool,
+    pub truncated: bool,
 }
 
 enum Outcome {
@@ -28,6 +30,7 @@ pub async fn dispatch_due_work(jobs: &Jobs) -> Result<DispatchPass, ServiceError
     if waiting.is_empty() {
         return Ok(pass);
     }
+    pass.truncated = waiting.len() >= DUE_WORK_BATCH;
     let fleet: HashMap<String, RunnerType> = FleetReader::load_all(&jobs.store)
         .await?
         .into_iter()
@@ -37,11 +40,14 @@ pub async fn dispatch_due_work(jobs: &Jobs) -> Result<DispatchPass, ServiceError
         match dispatch_one(jobs, &job, fleet.get(job.runner_type().as_str())).await {
             Ok(Outcome::Dispatched) => {}
             Ok(Outcome::NobodyWouldTakeIt) => pass.skipped_for_unavailability = true,
-            Err(error) => tracing::warn!(
-                job_id = %job.id().as_uuid(),
-                error = %error,
-                "dispatching a waiting job failed; it stays waiting"
-            ),
+            Err(error) => {
+                pass.failed = true;
+                tracing::warn!(
+                    job_id = %job.id().as_uuid(),
+                    error = %error,
+                    "dispatching a waiting job failed; it stays waiting"
+                );
+            }
         }
     }
     Ok(pass)

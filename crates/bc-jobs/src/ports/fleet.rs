@@ -15,6 +15,12 @@ pub struct OpenPresenceSession {
     pub session_id: PresenceSessionId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClosedPresenceSession {
+    pub connected_at: DateTime<Utc>,
+    pub disconnected_at: DateTime<Utc>,
+}
+
 #[async_trait]
 pub trait FleetReader: Send + Sync {
     async fn load(&self, key: &RunnerTypeKey) -> Result<Option<RunnerType>, PortError>;
@@ -22,6 +28,11 @@ pub trait FleetReader: Send + Sync {
     async fn load_all(&self) -> Result<Vec<RunnerType>, PortError>;
 
     async fn open_presence_sessions(&self) -> Result<Vec<OpenPresenceSession>, PortError>;
+
+    async fn closed_presence_session(
+        &self,
+        session_id: PresenceSessionId,
+    ) -> Result<Option<ClosedPresenceSession>, PortError>;
 }
 
 #[async_trait]

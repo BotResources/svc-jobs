@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 
 use crate::domain::attempts::AttemptNumber;
@@ -17,6 +19,12 @@ pub struct RunTrigger {
     pub triggered_by: Option<KnownUser>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AnnouncedInstance {
+    pub runner_type: RunnerTypeKey,
+    pub instance_key: InstanceKey,
+}
+
 #[async_trait]
 pub trait RunnerTransport: Send + Sync {
     async fn dispatch(&self, trigger: &RunTrigger) -> Result<(), PortError>;
@@ -31,9 +39,5 @@ pub trait RunnerTransport: Send + Sync {
         runner_type: &RunnerTypeKey,
     ) -> Result<(), PortError>;
 
-    async fn presence_is_live(
-        &self,
-        runner_type: &RunnerTypeKey,
-        instance_key: &InstanceKey,
-    ) -> Result<bool, PortError>;
+    async fn announced_instances(&self) -> Result<HashSet<AnnouncedInstance>, PortError>;
 }

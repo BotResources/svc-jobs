@@ -108,8 +108,9 @@ presence session and its running runs are not reclaimed. When every live
 instance of a type is `DRAINING`, the type reports `isAvailable: false` and
 dispatch waits — no trigger is published that nobody would take.
 
-`idleInstanceCount` counts the live instances carrying no run, draining ones
-included: idle is about load, not about willingness to take more. Availability
+`idleInstanceCount` counts the live instances with room left — fewer runs than
+their declared capacity — draining ones included: idle is about load, not about
+willingness to take more. Availability
 is carried by `isAvailable` and by the room a type offers
 (`totalCapacity`, which counts non-draining instances only), so a fleet that is
 entirely draining reads as idle, unavailable, and offering no capacity.
@@ -235,6 +236,7 @@ integrating.
 | `run_logs` has monthly range partitions (2026-01 → 2030-12) and **no `DEFAULT` partition** | A missing partition fails loud rather than silently pooling rows into an unbounded default. Operational obligation: declare the next partitions before the horizon, or log ingestion stops (lifecycle facts are unaffected). |
 | `JOBS_CANCEL` bucket TTL must track `JOBS_RUN_MAX_DURATION_SECONDS` | The bucket's expiry is the cleanup backstop for cancel entries whose terminal fact never arrived; a TTL shorter than the maximum run duration can drop a stop request a slow run still needs. Keep the two aligned in the topology declaration. |
 | Logs ride their own size-bounded, discard-old stream | A log flood can neither delay a status fact nor evict one; losing an old log line is acceptable, losing a lifecycle fact is not. |
+| A reclaim only takes runs started inside the closed presence session's window | An instance key outlives its sessions: reclaiming by key alone would fail a run the replacement session is executing. The session that carried the run owns the reclaim. |
 | Mutations return `{ success }` only | State arrives through the subscriptions' snapshot-then-delta stream; a mutation that returned a DTO would race its own event. |
 | `scripts/setup-branch-protection.sh` + `.github/required-checks.json` | Declarative source of truth for required checks; each entry must match a `ci.yml` job `name:` verbatim or PRs block forever waiting for a check that never reports. |
 | Changelog headings are plain `## x.y.z` | The release pipeline greps that exact form (root for the image, per-crate for tags); a bracketed keepachangelog heading ships nothing. |

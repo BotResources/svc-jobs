@@ -69,6 +69,13 @@ PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
   Neither the run-duration backstop (which requires a start) nor the inactivity
   backstop (which requires no active run) picks it up. This is the non-crash
   twin of the arbitrated pending-run gap; recovery is cancel or manual retry.
+- **A presence loss seen on the watch names no session on the wire.** The
+  watching pod pins the session it reads from the fleet on its first attempt,
+  so a pod delayed between that read and its write can still close a session
+  that replaced the one it observed — a narrow multi-pod window. The damage is
+  bounded to that session's own window (the reclaim only takes runs started
+  inside it). Carrying a runner boot identity in the presence entry closes the
+  gap and is a 0.2 contract change.
 - **`run_logs` partitions run from 2026-01 to 2030-12.** A runner clock beyond
   that window makes the insert fail; the line is refused permanently
   (terminated, never redelivered forever), but it is lost.

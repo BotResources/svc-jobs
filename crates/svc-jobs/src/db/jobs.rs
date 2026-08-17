@@ -3,7 +3,7 @@ use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::job::{DueWorkReader, JobReader};
+use bc_jobs::ports::job::{DUE_WORK_BATCH, DueWorkReader, JobReader};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -216,7 +216,7 @@ impl DueWorkReader for PgStore {
              WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} AND {HAS_LIVE_INSTANCE} \
                AND (NOT EXISTS (SELECT 1 FROM runs r WHERE r.job_id = j.id) \
                     OR EXISTS ({UNCONSUMED_RETRY} AND s.due_at <= $1)) \
-             ORDER BY j.created_at, j.id LIMIT 200"
+             ORDER BY j.created_at, j.id LIMIT {DUE_WORK_BATCH}"
         );
         let ids = self.ids(&sql, at).await?;
         self.load_batch(&ids).await
@@ -229,7 +229,7 @@ impl DueWorkReader for PgStore {
                 JOIN run_starts rs ON rs.run_id = r.id \
                 LEFT JOIN run_terminals t ON t.run_id = r.id \
                 WHERE r.job_id = j.id AND t.run_id IS NULL AND rs.started_at < $1) \
-             LIMIT 200"
+             LIMIT {DUE_WORK_BATCH}"
         );
         let ids = self.ids(&sql, at).await?;
         self.load_batch(&ids).await
@@ -258,7 +258,7 @@ impl DueWorkReader for PgStore {
                AND EXISTS (SELECT 1 FROM runs r WHERE r.job_id = j.id) \
                AND NOT EXISTS ({UNCONSUMED_RETRY}) \
                AND idle.last_activity < $1 \
-             LIMIT 200"
+             LIMIT {DUE_WORK_BATCH}"
         );
         let ids = self.ids(&sql, at).await?;
         self.load_batch(&ids).await

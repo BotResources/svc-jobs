@@ -9,7 +9,13 @@ use super::{Jobs, reconcile, service_metadata};
 use crate::error::ServiceError;
 
 pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
-    reconcile::presence_sessions(jobs).await?;
+    if let Err(error) = reconcile::presence_sessions(jobs).await {
+        tracing::warn!(
+            error = %error,
+            "reconciling the presence bucket with the open sessions failed; the sweep still runs \
+             the backstops that need PostgreSQL alone, and the next sweep reconciles again"
+        );
+    }
     reclaim_outrun_runs(jobs).await?;
     fail_inactive_jobs(jobs).await
 }

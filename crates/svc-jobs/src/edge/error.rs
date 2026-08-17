@@ -82,7 +82,15 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::UnknownEnumValue { .. }
         | JobsError::Serialization { .. } => EdgeError::internal(error.code()),
     };
-    with_params(base.with_reason(error.code()), error)
+    let named = base.with_reason(error.code());
+    if params_name_internal_state(error) {
+        return named;
+    }
+    with_params(named, error)
+}
+
+fn params_name_internal_state(error: &JobsError) -> bool {
+    matches!(error, JobsError::StaleLoss { .. })
 }
 
 fn with_params(mut edge: EdgeError, error: &JobsError) -> EdgeError {
@@ -98,4 +106,39 @@ fn with_params(mut edge: EdgeError, error: &JobsError) -> EdgeError {
         }
     }
     edge
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn a_stale_loss_reaches_the_edge_without_naming_a_presence_session() {
+        // Given: a loss refused because the instance is live again under a new session
+        let error = JobsError::StaleLoss {
+            instance_key: "pod-7".to_owned(),
+            observed_session_id: Uuid::now_v7(),
+            live_session_id: Uuid::now_v7(),
+        };
+        // When: it is rendered for a client
+        let edge = of_domain(&error);
+        // Then: the code travels, the internal session identifiers do not
+        assert_eq!(edge.reason_code(), Some("stale_loss"));
+        assert!(edge.params().is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_refusal_still_carries_the_params_its_code_needs() {
+        // Given: a retry refused because the budget is spent
+        let error = JobsError::RetryBudgetExhausted {
+            attempts: 3,
+            max_attempts: 3,
+        };
+        // When: it is rendered for a client
+        let edge = of_domain(&error);
+        // Then: the parameters the message needs are still there
+        assert_eq!(edge.reason_code(), Some("retry_budget_exhausted"));
+        assert_eq!(edge.params().get("attempts").map(String::as_str), Some("3"));
+    }
 }

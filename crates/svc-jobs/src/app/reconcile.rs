@@ -1,18 +1,16 @@
 use bc_jobs::commands::fleet::PRESENCE_EXPIRED;
 use bc_jobs::domain::keys::ReasonCode;
-use bc_jobs::ports::fleet::FleetReader;
+use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
+use bc_jobs::ports::transport::AnnouncedInstance;
 
 use super::{Jobs, presence};
 use crate::error::ServiceError;
 
 pub async fn presence_sessions(jobs: &Jobs) -> Result<(), ServiceError> {
     let expired = ReasonCode::new(PRESENCE_EXPIRED)?;
+    let announced = jobs.transport.announced_instances().await?;
     for session in FleetReader::open_presence_sessions(&jobs.store).await? {
-        let still_announced = jobs
-            .transport
-            .presence_is_live(&session.runner_type, &session.instance_key)
-            .await?;
-        if still_announced {
+        if announced.contains(&announced_form(&session)) {
             continue;
         }
         tracing::warn!(
@@ -32,4 +30,11 @@ pub async fn presence_sessions(jobs: &Jobs) -> Result<(), ServiceError> {
         }
     }
     Ok(())
+}
+
+fn announced_form(session: &OpenPresenceSession) -> AnnouncedInstance {
+    AnnouncedInstance {
+        runner_type: session.runner_type.clone(),
+        instance_key: session.instance_key.clone(),
+    }
 }

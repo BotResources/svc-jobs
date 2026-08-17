@@ -65,7 +65,7 @@ fn wait_on_a_retry_already_due(
     minimum_wake: Duration,
     ceiling: Duration,
 ) -> Duration {
-    if pass.skipped_for_unavailability {
+    if pass.skipped_for_unavailability && !pass.failed && !pass.truncated {
         ceiling
     } else {
         minimum_wake

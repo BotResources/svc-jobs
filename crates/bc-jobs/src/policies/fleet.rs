@@ -1,5 +1,8 @@
+use chrono::{DateTime, Utc};
+
 use crate::domain::ids::{JobId, RunId};
 use crate::domain::job::Job;
+use crate::domain::run::Run;
 use crate::domain::run::parts::RunnerInstanceReference;
 use crate::event::job::JobEvent;
 
@@ -48,15 +51,44 @@ pub struct RunLostWithInstance {
     pub run_id: RunId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LostPresenceSession {
+    instance: RunnerInstanceReference,
+    connected_at: DateTime<Utc>,
+    disconnected_at: DateTime<Utc>,
+}
+
+impl LostPresenceSession {
+    pub fn new(
+        instance: RunnerInstanceReference,
+        connected_at: DateTime<Utc>,
+        disconnected_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            instance,
+            connected_at,
+            disconnected_at,
+        }
+    }
+
+    fn carried(&self, run: &Run) -> bool {
+        run.start().is_some_and(|start| {
+            start.instance() == &self.instance
+                && start.started_at() >= self.connected_at
+                && start.started_at() <= self.disconnected_at
+        })
+    }
+}
+
 pub fn runs_lost_with_instance(
-    instance: &RunnerInstanceReference,
+    session: &LostPresenceSession,
     jobs: &[Job],
 ) -> Vec<RunLostWithInstance> {
     jobs.iter()
         .filter(|job| !job.is_terminal())
         .filter_map(|job| {
             job.active_run()
-                .filter(|run| run.is_executed_by(instance))
+                .filter(|run| session.carried(run))
                 .map(|run| RunLostWithInstance {
                     job_id: job.id(),
                     run_id: run.id(),
@@ -77,6 +109,10 @@ mod tests {
             RunnerTypeKey::new(runner_type).unwrap(),
             InstanceKey::new(instance_key).unwrap(),
         )
+    }
+
+    fn session(instance: RunnerInstanceReference) -> LostPresenceSession {
+        LostPresenceSession::new(instance, ts(0), ts(10))
     }
 
     #[test]
@@ -117,7 +153,7 @@ mod tests {
             .with_run(RunBuilder::new(1).build())
             .build();
         // When: the loss is observed
-        let intents = runs_lost_with_instance(&instance(), &[executing.clone(), waiting]);
+        let intents = runs_lost_with_instance(&session(instance()), &[executing.clone(), waiting]);
         // Then: only the run that instance had claimed is reclaimed
         assert_eq!(
             intents,
@@ -135,7 +171,8 @@ mod tests {
             .with_run(RunBuilder::new(1).started(ts(5)).build())
             .build();
         // When: an unrelated instance is lost
-        let intents = runs_lost_with_instance(&instance_of("analyst", "pod-9"), &[executing]);
+        let intents =
+            runs_lost_with_instance(&session(instance_of("analyst", "pod-9")), &[executing]);
         // Then: nothing is reclaimed
         assert!(intents.is_empty());
     }
@@ -147,8 +184,35 @@ mod tests {
             .with_run(RunBuilder::new(1).started(ts(5)).build())
             .build();
         // When: a scribe instance that happens to share the name pod-7 is lost
-        let intents = runs_lost_with_instance(&instance_of("scribe", "pod-7"), &[executing]);
+        let intents =
+            runs_lost_with_instance(&session(instance_of("scribe", "pod-7")), &[executing]);
         // Then: the analyst's work is untouched — an instance is a type and a key, never a key alone
+        assert!(intents.is_empty());
+    }
+
+    #[test]
+    fn a_run_started_under_the_replacement_session_survives_its_predecessors_reclaim() {
+        // Given: the same instance key back under a new session, executing a fresh run
+        let executing = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(50)).build())
+            .build();
+        // When: the loss of the session that closed at ts(10) is reclaimed
+        let intents = runs_lost_with_instance(&session(instance()), &[executing]);
+        // Then: the run the successor is executing is untouched — a reclaim belongs to the
+        // session that carried the run, never to every run the instance key ever carried
+        assert!(intents.is_empty());
+    }
+
+    #[test]
+    fn a_run_the_instance_started_before_this_session_opened_is_left_alone() {
+        // Given: a run started at ts(5), and a session that only opened at ts(20)
+        let executing = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(5)).build())
+            .build();
+        let lost = LostPresenceSession::new(instance(), ts(20), ts(30));
+        // When: that later session is lost
+        let intents = runs_lost_with_instance(&lost, &[executing]);
+        // Then: the run belongs to the earlier session and is not reclaimed twice
         assert!(intents.is_empty());
     }
 }

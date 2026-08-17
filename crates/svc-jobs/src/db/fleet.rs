@@ -6,7 +6,7 @@ use bc_jobs::domain::fleet::{RunnerType, RunnerTypeState};
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
 use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
+use bc_jobs::ports::fleet::{ClosedPresenceSession, FleetReader, OpenPresenceSession};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -27,7 +27,12 @@ const OPEN_SESSIONS_SQL: &str = "SELECT rt.type_key, ri.instance_key, s.id::uuid
      FROM runner_presence_sessions s \
      JOIN runner_instances ri ON ri.id = s.instance_id \
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
-     WHERE s.disconnected_at IS NULL";
+     WHERE s.disconnected_at IS NULL \
+     ORDER BY s.connected_at, s.id LIMIT 200";
+
+const CLOSED_SESSION_SQL: &str = "SELECT connected_at, disconnected_at \
+     FROM runner_presence_sessions \
+     WHERE id = $1 AND disconnected_at IS NOT NULL";
 
 const INSTANCES_SQL: &str = "SELECT ri.runner_type_id::uuid AS runner_type_id, ri.instance_key, \
      s.id::uuid AS session_id, s.version, s.connected_at, s.last_observed_at, \
@@ -179,5 +184,20 @@ impl FleetReader for PgStore {
                 })
             })
             .collect()
+    }
+
+    async fn closed_presence_session(
+        &self,
+        session_id: PresenceSessionId,
+    ) -> Result<Option<ClosedPresenceSession>, PortError> {
+        let row = sqlx::query(CLOSED_SESSION_SQL)
+            .bind(session_id.as_uuid())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(unavailable)?;
+        Ok(row.map(|row| ClosedPresenceSession {
+            connected_at: row.get("connected_at"),
+            disconnected_at: row.get("disconnected_at"),
+        }))
     }
 }
