@@ -1,14 +1,21 @@
 mod support;
 
+use std::net::TcpListener;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use async_graphql::parser::parse_schema;
 use async_graphql::parser::types::{ServiceDocument, TypeKind, TypeSystemDefinition};
-use br_test_harness::GraphqlClient;
+use br_test_harness::{E2eDatabase, GraphqlClient, SpawnedProcess};
 use reqwest::StatusCode;
-use support::fixture::{BIN, JobsFixture};
+use support::fixture::{
+    APP_PASSWORD, APP_ROLE, BIN, JobsFixture, free_port, require_provisioned_infrastructure,
+};
 
 const ROOT_FIELD_PREFIX: &str = "jobs";
+
+const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
+const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
 const DECLARED_QUERIES: [&str; 5] = [
     "jobs",
@@ -78,6 +85,76 @@ async fn operational_probes_and_the_published_schema() {
     );
 
     fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn readiness_stays_down_while_a_declared_dependency_is_unbound() {
+    // Given: a real database, and a NATS endpoint that takes the connection and never answers
+    require_provisioned_infrastructure();
+    let db = E2eDatabase::create(true, &[])
+        .await
+        .with_app_role(APP_ROLE, APP_PASSWORD)
+        .await;
+    let silent_nats = TcpListener::bind(("127.0.0.1", 0)).expect("a local socket to hold open");
+    let nats_url = format!(
+        "nats://{}",
+        silent_nats
+            .local_addr()
+            .expect("the held socket has an address"),
+    );
+    let owner_url = db.owner_migration_url();
+    let app_url = db.app_url();
+    let port = free_port().to_string();
+    let base_url = format!("http://127.0.0.1:{port}");
+
+    // When: the binary boots against it and is probed from the moment it binds its port
+    let service = SpawnedProcess::spawn(
+        BIN,
+        &[],
+        &[
+            ("DATABASE_URL", app_url.as_str()),
+            ("DATABASE_URL_OWNER", owner_url.as_str()),
+            ("HOST", "127.0.0.1"),
+            ("PORT", port.as_str()),
+            ("ENVIRONMENT", "local"),
+            ("RUST_LOG", "info"),
+            ("NATS_URL", nats_url.as_str()),
+        ],
+    );
+
+    // Then: every answer it gives is 503 with a reason, and it never once reports ready
+    let deadline = Instant::now() + DOWN_PHASE_WINDOW;
+    let mut answers = 0_usize;
+    while Instant::now() < deadline {
+        if let Ok(response) = reqwest::get(format!("{base_url}/readyz")).await {
+            let status = response.status();
+            let reason = response.text().await.unwrap_or_default();
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "/readyz answered {status} while the declared NATS infrastructure was unbound — a \
+                 pod that reports ready before its dependencies are bound takes traffic it cannot \
+                 serve\nlogs:\n{}",
+                service.logs(),
+            );
+            assert!(
+                !reason.trim().is_empty(),
+                "a NOT READY answer must name what is missing, so an operator reads the culprit \
+                 off the probe",
+            );
+            answers += 1;
+        }
+        tokio::time::sleep(DOWN_PHASE_PROBE_INTERVAL).await;
+    }
+    assert!(
+        answers > 0,
+        "/readyz never answered within {DOWN_PHASE_WINDOW:?}, so the down phase was never \
+         observed — the probe proves nothing unless the process served it\nlogs:\n{}",
+        service.logs(),
+    );
+
+    service.shutdown().await;
+    db.cleanup().await;
 }
 
 fn schema_subcommand_stdout() -> String {

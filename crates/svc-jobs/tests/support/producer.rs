@@ -102,14 +102,10 @@ impl JobDeclaration {
                 .map_or(Value::Null, TriggeringUser::wire),
         );
         fields.insert("max_attempts".to_owned(), json!(self.max_attempts));
-        match &self.source {
-            Some((bc, entity_id)) => {
-                fields.insert("source_bc".to_owned(), json!(bc));
-                fields.insert("source_entity_id".to_owned(), json!(entity_id.to_string()));
-            }
-            None => {
-                fields.insert("producer".to_owned(), json!(producer));
-            }
+        fields.insert("producer".to_owned(), json!(producer));
+        if let Some((bc, entity_id)) = &self.source {
+            fields.insert("source_bc".to_owned(), json!(bc));
+            fields.insert("source_entity_id".to_owned(), json!(entity_id.to_string()));
         }
         Value::Object(fields)
     }
@@ -152,6 +148,17 @@ impl<'a> Producer<'a> {
         let command = self.create_command(declaration);
         self.send(wire::VERB_CREATE, &command).await;
         command
+    }
+
+    pub async fn declare_payload(&self, payload: Value) {
+        let command = wire::command_envelope(
+            Uuid::now_v7(),
+            wire::VERB_CREATE,
+            Uuid::now_v7(),
+            self.account_id,
+            payload,
+        );
+        self.send(wire::VERB_CREATE, &command).await;
     }
 
     pub async fn redeliver(&self, command: &IntegrationCommand<Value>) {

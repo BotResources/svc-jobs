@@ -29,16 +29,25 @@ every consumer, so each version is deliberate. Release headings are plain
 - `Presence.capacity` is required and at least 1 (`Capacity`): a missing, zero
   or negative capacity fails to parse, so a presence entry is never read with a
   defaulted room.
+- `CreateJob.producer` is required, as the offer requires it: every job names
+  the producing bounded context the domain, the database and the administrator
+  surface all need. A creation that omits it does not deserialize at all, so it
+  takes the malformed-payload path — answered by a `creation_rejected` event
+  naming the job id — instead of being attributed by guesswork. There is no
+  fallback attribution and no reserved producer key: a job declared by a runner
+  for its own child names its producer like any other producer does. When
+  `source_bc` is present it must be that same key, or the creation is refused.
 - Three shapes are supersets of the sealed offer text, each accepting a message
-  that follows the offer literally: `CreateJob.producer` names the producing
-  bounded context that the domain, the database and the administrator surface
-  all require and that the offer omits — a message without it is attributed all
-  the same, to the source reference's bounded context, else to the runner type
-  of the parent job, else to the reserved key `unattributed`; `LogLine.id` and
-  `PlanDeclared.declaration_id` are optional so an at-least-once redelivery can
-  be absorbed under the identity the runner already gave it, and a declaration
-  identity outside the platform's UUIDv7 rule is recorded under a minted one
-  rather than dropped.
+  that follows the offer literally: `CreateJob.triggered_by` accepts the offer's
+  bare user id and also the pair `{ id, display_name }`, so a producer that
+  already holds the name spares the administrator surface a lookup jobs cannot
+  make; `LogLine.id` and `PlanDeclared.declaration_id` are optional so an
+  at-least-once redelivery can be absorbed under the identity the runner already
+  gave it, and a declaration identity outside the platform's UUIDv7 rule is
+  recorded under a minted one rather than dropped.
+- `RunFailed`'s retry hint is carried by the field `retry_after_seconds`, with
+  the serde alias `retry_after` — the offer's name. Both spellings are accepted
+  on the wire; the crate serialises the explicit one.
 - The envelope's `command_id` constrains nothing beyond the envelope: the
   resolution a `job.cancel`, `job.finish` or `job.fail` opens is identified by
   an id svc-jobs mints, so a producer minting its command ids under any UUID

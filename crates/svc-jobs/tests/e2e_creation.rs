@@ -152,7 +152,28 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
     ));
     assert_absent(&client, admin, orphan_id).await;
 
-    // Then: the five causes stay distinguishable, and nothing else moved
+    let unattributed = JobDeclaration::new(&runner_type);
+    let unattributed_id = unattributed.job_id;
+    let mut payload = unattributed.payload("projects");
+    payload
+        .as_object_mut()
+        .expect("a creation payload is a JSON object")
+        .remove("producer");
+    producer.declare_payload(payload).await;
+    let anonymous = events
+        .expect_one(wire::FACT_CREATION_REJECTED, unattributed_id, LONG)
+        .await;
+    refusals.push((
+        "a declaration naming no producer",
+        rejection_code(
+            &anonymous,
+            "a creation that names no producing bounded context",
+            &[&unattributed_id.to_string()],
+        ),
+    ));
+    assert_absent(&client, admin, unattributed_id).await;
+
+    // Then: the six causes stay distinguishable, and nothing else moved
     codes::assert_pairwise_distinct(&refusals);
     assert_eq!(
         gql::job_view(&client, admin, accepted_id).await,
@@ -170,7 +191,13 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         .await;
     instance.expect_no_trigger(QUIET).await;
 
-    for rejected in [over_budget_id, duplicate_id, not_time_ordered_id, orphan_id] {
+    for rejected in [
+        over_budget_id,
+        duplicate_id,
+        not_time_ordered_id,
+        orphan_id,
+        unattributed_id,
+    ] {
         durable
             .assert_all(
                 rejected,

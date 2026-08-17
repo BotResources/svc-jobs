@@ -21,6 +21,13 @@ to `## Unreleased`).
   for the eight published events), the confined runner transport (trigger
   publication and withdrawal, status and log consumption, the desired-state
   cancel bucket, the presence watch), and the dispatch and backstop loops.
+- A creation names its producing bounded context or it is refused: `producer` is
+  required on `job.create`, so a payload omitting it does not deserialize and
+  takes the malformed path — answered by a `creation_rejected` event carrying
+  `malformed_payload` whenever the payload still names a job id. There is no
+  fallback attribution: no source-derived key, no parent-derived key, no
+  reserved key. A job is never recorded under a producer nobody declared, and a
+  `source_bc` that disagrees with `producer` is refused.
 - A presence entry announces `READY` or `DRAINING`. A `DRAINING` instance stays
   live and keeps the runs it already carries, but is excluded from its runner
   type's availability: while every live instance of a type drains, the type

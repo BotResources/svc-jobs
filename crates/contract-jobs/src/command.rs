@@ -36,8 +36,7 @@ impl TriggeredBy {
 pub struct CreateJob {
     pub job_id: Uuid,
     pub runner_type: String,
-    #[serde(default)]
-    pub producer: Option<String>,
+    pub producer: String,
     #[serde(default)]
     pub config: Option<Value>,
     #[serde(default)]
@@ -64,10 +63,6 @@ impl CreateJob {
             (None, None) => Ok(None),
             _ => Err(SourceError::HalfPair),
         }
-    }
-
-    pub fn declared_producer(&self) -> Option<&str> {
-        self.producer.as_deref().or(self.source_bc.as_deref())
     }
 }
 

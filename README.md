@@ -64,7 +64,7 @@ Commands consumed on the `INTEGRATION_CMD` stream (durables
 
 | Subject | Meaning |
 |---|---|
-| `integration.cmd.jobs.job.create.v1` | Create a job addressed to a runner type; the producer mints the UUIDv7 id. |
+| `integration.cmd.jobs.job.create.v1` | Create a job addressed to a runner type; the producer mints the UUIDv7 id and names its own bounded context in `producer` (required). |
 | `integration.cmd.jobs.job.cancel.v1` | Cancel a job; cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v1` | The owner declares the job succeeded — the only path to `COMPLETED`. |
 | `integration.cmd.jobs.job.fail.v1` | The owner declares the job failed (`DECLARED_BY_OWNER`). |
@@ -75,9 +75,20 @@ plan_declared, step_started, completed, failed, cancelled}.v1` — every event
 carries the caller-supplied job id.
 
 A malformed command payload is never redelivered forever: an unreadable
-creation that still names a job id is answered by a rejection event; a domain
-refusal is acknowledged and discarded; only infrastructure failures and lost
-write races are redelivered.
+creation that still names a job id is answered by a rejection event — a
+creation naming no `producer` is exactly that case — a domain refusal is
+acknowledged and discarded; only infrastructure failures and lost write races
+are redelivered.
+
+**Who the owner is.** A resolution command is accepted only when its envelope
+declares the same actor that declared the job (inherited along a manual-retry
+chain). In practice the parent's runner resolves its child, the producing
+bounded context resolves the root it declared, and platform administrators act
+through the GraphQL surface. This is a coherence rule between self-declared
+envelope identities, not an authentication: nothing on the bus verifies the
+actor a publisher writes. Trust here is rooted in NATS access — first-party
+publishers on a network-isolated segment — and impersonation on the bus is out
+of scope by design.
 
 ### Runner transport
 
@@ -148,6 +159,14 @@ version.
 authenticate its origin. Deploy svc-jobs only behind a gateway that strips
 client-forged copies and re-injects the resolved passport, on a network
 segment that blocks direct external access.
+
+The name an administrator's action is recorded under (who cancelled, retried or
+deleted) is read from the passport claim `display_name`; when that claim is
+absent or blank, the administrator's user id is recorded instead. Jobs holds no
+directory and resolves no name of its own, so the claim key is a per-project
+seam: a deployment whose gateway names the claim differently records ids, not
+names. This is a display convention, never an identity guarantee — the actor
+recorded is always the passport's own id.
 
 - **Queries** — `jobs` (filtered, paginated list), `jobsJob`,
   `jobsJobBySource` (the single non-terminal job for a source reference),
@@ -223,10 +242,10 @@ dispatch and backstop loops, the fact listener) is supervised: a death takes
 readiness DOWN and restarts it with bounded backoff; exhausting the budget
 leaves the pod NOT READY.
 
-The known functional limitations of 0.1 (owner authorization enforced as
-declaring-actor, the lost-trigger gap, the partition horizon) are recorded in
-[CHANGELOG.md](CHANGELOG.md) — the changelog is honest, read it before
-integrating.
+The known functional limitations of 0.1 (the lost-trigger gap, the narrow
+presence-loss window, a job waiting forever on a runner type that never
+appears, the partition horizon) are recorded in [CHANGELOG.md](CHANGELOG.md) —
+the changelog is honest, read it before integrating.
 
 ## Why it is the way it is
 

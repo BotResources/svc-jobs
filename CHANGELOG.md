@@ -28,6 +28,17 @@ PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
   for the eight published events), the confined runner transport (trigger
   publication and withdrawal, status and log consumption, desired-state cancel
   bucket, presence watch), and the supervised dispatch and backstop loops.
+- **Who may resolve a job**: `job.finish`, `job.fail` and `job.cancel` are
+  accepted only when the command envelope declares the same actor that declared
+  the job, inherited along a manual-retry chain so a successor answers to the
+  actor that declared its origin. In practice the parent's runner finishes,
+  fails or kills its child; the producing bounded context resolves the root it
+  declared; platform administrators act through the restricted GraphQL surface.
+  This is a coherence rule between self-declared identities, not an
+  authentication: nothing on the bus verifies the actor a publisher writes into
+  its envelope. Trust on the bus is rooted in NATS access — first-party
+  publishers on a network-isolated segment — and impersonation there is out of
+  scope by design.
 - A presence entry announces `READY` or `DRAINING`. A `DRAINING` instance stays
   live and keeps the runs it already carries, but is excluded from its runner
   type's availability: while every live instance of a type drains, the type
@@ -52,23 +63,12 @@ PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
 
 ### Known limitations of 0.1
 
-- **Owner authorization is enforced as "declaring actor", not as the spec's
-  "Owner".** A resolution command (`job.finish`, `job.fail`, `job.cancel`) is
-  accepted when its envelope actor is the actor that declared the job (walking
-  back a manual-retry chain to its origin). Jobs has no actor-to-producer-key or
-  actor-to-runner-identity directory in 0.1, so the caller identity cannot be
-  resolved into the domain's `Caller` independently of the aggregate. The
-  structural owner guard still runs, but the effective rule is the declaring
-  actor. Consequence: a bounded context that declares a child under a parent
-  owned by another runner becomes that child's declarer and can resolve it,
-  while the parent's runner cannot. Operator arbitration is required before
-  0.2.
 - **A run trigger lost after commit is not reclaimed.** The trigger is published
   to the runner transport after the transaction commits; a publish failure is
   logged and the job stays `IN_PROGRESS` with a dispatched, never-started run.
   Neither the run-duration backstop (which requires a start) nor the inactivity
-  backstop (which requires no active run) picks it up. This is the non-crash
-  twin of the arbitrated pending-run gap; recovery is cancel or manual retry.
+  backstop (which requires no active run) picks it up. Recovery is a
+  cancellation or a manual retry.
 - **A presence loss seen on the watch names no session on the wire.** The
   watching pod pins the session it reads from the fleet on its first attempt,
   so a pod delayed between that read and its write can still close a session
@@ -76,6 +76,18 @@ PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
   bounded to that session's own window (the reclaim only takes runs started
   inside it). Carrying a runner boot identity in the presence entry closes the
   gap and is a 0.2 contract change.
-- **`run_logs` partitions run from 2026-01 to 2030-12.** A runner clock beyond
-  that window makes the insert fail; the line is refused permanently
-  (terminated, never redelivered forever), but it is lost.
+- **`run_logs` partitions run from 2026-01 to 2030-12.** A log line whose
+  timestamp falls outside that window fails to insert, and the log consumer
+  reads that failure as an infrastructure failure: the line is never terminated
+  — it is negatively acknowledged and redelivered indefinitely (the delivery
+  budget is unlimited) until partitions covering it are declared. Lifecycle
+  facts are unaffected. Declare the next partitions before the horizon;
+  `JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS` makes the boot log the remaining
+  margin as an `error!`.
+- **A job addressed to a runner type that never appears waits indefinitely.** It
+  stays `PENDING`, with no run, no deadline and no expiry: the inactivity
+  backstop watches `IN_PROGRESS` jobs and nothing reclaims a pending one. The
+  wait ends when an instance of that type finally connects, or when someone
+  cancels the job. This is intended — jobs never invents a failure for work a
+  fleet may still take — but a producer that wants a deadline must impose it
+  itself.
