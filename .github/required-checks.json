@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "The declared required status checks for `main`, and the deliberate exclusions.",
+    "",
+    "WHY THIS FILE EXISTS. Required checks live in GitHub branch protection, which",
+    "no one reads and nothing reconciles: a job added to ci.yml is simply never",
+    "required until a human remembers. That is not hypothetical — in",
+    "be-botresources.ai several e2e jobs sat un-required for months, one of them",
+    "from the day it shipped, blocking nothing they were written to block.",
+    "",
+    "So the list is declared HERE, beside the workflow it describes, and",
+    "scripts/setup-branch-protection.sh reads its contexts from this array rather",
+    "than carrying a second copy of it.",
+    "",
+    "Entries are the job's DISPLAY name (`name:` in ci.yml, falling back to the",
+    "job id) — that is the string branch protection matches on.",
+    "",
+    "Bootstrapped by runkit with the jobs ci.yml ships with — the same gate set",
+    "the backend monorepo runs, minus what a standalone repository has no use",
+    "for. Each service runkit scaffolds adds its own",
+    "`e2e <service> (reality chains)` entry beside them, in the same run that",
+    "adds the job."
+  ],
+
+  "required": [
+    "cargo fmt (auto-fix)",
+    "cargo clippy + test",
+    "supply chain (audit + deny + machete)",
+    "cargo semver-checks (contract)",
+    "changelog entry present (per crate)",
+    "shellcheck",
+    "trufflehog (secret scan)",
+    "e2e path filter",
+    "e2e jobs (reality chains)"
+  ],
+
+  "excluded": {},
+
+  "_note_on_skipped_jobs": [
+    "The per-service e2e jobs are path-filtered by the `changes` job (a job-level",
+    "`if:`), and requiring a filtered job is SAFE as long as ci.yml carries no",
+    "workflow-level `paths:` filter: the workflow always runs, and a job skipped",
+    "by its `if:` still reports a `skipped` conclusion, which satisfies branch",
+    "protection.",
+    "",
+    "That safety evaporates the day someone adds a workflow-level `paths:` filter",
+    "to ci.yml — the check would never report and every PR would hang. Don't."
+  ]
+}

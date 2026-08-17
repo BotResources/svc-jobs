@@ -1,0 +1,28 @@
+br-svc-jobs {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+Service: {{ include "br-svc-jobs.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.port }}
+
+Endpoints (in-cluster; the GraphQL surface is platform-administrator only):
+  POST   http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql
+  GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql   (playground)
+  GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/sdl
+  GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/livez
+  GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/readyz
+  GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/metrics
+
+Postgres DSNs must exist in Secret "{{ .Values.postgres.existingSecret }}" under keys:
+  {{ .Values.postgres.keys.databaseUrl }}        (jobs_app runtime DSN)
+  {{ .Values.postgres.keys.databaseUrlOwner }}  (owner — migrations/grants at boot)
+{{- if .Values.postgres.keys.appPassword }}
+  {{ .Values.postgres.keys.appPassword }}      (jobs_app role password, minted at boot)
+{{- end }}
+
+NATS at {{ .Values.nats.url }} must already carry the declared JetStream
+topology — streams INTEGRATION_CMD, INTEGRATION_EVT, JOBS_TRIGGER, JOBS_STATUS,
+JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE. svc-jobs binds them and
+fails the boot loudly when one is absent; it never creates them. Keep the
+JOBS_CANCEL bucket's TTL aligned with the configured maximum run duration
+(JOBS_RUN_MAX_DURATION_SECONDS, default 72h).
+
+The chart does NOT create Secrets. Provision them via your secret-management
+tool (ExternalSecrets, Sealed Secrets, kubectl, etc.).

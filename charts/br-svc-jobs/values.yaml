@@ -1,0 +1,126 @@
+# Default values for br-svc-jobs.
+# Consuming projects override only what differs from these defaults.
+
+image:
+  repository: ghcr.io/botresources/br-svc-jobs
+  # Defaults to the chart's appVersion (set in Chart.yaml, kept in lockstep
+  # with the Rust crate version). Override to pin a different tag.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# svc-jobs is multi-pod safe: concurrent instances coordinate every write on
+# the database, so RollingUpdate (the Kubernetes default when strategy is
+# empty) and replicaCount > 1 are both supported.
+replicaCount: 1
+strategy: {}
+
+# Port exposed by the container and Service. Must match the PORT env var
+# (defaults to 8006 in svc-jobs).
+port: 8006
+
+# Postgres connection URLs, read from an existing Kubernetes Secret — the
+# chart never generates it.
+#
+# Roles expected by svc-jobs:
+#   owner    — runs migrations + grants at boot only (that pool then closes)
+#   jobs_app — every runtime path (DATABASE_URL). When the appPassword key is
+#              set (the default), svc-jobs creates/updates the jobs_app role at
+#              boot with that password and grants it after migrating; the
+#              DATABASE_URL DSN must carry the same password. Set the key to ""
+#              when the role is provisioned out of band.
+postgres:
+  existingSecret: "br-svc-jobs-postgres"
+  # Keys inside the Secret. databaseUrl/databaseUrlOwner values must be full
+  # postgres:// DSNs; appPassword is the jobs_app role password (not a DSN).
+  keys:
+    databaseUrl: "DATABASE_URL"
+    databaseUrlOwner: "DATABASE_URL_OWNER"
+    appPassword: "JOBS_APP_PASSWORD"
+  # Deliberate per-host plaintext opt-out for the DB connection. The shared
+  # br-util-postgres lib refuses to boot on a plaintext DSN to any remote
+  # (non-loopback) host unless that host is declared here — it trusts the
+  # network segment, not transport TLS. List the in-namespace Postgres service
+  # host (e.g. "my-db-rw.my-ns.svc") when it is reached over plaintext behind
+  # a default-deny NetworkPolicy. When non-empty, rendered as the comma-joined
+  # TRUSTED_NETWORK_HOSTS env var. Default empty = TLS required for any remote
+  # host (sslmode=require/verify-ca/verify-full in the DSN).
+  trustedNetworkHosts: []
+
+# NATS connection — REQUIRED. svc-jobs refuses to boot without NATS_URL: the
+# integration bus and the runner transport are the service's reason to exist.
+# The streams and buckets it binds (INTEGRATION_CMD, INTEGRATION_EVT,
+# JOBS_TRIGGER, JOBS_STATUS, JOBS_LOG, and the JOBS_CANCEL / JOBS_PRESENCE KV
+# buckets) must be declared out of band; an absent one fails the boot loudly.
+nats:
+  url: "nats://nats:4222"
+  # Optional credentials, read from an existing Secret if set.
+  existingSecret: ""
+  keys:
+    user: "NATS_USER"
+    password: "NATS_PASSWORD"
+
+# Generic escape hatch: extra environment entries rendered verbatim into the
+# container (list of {name, value} or any valid Kubernetes EnvVar). Use it for
+# the optional JOBS_* tuning knobs (retry, backstop, consumer and supervision
+# timing — see the README configuration table); every one has a validated
+# default baked into the binary.
+extraEnv: []
+
+# Log filter (tracing_subscriber env filter syntax).
+logLevel: "info"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 3
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:
+    path: /livez
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+service:
+  type: ClusterIP
+  annotations: {}
+  # Extra labels merged onto the Service's metadata.labels, on top of the
+  # standard chart labels (which are never overridden). Use this when an
+  # external controller discovers this Service by label — e.g. a federation
+  # gateway composer that enumerates subgraph Services.
+  labels: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # If create=false, the pod uses this existing ServiceAccount name.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

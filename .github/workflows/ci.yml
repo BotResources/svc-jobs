@@ -1,47 +1,67 @@
-name: CI
+# CI — the canonical green gate, bootstrapped by runkit.
+#
+# Every job here is a required status check on `main`, declared in
+# .github/required-checks.json and applied by
+# scripts/setup-branch-protection.sh. A merge is impossible until they report.
+#
+# Trigger: pull_request to main only. Pushes to main are the release side's
+# business, and re-running the gate there would only slow it down for no
+# information the pull request did not already give.
+#
+# ── Runner ──────────────────────────────────────────────────────────
+# GitHub-hosted `ubuntu-latest`, and no container. A standalone service
+# repository is not on the ARC self-hosted pool the backend monorepo rides
+# (`arc-ubuntu` + `ghcr.io/botresources/br-arc-runner`) — naming a pool that
+# does not exist for this repository queues every job forever, which reads
+# exactly like a hung check. The per-service e2e job runkit adds later copies
+# whatever this job says rather than carrying its own answer.
+#
+# ── The `changes` job is an anchor bed ──────────────────────────────
+# Each service runkit scaffolds is spliced into five places inside it — a
+# paths-filter group, an `outputs:` entry, a lock-closure argument, a fail-open
+# echo, and a `P_`/`C_` pair the loop merges — and gains one `e2e-<service>` job
+# at the end of this file. Those anchors are a shape the generator locates, not
+# decoration: rename the job, drop `fail_open()` or collapse the merge step and
+# the next scaffold run refuses rather than guessing where its lines belong.
+#
+# Until the first service is registered the machinery computes exactly one
+# verdict — `lock` — and no job reads it. That is the empty state, not a broken
+# one.
+
+name: ci
 
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
+# Cancel superseded runs on the same ref: a second push should not pay for the
+# first one's remaining jobs.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-
-permissions:
-  contents: read
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  probe:
-    name: scaffold probe
-    runs-on: ubuntu-latest
-    outputs:
-      has_code: ${{ steps.probe.outputs.has_code }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: probe
-        shell: bash
-        run: |
-          if [ -f Cargo.toml ]; then
-            echo "has_code=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_code=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Pre-scaffold repository — Rust jobs are skipped until Cargo.toml lands."
-          fi
-
+  # ── Formatting gate (auto-fix on pull requests) ────────────────────
+  # Runs `cargo fmt --all` and commits any fix it had to make, then exits 1 so
+  # every downstream job (they all `needs: fmt`) stops. The fix is already on
+  # the branch, so the developer only re-runs.
   fmt:
     name: cargo fmt (auto-fix)
-    needs: probe
-    if: needs.probe.outputs.has_code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
@@ -73,12 +93,13 @@ jobs:
           echo "::error::Code was auto-formatted and pushed. Please re-run CI."
           exit 1
 
+  # ── Workspace: lint + unit tests ───────────────────────────────────
   check:
     name: cargo clippy + test
     needs: fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -91,10 +112,22 @@ jobs:
           version: v3.16.2
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Unit tests
-        run: cargo test --lib
+      # `--lib --bins` only: the e2e suites need a real Postgres and a real
+      # NATS, and each service's own `e2e-<service>` job is where they get them.
+      # They still compile under `--all-targets` above, which gates type drift.
+      - name: cargo check contract-jobs (runner footprint, no br-rust-common)
+        run: cargo check -p contract-jobs --locked --no-default-features
+
+      - name: cargo check contract-jobs (platform footprint, integration)
+        run: cargo check -p contract-jobs --locked --features integration
+
+      - name: cargo test contract-jobs (integration subject grammar)
+        run: cargo test -p contract-jobs --locked --features integration
+
+      - name: cargo test (unit)
+        run: cargo test --workspace --locked --lib --bins
 
       - name: helm lint chart
         run: helm lint charts/br-svc-jobs
@@ -102,107 +135,255 @@ jobs:
       - name: helm template dry-run
         run: helm template ci charts/br-svc-jobs --debug > /dev/null
 
-  integration:
-    name: integration (e2e)
+  # ── Supply chain: advisories, licences/bans/sources, unused deps ───
+  # Three checks in one job — the fixed per-job overhead is worth more than the
+  # separation, and taiki-e/install-action fetches prebuilt binaries in seconds.
+  # cargo-audit and cargo-deny both run on purpose: audit catches a few
+  # advisory shapes deny's resolver misses.
+  supply-chain:
+    name: supply chain (audit + deny + machete)
     needs: fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: install cargo-audit, cargo-deny, cargo-machete (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-machete
+
+      # --ignore RUSTSEC-2023-0071 — rsa (Marvin Attack timing sidechannel),
+      # pulled transitively by sqlx-macros-core's sqlx-mysql backend, which is
+      # proc-macro compile-time only; runtime is sqlx-postgres, so the code
+      # path never executes and upstream has no fixed version. Mirrored, with
+      # the full Why block, in deny.toml [advisories].
+      - name: cargo audit (RustSec)
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
+      # Every check kind (advisories | bans | licences | sources). The defaults
+      # already do that; spelling it out survives an upstream default change.
+      # Configured in deny.toml, whose licence allow-list and `allow-git` both
+      # fail closed.
+      - name: cargo deny check
+        run: cargo deny --all-features check
+
+      - name: cargo machete (unused deps)
+        run: cargo machete
+
+  # ── Published-language stability gate ──────────────────────────────
+  # contract-jobs is the only crate consumers import (as a git dependency on
+  # its `contract-jobs/v*` tag), so it is the only crate semver-gated.
+  # bc-jobs and svc-jobs are internal to this repository and never tagged
+  # per-crate. Before the first contract tag exists there is no baseline and
+  # the job passes vacuously.
+  semver:
+    name: cargo semver-checks (contract)
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      - name: semver-check contract-jobs against its latest release
+        run: |
+          baseline="$(git tag -l 'contract-jobs/v*' --sort=-v:refname | head -1)"
+          if [ -z "$baseline" ]; then
+            echo "No contract-jobs release tag yet — nothing to compare against."
+            exit 0
+          fi
+          echo "Baseline: $baseline"
+          cargo semver-checks check-release -p contract-jobs --baseline-rev "$baseline"
+
+  # ── Release notes exist for the version each crate declares ────────
+  changelog:
+    name: changelog entry present (per crate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-changelog.sh
+
+  # ── CI orchestration is shell, and deserves its own lint ───────────
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
+          severity: warning
+
+  # ── Secret scan (full history) ─────────────────────────────────────
+  # `--results=verified,unknown` rather than `--only-verified`: a credential
+  # trufflehog cannot reach the issuer to verify is reported as *unknown*, not
+  # as clean, and a repository's first workflow is the wrong place to decide
+  # that unknown means fine. Narrowing this is a decision to take deliberately,
+  # with the noise in front of you — not one to inherit from a generator.
+  secrets:
+    name: trufflehog (secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --results=verified,unknown
+
+  # ── Which suites this pull request has to pay for ──────────────────
+  changes:
+    name: e2e path filter
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    # Every service verdict is the MERGE of two independent signals (see the
+    # `merge` step): the dorny source-path groups below, and a real per-service
+    # Cargo.lock dependency-closure diff. `lock` gates the second, and is the
+    # only verdict that exists before a service is registered.
+    outputs:
+      lock: ${{ steps.filter.outputs.lock }}
+      jobs: ${{ steps.merge.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            # NB: no `- 'Cargo.lock'` inside a service group — the lockfile is
+            # rewritten by any version bump anywhere in the workspace, so a
+            # blanket entry fires every suite on an unrelated one. The closure
+            # diff below answers the same question per service. `Cargo.toml`
+            # stays: the workspace manifest can change features that never
+            # surface as a lockfile edit.
+            #
+            # runkit splices one group per service it scaffolds, ahead of `lock`.
+
+            # jobs — scaffolded by runkit from the HEXAGONAL major 0: the
+            # generated crates plus the monorepo PATH deps the skeleton names.
+            # A path dep has to be listed here and cannot be left to the
+            # lock-closure diff below: editing its source moves no version in
+            # Cargo.lock, so the diff is blind to it. Widen this list the day
+            # svc-jobs takes a new in-repo dependency.
+            jobs:
+              - 'crates/contract-jobs/**'
+              - 'crates/bc-jobs/**'
+              - 'crates/svc-jobs/**'
+              - 'crates/infra/**'
+              - 'crates/shared-kernel/**'
+              - 'Cargo.toml'
+              - 'scripts/provision-e2e-infra.sh'
+              - '.github/workflows/ci.yml'
+            # Any lockfile change at all — gates the closure diff below.
+            lock:
+              - 'Cargo.lock'
+      - name: Lock-closure diff
+        id: closure
+        if: steps.filter.outputs.lock == 'true'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -uo pipefail
+          fail_open() {
+            echo "lock-closure: $1 — flagging all groups true (fail-open)" >&2
+            {
+              # The `:` keeps this block legal while no service has a verdict
+              # to flag, and costs one no-op once they do. runkit files each
+              # scaffolded service under the line below:
+              #   echo "<group>=true"
+              echo "jobs=true"
+              :
+            } >> "$GITHUB_OUTPUT"
+          }
+          if [ -z "${BASE_SHA:-}" ]; then
+            fail_open "no pull_request base sha (non-PR event)"; exit 0
+          fi
+          # scripts/lock-closure-changed.py walks each group's transitive
+          # closure from its root crate and prints `group=true|false`. It is not
+          # part of the bootstrapped skeleton: until this repository has it,
+          # every group fails open, which runs the suites rather than skipping
+          # them — the safe direction of that trade.
+          if [ ! -f scripts/lock-closure-changed.py ]; then
+            fail_open "scripts/lock-closure-changed.py is not in this repository"; exit 0
+          fi
+          # checkout@v5 leaves a shallow tree, so fetch just the base commit.
+          if ! git fetch --depth=1 origin "$BASE_SHA" 2>/dev/null \
+             || ! git show "$BASE_SHA:Cargo.lock" > /tmp/base-Cargo.lock 2>/dev/null; then
+            fail_open "could not retrieve base Cargo.lock at $BASE_SHA"; exit 0
+          fi
+          python3 scripts/lock-closure-changed.py /tmp/base-Cargo.lock Cargo.lock \
+            jobs=svc-jobs \
+            >> "$GITHUB_OUTPUT"
+      # Final verdict per group: dorny source paths OR lock-closure diff. When
+      # the lock did not move the closure step is skipped and its outputs are
+      # empty (≠ 'true'), so the source paths decide alone. runkit adds the
+      # `env:` mapping with the first service's pair — a mapping with no entry
+      # is not something to leave in a workflow file.
+      - name: Merge path and closure verdicts
+        id: merge
+        shell: bash
+        env:
+          P_jobs: ${{ steps.filter.outputs.jobs }}
+          C_jobs: ${{ steps.closure.outputs.jobs }}
+        run: |
+          set -u
+          for g in jobs; do
+            p="P_$g"; c="C_$g"
+            if [ "${!p}" = "true" ] || [ "${!c}" = "true" ]; then
+              echo "$g=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$g=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  # ── Jobs e2e — the executable spec ────────────────────────────────
+  # Scaffolded by runkit with the jobs unit: the real svc-jobs
+  # binary against a job-local PostgreSQL and a per-scenario ephemeral
+  # `nats-server`, driving the four observation channels.
+  #
+  # `--tests` rather than an enumerated `--test` list (the shape
+  # e2e-charter uses): the skeleton ships no scenario yet, so an
+  # enumeration would name targets that do not exist — and it is exactly
+  # the kind of list the first real scenario gets forgotten from,
+  # silently un-gating itself. cargo passes with zero test targets, so
+  # this job is green until there is something to be red about.
+  #
+  # --test-threads=1: each scenario spawns its own service process and
+  # its own nats-server, and mints roles and DBs on the shared cluster.
+  # Same serial posture as the identity, projects and charter chains.
+  # --no-fail-fast: report every scenario binary in one run instead of
+  # stopping at the first failing target.
+  e2e-jobs:
+    name: e2e jobs (reality chains)
+    needs: [fmt, changes]
+    if: needs.changes.outputs.jobs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: install nats-server
-        run: |
-          NATS_VERSION="v2.14.1"
-          URL="https://github.com/nats-io/nats-server/releases/download/${NATS_VERSION}/nats-server-${NATS_VERSION}-linux-amd64.tar.gz"
-          curl -sSfL "$URL" -o /tmp/nats-server.tar.gz
-          tar -xzf /tmp/nats-server.tar.gz -C /tmp
-          sudo install "/tmp/nats-server-${NATS_VERSION}-linux-amd64/nats-server" /usr/local/bin/nats-server
-          nats-server --version
+      # Exports E2E_PG_ADMIN_URL (admin Postgres) and puts `nats-server` on
+      # PATH — the suite mints its own roles and DBs from the former and
+      # spawns the latter per scenario. Nothing jobs-specific.
+      - name: provision e2e infra (postgres + nats-server)
+        run: bash scripts/provision-e2e-infra.sh
 
-      - name: Behavior scenarios (e2e)
-        env:
-          RUST_LOG: info
-        run: cargo test --tests --no-fail-fast -- --test-threads=1
-
-  audit:
-    name: cargo audit (RustSec)
-    needs: fmt
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  deny:
-    name: cargo-deny check
-    needs: fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-
-  machete:
-    name: cargo-machete (unused deps)
-    needs: fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-machete
-      - run: cargo machete
-
-  changelog:
-    name: changelog entry present (per crate)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: each touched crate must update its CHANGELOG
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-            echo "Not a pull request — nothing to check."
-            exit 0
-          fi
-          git fetch origin "${{ github.base_ref }}" --quiet
-          changed="$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)"
-          echo "$changed"
-
-          fail=0
-          if echo "$changed" | grep -qE '^(src/|migrations/|charts/|Cargo\.toml|Dockerfile)' \
-            && ! echo "$changed" | grep -qx 'CHANGELOG.md'; then
-            echo "::error::svc-jobs code changed without a CHANGELOG.md entry"
-            fail=1
-          fi
-          exit $fail
-
-  shellcheck:
-    name: shellcheck
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: shellcheck --severity=warning scripts/*.sh
-
-  secrets:
-    name: trufflehog (secret scan)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@main
-        with:
-          extra_args: --results=verified,unknown
+      - name: e2e reality chains
+        run: >
+          cargo test -p svc-jobs --locked --no-fail-fast --tests
+          -- --test-threads=1

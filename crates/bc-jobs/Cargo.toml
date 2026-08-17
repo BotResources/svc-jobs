@@ -1,0 +1,20 @@
+[package]
+name = "bc-jobs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "jobs bounded context — the pure domain: commands, events, policies, ports. No I/O."
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait.workspace = true
+br-core-events.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: br-svc-jobs
+description: Portable job-execution ledger — producers submit jobs over NATS, runners execute them, jobs records every attempt and publishes lifecycle events; platform-admin GraphQL surface over Postgres.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/BotResources/svc-jobs
+sources:
+  - https://github.com/BotResources/svc-jobs
+maintainers:
+  - name: BotResources
+    url: https://github.com/BotResources
+keywords:
+  - jobs
+  - nats
+  - jetstream
+  - graphql
+  - postgres
+  - sse
