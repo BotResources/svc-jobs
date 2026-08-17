@@ -1,8 +1,8 @@
 mod support;
 
 use br_test_harness::{SseSubscription, wait_until};
-use chrono::Utc;
 use serde_json::json;
+use support::clock;
 use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::JobsFixture;
@@ -146,7 +146,7 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     drop(listing);
     drop(fleet_watch);
 
-    let logged_at = Utc::now().to_rfc3339();
+    let logged_at = clock::now_rfc3339();
     for _ in 0..2 {
         instance
             .log_line_at(

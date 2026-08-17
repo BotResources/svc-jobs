@@ -3,8 +3,8 @@ mod support;
 use std::time::Duration;
 
 use br_test_harness::SseSubscription;
-use chrono::Utc;
 use serde_json::json;
+use support::clock;
 use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::{JobsFixture, Knobs};
@@ -56,7 +56,7 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
     stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
 
     // When: the runner fails transiently with a hint longer than the ordinary backoff
-    let failed_at = Utc::now();
+    let failed_at = clock::now();
     instance
         .fail_run(&first, "TRANSIENT", "provider_timeout", Some(HINT_SECONDS))
         .await;
@@ -102,14 +102,14 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
     delta::assert_active_affordances(&snapshot);
 
     // Then: nothing is dispatched strictly before that time
-    let quiet_until = (scheduled - Utc::now() - chrono::Duration::milliseconds(500))
+    let quiet_until = (scheduled - clock::now() - chrono::Duration::milliseconds(500))
         .to_std()
         .expect("the recorded due time is still ahead of the assertion window");
     instance.expect_no_trigger(quiet_until).await;
 
     let second = instance.next_trigger(LONG).await;
     assert!(
-        Utc::now() >= scheduled,
+        clock::now() >= scheduled,
         "the retry was dispatched before its recorded due time",
     );
     assert_eq!(runner::attempt_number(&second), 2);
@@ -235,7 +235,7 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(stubborn_id)).await;
     stream::snapshot(&mut stubborn_watch, JOB_CHANGED, SHORT).await;
 
-    let second_failed_at = Utc::now();
+    let second_failed_at = clock::now();
     impatient
         .fail_run(
             &second_attempt,
@@ -273,7 +273,7 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
         "the pushed projection carries the recorded time, not the hint: {hinted}",
     );
 
-    let quiet_until = (hinted_due - Utc::now() - chrono::Duration::milliseconds(500))
+    let quiet_until = (hinted_due - clock::now() - chrono::Duration::milliseconds(500))
         .to_std()
         .expect("the recorded due time is still ahead of the assertion window");
     impatient.expect_no_trigger(quiet_until).await;
@@ -286,7 +286,7 @@ async fn automatic_retries_honor_their_timing_and_stop_at_the_budget() {
     let third_attempt = impatient.next_trigger(LONG).await;
     assert_eq!(runner::attempt_number(&third_attempt), 3);
     assert!(
-        Utc::now() >= hinted_due,
+        clock::now() >= hinted_due,
         "the third attempt was dispatched before its recorded due time",
     );
     durable

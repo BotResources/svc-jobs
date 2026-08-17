@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use bc_jobs::domain::ids::RunId;
 use bc_jobs::event::job::JobEvent;
-use chrono::Utc;
 use tokio::time::{Instant, sleep_until};
 
 use crate::app::dispatch::DispatchPass;
@@ -52,7 +51,7 @@ async fn next_wake(
             ceiling
         }
         Ok(None) => ceiling,
-        Ok(Some(due)) => match (due - Utc::now()).to_std() {
+        Ok(Some(due)) => match (due - jobs.clock.now()).to_std() {
             Ok(remaining) => remaining.clamp(minimum_wake, ceiling),
             Err(_) => wait_on_a_retry_already_due(pass, minimum_wake, ceiling),
         },
@@ -108,7 +107,7 @@ async fn sweep_cancel_entries(
     if standing.is_empty() {
         return Ok(());
     }
-    let cutoff = Utc::now() - chrono::TimeDelta::from_std(grace).unwrap_or_default();
+    let cutoff = jobs.clock.now() - chrono::TimeDelta::from_std(grace).unwrap_or_default();
     for run_id in jobs.store.runs_terminal_before(&standing, cutoff).await? {
         if let Ok(run_id) = RunId::new(run_id)
             && let Err(error) = cancel::withdraw_stop(channels, run_id).await

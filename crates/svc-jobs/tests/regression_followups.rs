@@ -11,13 +11,14 @@ use bc_jobs::domain::policy::ServiceLimits;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 use br_test_harness::E2eDatabase;
-use chrono::{TimeDelta, Utc};
+use chrono::TimeDelta;
 use sqlx::{PgPool, Row};
 use svc_jobs::app::environment::UuidV7Factory;
 use svc_jobs::app::write::{self, JobChange};
 use svc_jobs::db::PgStore;
 use uuid::Uuid;
 
+use support::clock;
 use support::fixture::require_provisioned_infrastructure;
 
 struct Fixture {
@@ -87,7 +88,7 @@ async fn commit(fixture: &Fixture, changes: Vec<JobChange>) {
         &UuidV7Factory,
         changes,
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the write lands");

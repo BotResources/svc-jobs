@@ -15,6 +15,7 @@ use std::sync::{Arc, OnceLock};
 
 use axum::Router;
 use axum::routing::{get, post};
+use bc_jobs::ports::environment::Clock;
 use br_util_axum_readiness::{ReadinessHandle, readiness_route};
 use br_util_nats_fabric::{Fabric, NatsAuth};
 use br_util_observability::{http_metrics_layer, init_metrics, liveness_route, metrics_route};
@@ -80,7 +81,7 @@ async fn boot(
     db::partitions::report_run_log_horizon(
         &pool,
         settings.log_partition_horizon_warning,
-        chrono::Utc::now(),
+        SystemClock.now(),
     )
     .await;
 

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod clock;
 pub mod codes;
 pub mod contention;
 pub mod db;

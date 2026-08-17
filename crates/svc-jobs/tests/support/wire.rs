@@ -2,9 +2,10 @@ use br_core_integration::{
     Actor, Aggregate, Bc, CommandCoords, EventCoords, EventMetadata, IntegrationCommand, PastFact,
     ServiceAccountId, Verb,
 };
-use chrono::Utc;
 use serde_json::Value;
 use uuid::Uuid;
+
+use super::clock;
 
 pub const TRIGGER_STREAM: &str = "JOBS_TRIGGER";
 pub const STATUS_STREAM: &str = "JOBS_STATUS";
@@ -140,7 +141,7 @@ pub fn command_envelope(
         command_id,
         format!("jobs.job.{verb}"),
         1,
-        Utc::now(),
+        clock::now(),
         EventMetadata::new(
             Actor::Service(ServiceAccountId::from(issuer)),
             correlation_id,

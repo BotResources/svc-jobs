@@ -3,8 +3,8 @@ mod support;
 use std::time::Duration;
 
 use br_test_harness::SseSubscription;
-use chrono::Utc;
 use serde_json::json;
+use support::clock;
 use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::{JobsFixture, Knobs};
@@ -189,13 +189,13 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
 
     // Then: no trigger is produced while the type is unavailable, due time or not
-    let past_due = (due_at - Utc::now())
+    let past_due = (due_at - clock::now())
         .to_std()
         .unwrap_or(Duration::from_secs(0))
         + Duration::from_secs(BASE_DELAY_SECONDS + 2);
     replacement.expect_no_trigger(past_due).await;
     assert!(
-        Utc::now() > due_at,
+        clock::now() > due_at,
         "the silence window must outlast the recorded due time to prove anything",
     );
     assert_eq!(

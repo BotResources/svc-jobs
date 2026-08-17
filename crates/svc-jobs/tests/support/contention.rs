@@ -16,7 +16,7 @@ use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 use br_test_harness::E2eDatabase;
-use chrono::{TimeDelta, Utc};
+use chrono::TimeDelta;
 use sqlx::{PgPool, Row};
 use svc_jobs::ServiceError;
 use svc_jobs::app::environment::UuidV7Factory;
@@ -24,6 +24,7 @@ use svc_jobs::app::write::{self, FleetChange, JobChange};
 use svc_jobs::db::PgStore;
 use uuid::Uuid;
 
+use super::clock;
 use super::fixture::require_provisioned_infrastructure;
 
 pub struct Fixture {
@@ -132,7 +133,7 @@ pub fn ids() -> UuidV7Factory {
 }
 
 pub async fn commit(fixture: &Fixture, changes: Vec<JobChange>) -> Result<(), ServiceError> {
-    write::commit_job_changes(&fixture.store, &ids(), changes, &metadata(), Utc::now()).await
+    write::commit_job_changes(&fixture.store, &ids(), changes, &metadata(), clock::now()).await
 }
 
 pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str) -> (Job, RunId) {
@@ -165,7 +166,7 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
         .dispatch_run(
             DispatchRun {
                 run_id,
-                at: Utc::now(),
+                at: clock::now(),
             },
             &limits(),
         )
@@ -206,7 +207,7 @@ pub async fn a_registered_instance(fixture: &Fixture, runner_type: &str) -> Runn
             events: &connected.events,
         },
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the instance connects");
@@ -233,7 +234,7 @@ pub async fn a_second_live_instance(
             events: &connected.events,
         },
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the second instance connects");

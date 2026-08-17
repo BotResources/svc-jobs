@@ -12,13 +12,13 @@ use bc_jobs::policies::fleet::{LostPresenceSession, runs_lost_with_instance};
 use bc_jobs::ports::environment::IdFactory;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
-use chrono::Utc;
 use svc_jobs::ServiceError;
 use svc_jobs::app::environment::{SystemClock, UuidV7Factory};
 use svc_jobs::app::presence::{self, ObservedLoss};
 use svc_jobs::app::write::{self, FleetChange, JobChange};
 use svc_jobs::db::{PgStore, apply};
 
+use support::clock;
 use support::contention::{
     Fixture, a_job_with_one_dispatched_run, a_registered_instance, a_second_live_instance,
     announcing, commit, ids, metadata, one_run, reloaded,
@@ -67,7 +67,7 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
                 events: &first.events,
             },
             &left_metadata,
-            Utc::now(),
+            clock::now(),
         ),
         write::commit_fleet_events(
             &fixture.store,
@@ -79,7 +79,7 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
                 events: &second.events,
             },
             &right_metadata,
-            Utc::now(),
+            clock::now(),
         ),
     );
 
@@ -146,7 +146,7 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
                 events: &first.events,
             },
             &left_metadata,
-            Utc::now(),
+            clock::now(),
         ),
         write::commit_fleet_events(
             &fixture.store,
@@ -158,7 +158,7 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
                 events: &second.events,
             },
             &right_metadata,
-            Utc::now(),
+            clock::now(),
         ),
     );
 
@@ -241,7 +241,7 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
         fleet.id(),
         &recorded(&reported.events),
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the concurrent status change is written");
@@ -367,9 +367,15 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
         observe_presence(Some(&emptied), reconnection).expect("the process announces itself again");
     let mut moved = recorded(&disconnected.events);
     moved.extend(recorded(&reconnected.events));
-    apply::apply_fleet_events(&mut concurrent, fleet.id(), &moved, &metadata(), Utc::now())
-        .await
-        .expect("the concurrent disconnection and reconnection are written");
+    apply::apply_fleet_events(
+        &mut concurrent,
+        fleet.id(),
+        &moved,
+        &metadata(),
+        clock::now(),
+    )
+    .await
+    .expect("the concurrent disconnection and reconnection are written");
     concurrent
         .commit()
         .await
@@ -473,7 +479,7 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
             events: &disconnected.events,
         },
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the loss is recorded");
@@ -496,7 +502,7 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
             events: &reconnected.events,
         },
         &metadata(),
-        Utc::now(),
+        clock::now(),
     )
     .await
     .expect("the replacement session opens");

@@ -2,12 +2,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use br_test_harness::{TestNats, wait_until};
-use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::{infra, wire};
+use super::{clock, infra, wire};
 
 pub struct FakeRunner<'a> {
     nats: &'a TestNats,
@@ -261,7 +260,7 @@ impl<'a> FakeRunner<'a> {
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
                 "instance_key": self.instance_key,
-                "started_at": Utc::now().to_rfc3339(),
+                "started_at": clock::now_rfc3339(),
             }),
         )
         .await;
@@ -287,7 +286,7 @@ impl<'a> FakeRunner<'a> {
                 "job_id": job_id(trigger).to_string(),
                 "index": index,
                 "label": label,
-                "started_at": Utc::now().to_rfc3339(),
+                "started_at": clock::now_rfc3339(),
             }),
         )
         .await;
@@ -299,7 +298,7 @@ impl<'a> FakeRunner<'a> {
             json!({
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
-                "occurred_at": Utc::now().to_rfc3339(),
+                "occurred_at": clock::now_rfc3339(),
             }),
         )
         .await;
@@ -317,7 +316,7 @@ impl<'a> FakeRunner<'a> {
             json!({
                 "run_id": run_id(trigger).to_string(),
                 "job_id": job_id(trigger).to_string(),
-                "occurred_at": Utc::now().to_rfc3339(),
+                "occurred_at": clock::now_rfc3339(),
                 "report": {
                     "kind": kind,
                     "reason_code": reason_code,
@@ -346,7 +345,7 @@ impl<'a> FakeRunner<'a> {
         level: &str,
         message: &str,
     ) {
-        self.log_line_at(trigger, step_index, level, message, Utc::now().to_rfc3339())
+        self.log_line_at(trigger, step_index, level, message, clock::now_rfc3339())
             .await;
     }
 
@@ -453,7 +452,7 @@ fn presence_value(
         "runner_version": version,
         "status": status,
         "capacity": capacity,
-        "observed_at": Utc::now().to_rfc3339(),
+        "observed_at": clock::now_rfc3339(),
     }))
     .expect("presence value serializes")
 }
