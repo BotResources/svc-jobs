@@ -107,6 +107,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -115,6 +119,12 @@ jobs:
       # They still compile under `--all-targets` above, which gates type drift.
       - name: cargo test (unit)
         run: cargo test --workspace --locked --lib --bins
+
+      - name: helm lint chart
+        run: helm lint charts/br-svc-jobs
+
+      - name: helm template dry-run
+        run: helm template ci charts/br-svc-jobs --debug > /dev/null
 
   # ── Supply chain: advisories, licences/bans/sources, unused deps ───
   # Three checks in one job — the fixed per-job overhead is worth more than the
@@ -152,6 +162,36 @@ jobs:
 
       - name: cargo machete (unused deps)
         run: cargo machete
+
+  # ── Published-language stability gate ──────────────────────────────
+  # contract-jobs is the only crate consumers import (as a git dependency on
+  # its `contract-jobs/v*` tag), so it is the only crate semver-gated.
+  # bc-jobs and svc-jobs are internal to this repository and never tagged
+  # per-crate. Before the first contract tag exists there is no baseline and
+  # the job passes vacuously.
+  semver:
+    name: cargo semver-checks (contract)
+    needs: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      - name: semver-check contract-jobs against its latest release
+        run: |
+          baseline="$(git tag -l 'contract-jobs/v*' --sort=-v:refname | head -1)"
+          if [ -z "$baseline" ]; then
+            echo "No contract-jobs release tag yet — nothing to compare against."
+            exit 0
+          fi
+          echo "Baseline: $baseline"
+          cargo semver-checks check-release -p contract-jobs --baseline-rev "$baseline"
 
   # ── Release notes exist for the version each crate declares ────────
   changelog:

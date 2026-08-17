@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # check-changelog.sh — every crate's version must have release notes.
 #
-# Each crate under `crates/` must carry a `## [${version}]` heading in its own
-# CHANGELOG.md matching the version in its Cargo.toml. `0.0.0-dev` maps to
-# `## [Unreleased]`: a scaffolded crate accumulates changes there until the
+# Each crate under `crates/` must carry a plain `## ${version}` heading in its
+# own CHANGELOG.md matching the version in its Cargo.toml — plain, never
+# bracketed: the release pipeline (cd.yml detect-bump) greps the same plain
+# form, and a `## [x.y.z]` heading would ship nothing. `0.0.0-dev` maps to
+# `## Unreleased`: a scaffolded crate accumulates changes there until the
 # cutover to its first real release promotes the heading.
 #
 # It catches the "bumped Cargo.toml without writing release notes" mistake at
@@ -56,11 +58,11 @@ for cargo in crates/*/Cargo.toml; do
     fi
 
     if [[ "${version}" == "0.0.0-dev" ]]; then
-        expected='^## \[Unreleased\]'
-        description='## [Unreleased]'
+        expected='^## Unreleased(\s|$)'
+        description='## Unreleased'
     else
-        expected="^## \[${version}\](\$| )"
-        description="## [${version}]"
+        expected="^## ${version//./\\.}(\$| )"
+        description="## ${version}"
     fi
 
     if grep -qE "${expected}" "$changelog"; then
@@ -75,7 +77,7 @@ FAIL ${crate}: CHANGELOG.md is missing the entry for the current version.
 
 Add a section near the top of ${changelog}:
 
-  ## [${version}]
+  ## ${version}
 
   - <what changed, for whoever reads this in six months>
 EOF

@@ -26,6 +26,7 @@
     "cargo fmt (auto-fix)",
     "cargo clippy + test",
     "supply chain (audit + deny + machete)",
+    "cargo semver-checks (contract)",
     "changelog entry present (per crate)",
     "shellcheck",
     "trufflehog (secret scan)",

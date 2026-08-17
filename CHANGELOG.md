@@ -4,15 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Release headings are plain `## x.y.z` — the release pipeline greps that exact
+form to decide whether a version ships.
 
-## Unreleased
+## 0.1.0 - 2026-08-17
+
+First release — the complete service, verified end to end against real
+PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
 
 ### Added
 
-- svc-jobs 0.1.0: the complete service — `contract-jobs` (published language),
-  `bc-jobs` (pure domain) and `svc-jobs` (edge, adapters, bus, runner transport,
-  dispatch and backstop loops) — verified end to end against real PostgreSQL and
-  real NATS by the twelve registry scenarios.
+- `contract-jobs` 0.1.0 — the published language: integration command/event
+  subjects and typed payloads, the runner-transport wire (trigger, status, log,
+  cancel-bucket and presence shapes, stream and bucket names), and the validated
+  `SubjectSegment` grammar that keeps every rendered subject narrow.
+- `bc-jobs` 0.1.0 — the pure domain: the Job and RunnerType aggregates, their
+  commands, events, affordances and policies, with double-barrier invariants
+  (every rule enforced at write time and re-validated at hydration).
+- `svc-jobs` 0.1.0 — the service binary: PostgreSQL adapters and migrations
+  realising the sealed 0.1 schema, the GraphQL admin edge serving the sealed
+  SDL (platform-administrator only), the integration bus over
+  `br-util-nats-fabric` (four durable command consumers, transactional outbox
+  for the eight published events), the confined runner transport (trigger
+  publication and withdrawal, status and log consumption, desired-state cancel
+  bucket, presence watch), and the supervised dispatch and backstop loops.
+- Release tooling: `scripts/publish.sh` (static-musl cargo-zigbuild build,
+  multi-arch image `ghcr.io/botresources/br-svc-jobs` + Helm chart
+  `charts/br-svc-jobs`, image-first tag-after), the Dockerfile, and the
+  per-crate `cargo-semver-checks` gate on `contract-jobs` in CI.
 
 ### Known limitations of 0.1
 
@@ -34,8 +53,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backstop (which requires no active run) picks it up. This is the non-crash
   twin of the arbitrated pending-run gap; recovery is cancel or manual retry.
 - **`run_logs` partitions run from 2026-01 to 2030-12.** A runner clock beyond
-  that window makes the insert fail; the line is now refused permanently
+  that window makes the insert fail; the line is refused permanently
   (terminated, never redelivered forever), but it is lost.
-
-- Repository bootstrap: governance files (LICENSE, CONTRIBUTING, SECURITY, SUPPORT) ahead of the service scaffold.
-- CI/CD workflows mirroring the sibling services, pre-scaffold-safe: a `scaffold probe` job skips the Rust checks until `Cargo.toml` lands; CD's detect-bump no-ops without a Cargo workspace. Branch protection script (`scripts/setup-branch-protection.sh`) as the declarative required-checks source of truth.

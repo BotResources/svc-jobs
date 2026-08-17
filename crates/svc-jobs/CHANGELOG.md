@@ -7,14 +7,11 @@ the service adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 The version in [`Cargo.toml`](Cargo.toml) is the source of truth. CI gates every
 PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
-have a matching `## [${version}]` heading here. The `0.0.0-dev` placeholder this
-crate ships with is the one exception — it maps to `## [Unreleased]`, which the
-first real release promotes to a numbered heading.
+have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
+to `## Unreleased`).
 
-## [Unreleased]
+## 0.1.0 - 2026-08-17
 
-- Scaffolded by `runkit`: the composition root, the GraphQL edge with a single
-  placeholder query, and the event-store migration. No behaviour yet.
 - The service: migrations realising the sealed 0.1 database schema (including
   the bounded `run_logs` range partitions and the three read views), the
   PostgreSQL adapters behind the `bc-jobs` ports, the GraphQL edge serving the

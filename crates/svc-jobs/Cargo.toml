@@ -1,9 +1,6 @@
 [package]
 name = "svc-jobs"
-# 0.0.0-dev until the first release. `scripts/check-changelog.sh` maps exactly
-# this placeholder to the `## [Unreleased]` heading in CHANGELOG.md; any other
-# version here must have a matching numbered heading or CI fails the PR.
-version = "0.0.0-dev"
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -2,12 +2,13 @@
 
 All notable changes to the published language of svc-jobs are documented
 here. This crate is the inter-BC contract: a breaking change here ripples to
-every consumer, so each version is deliberate.
+every consumer, so each version is deliberate. Release headings are plain
+`## x.y.z` — the release pipeline greps that exact form before tagging.
 
-## [Unreleased]
+## 0.1.0 - 2026-08-17
 
-- Scaffolded from major 0 in the Services registry: the offered subjects
-  and KV prefixes as constants, no payload types yet.
+- The offered subjects and KV key templates as constants, plus typed
+  `CommandCoords`/`EventCoords` constructors for every integration subject.
 - Payload types for the whole wire, transcribed from the sealed offers of 0.1:
   the four integration commands (`CreateJob`, `CancelJob`, `FinishJob`,
   `FailJob`), the eight integration events (`JobQueued`,
