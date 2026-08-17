@@ -97,6 +97,17 @@ struct RunParts {
     cancellations: HashMap<RunId, bc_jobs::domain::run::parts::RunCancellationRequest>,
 }
 
+pub async fn load_map(
+    executor: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<HashMap<Uuid, Job>, PortError> {
+    Ok(load_many(executor, ids)
+        .await?
+        .into_iter()
+        .map(|job| (job.id().as_uuid(), job))
+        .collect())
+}
+
 pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Job>, PortError> {
     if ids.is_empty() {
         return Ok(vec![]);

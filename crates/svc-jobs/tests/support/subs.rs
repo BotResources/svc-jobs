@@ -135,9 +135,9 @@ pub fn fleet_changed(runner_type: &str) -> String {
       cursor
       runnerTypes {{
         runnerType {{
-          typeKey isAvailable busyInstanceCount idleInstanceCount
+          typeKey isAvailable totalCapacity busyInstanceCount idleInstanceCount
           waitingJobCount executingJobCount
-          instances {{ instanceKey version reportedStatus isBusy currentRunIds }}
+          instances {{ instanceKey version reportedStatus capacity isBusy currentRunIds }}
         }}
         {AFFORDANCES}
       }}
@@ -146,9 +146,9 @@ pub fn fleet_changed(runner_type: &str) -> String {
       cursor
       event {{ id kind occurredAt runnerType instanceKey jobId runId }}
       runnerType {{
-        typeKey isAvailable busyInstanceCount idleInstanceCount
+        typeKey isAvailable totalCapacity busyInstanceCount idleInstanceCount
         waitingJobCount executingJobCount
-        instances {{ instanceKey version reportedStatus isBusy currentRunIds }}
+        instances {{ instanceKey version reportedStatus capacity isBusy currentRunIds }}
       }}
       {AFFORDANCES}
     }}

@@ -28,6 +28,18 @@ PostgreSQL and real NATS JetStream by the twelve sealed registry scenarios.
   for the eight published events), the confined runner transport (trigger
   publication and withdrawal, status and log consumption, desired-state cancel
   bucket, presence watch), and the supervised dispatch and backstop loops.
+- A presence entry announces `READY` or `DRAINING`. A `DRAINING` instance stays
+  live and keeps the runs it already carries, but is excluded from its runner
+  type's availability: while every live instance of a type drains, the type
+  reports unavailable and dispatch waits instead of publishing a trigger nobody
+  would take. An unknown status code is refused at ingest — the entry is ignored
+  and logged, never read as `READY`.
+- A presence entry also declares a `capacity` (required, at least 1): how many
+  runs the instance carries at once. It is declarative — dispatch stays
+  pull-based and capacity never gates delivery — and feeds the fleet reads: an
+  instance is busy once its runs reach its declared capacity, and a runner type
+  totals the capacity of its live, non-draining instances. A capacity that is
+  absent, zero or negative is refused at ingest with the entry.
 - Release tooling: `scripts/publish.sh` (static-musl cargo-zigbuild build,
   multi-arch image `ghcr.io/botresources/br-svc-jobs` + Helm chart
   `charts/br-svc-jobs`, image-first tag-after), the Dockerfile, and the

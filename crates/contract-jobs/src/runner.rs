@@ -112,6 +112,52 @@ pub struct CancelRun {
     pub run_id: Uuid,
 }
 
+pub const STATUS_READY: &str = "READY";
+pub const STATUS_DRAINING: &str = "DRAINING";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RunnerStatus {
+    Ready,
+    Draining,
+}
+
+impl RunnerStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => STATUS_READY,
+            Self::Draining => STATUS_DRAINING,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct Capacity(u32);
+
+impl Capacity {
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for Capacity {
+    type Error = &'static str;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value == 0 {
+            return Err("capacity declares how many runs an instance carries; it is at least 1");
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<Capacity> for u32 {
+    fn from(value: Capacity) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Presence {
     #[serde(default = "wire_version")]
@@ -119,5 +165,6 @@ pub struct Presence {
     pub runner_type: String,
     pub instance_key: String,
     pub runner_version: String,
-    pub status: String,
+    pub status: RunnerStatus,
+    pub capacity: Capacity,
 }

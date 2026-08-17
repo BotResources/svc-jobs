@@ -1,4 +1,5 @@
 use crate::domain::fleet::RunnerType;
+use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstance;
 use crate::domain::ids::RunId;
 use crate::domain::job::Job;
@@ -8,6 +9,7 @@ use crate::domain::run::parts::RunnerInstanceReference;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceLoad {
     instance: RunnerInstanceReference,
+    capacity: Capacity,
     current_run_ids: Vec<RunId>,
 }
 
@@ -20,14 +22,19 @@ impl InstanceLoad {
         &self.current_run_ids
     }
 
+    pub fn capacity(&self) -> Capacity {
+        self.capacity
+    }
+
     pub fn is_busy(&self) -> bool {
-        !self.current_run_ids.is_empty()
+        self.capacity.is_saturated_by(self.current_run_ids.len())
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FleetView {
     instances: Vec<InstanceLoad>,
+    total_capacity: u32,
     waiting_job_count: u32,
     executing_job_count: u32,
 }
@@ -43,6 +50,10 @@ impl FleetView {
 
     pub fn idle_instance_count(&self) -> u32 {
         count(self.instances.iter().filter(|load| !load.is_busy()).count())
+    }
+
+    pub fn total_capacity(&self) -> u32 {
+        self.total_capacity
     }
 
     pub fn waiting_job_count(&self) -> u32 {
@@ -63,8 +74,15 @@ pub fn fleet_view(runner_type: &RunnerType, jobs: &[Job]) -> FleetView {
         instances: runner_type
             .instances()
             .iter()
-            .map(|live| load_of(reference(runner_type, live), of_this_type.iter().copied()))
+            .map(|live| {
+                load_of(
+                    reference(runner_type, live),
+                    live.capacity(),
+                    of_this_type.iter().copied(),
+                )
+            })
             .collect(),
+        total_capacity: declared_capacity(runner_type),
         waiting_job_count: count(of_this_type.iter().filter(|job| job.is_waiting()).count()),
         executing_job_count: count(of_this_type.iter().filter(|job| job.is_executing()).count()),
     }
@@ -80,17 +98,32 @@ pub fn unregistered_fleet_view(
         .collect();
     FleetView {
         instances: vec![],
+        total_capacity: 0,
         waiting_job_count: count(of_this_type.iter().filter(|job| job.is_waiting()).count()),
         executing_job_count: count(of_this_type.iter().filter(|job| job.is_executing()).count()),
     }
 }
 
-pub fn instance_load(instance: &RunnerInstanceReference, jobs: &[Job]) -> InstanceLoad {
-    load_of(instance.clone(), jobs.iter())
+pub fn instance_load(
+    instance: &RunnerInstanceReference,
+    capacity: Capacity,
+    jobs: &[Job],
+) -> InstanceLoad {
+    load_of(instance.clone(), capacity, jobs.iter())
+}
+
+fn declared_capacity(runner_type: &RunnerType) -> u32 {
+    runner_type
+        .instances()
+        .iter()
+        .filter(|live| live.accepts_new_work())
+        .map(|live| live.capacity().get())
+        .fold(0u32, u32::saturating_add)
 }
 
 fn load_of<'a>(
     instance: RunnerInstanceReference,
+    capacity: Capacity,
     jobs: impl Iterator<Item = &'a Job>,
 ) -> InstanceLoad {
     let current_run_ids = jobs
@@ -100,6 +133,7 @@ fn load_of<'a>(
         .collect();
     InstanceLoad {
         instance,
+        capacity,
         current_run_ids,
     }
 }

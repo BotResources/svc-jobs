@@ -1,5 +1,7 @@
 mod support;
 
+use std::time::Duration;
+
 use bc_jobs::commands::fleet::{ObserveLoss, ObservePresence, observe_loss, observe_presence};
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
 use bc_jobs::commands::job::dispatch::DispatchRun;
@@ -7,11 +9,11 @@ use bc_jobs::commands::job::run_outcome::RunCompletedFact;
 use bc_jobs::commands::job::run_progress::RunStartedFact;
 use bc_jobs::domain::attempts::MaxAttempts;
 use bc_jobs::domain::fleet::RunnerType;
-use bc_jobs::domain::ids::{JobId, PresenceSessionId, RunId, RunnerTypeId};
+use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::status::ReportedStatus;
+use bc_jobs::domain::ids::{EventId, JobId, PresenceSessionId, RunId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::keys::{
-    InstanceKey, ProducerKey, ReasonCode, ReportedStatus, RunnerTypeKey, RunnerVersion,
-};
+use bc_jobs::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use bc_jobs::domain::policy::ServiceLimits;
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use bc_jobs::event::fleet::FleetEvent;
@@ -23,9 +25,10 @@ use br_test_harness::E2eDatabase;
 use chrono::{TimeDelta, Utc};
 use sqlx::{PgPool, Row};
 use svc_jobs::ServiceError;
-use svc_jobs::app::environment::UuidV7Factory;
+use svc_jobs::app::environment::{SystemClock, UuidV7Factory};
+use svc_jobs::app::presence;
 use svc_jobs::app::write::{self, FleetChange, JobChange};
-use svc_jobs::db::PgStore;
+use svc_jobs::db::{PgStore, apply};
 use uuid::Uuid;
 
 use support::fixture::require_provisioned_infrastructure;
@@ -63,6 +66,27 @@ impl Fixture {
             .get("count")
     }
 
+    async fn await_a_pod_blocked_on_the_fleet_lock(&self) {
+        const PROBES: u32 = 100;
+        for _ in 0..PROBES {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity \
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .expect("the lock-wait probe runs");
+            if waiting > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!(
+            "no backend ever blocked on the runner type row, so the interleaving this scenario \
+             needs never happened and it would prove nothing",
+        );
+    }
+
     async fn shutdown(mut self) {
         self.pool.close().await;
         if let Some(db) = self.db.take() {
@@ -86,6 +110,10 @@ fn metadata() -> EventMetadata {
         Actor::Service(ServiceAccountId::from(svc_jobs::app::SERVICE_ACTOR)),
         Uuid::now_v7(),
     )
+}
+
+fn one_run() -> Capacity {
+    Capacity::new(1).expect("a positive capacity")
 }
 
 fn ids() -> UuidV7Factory {
@@ -243,7 +271,8 @@ async fn a_registered_instance(fixture: &Fixture, runner_type: &str) -> RunnerTy
             instance_key: InstanceKey::new("instance-a").expect("a valid instance key"),
             session_id: PresenceSessionId::new(ids().next()).expect("a v7 session id"),
             version: RunnerVersion::new("1.4.2").expect("a valid version"),
-            reported_status: ReportedStatus::new("idle").expect("a valid status"),
+            reported_status: ReportedStatus::Ready,
+            capacity: one_run(),
         },
     )
     .expect("a first presence registers the type and the instance");
@@ -274,19 +303,20 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
     let runner_type = "reporter";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
     let decided_on = a_registered_instance(&fixture, runner_type).await;
-    let reported = |status: &str| ObservePresence {
+    let reported = |status: ReportedStatus| ObservePresence {
         runner_type_id: decided_on.id(),
         runner_type: key.clone(),
         instance_key: InstanceKey::new("instance-a").expect("a valid instance key"),
         session_id: PresenceSessionId::new(ids().next()).expect("a v7 session id"),
         version: RunnerVersion::new("1.4.2").expect("a valid version"),
-        reported_status: ReportedStatus::new(status).expect("a valid status"),
+        reported_status: status,
+        capacity: one_run(),
     };
 
     // When: the KV watch hands the same status change to both instances at once
-    let first = observe_presence(Some(&decided_on), reported("busy"))
+    let first = observe_presence(Some(&decided_on), reported(ReportedStatus::Draining))
         .expect("the first instance decides the change");
-    let second = observe_presence(Some(&decided_on), reported("busy"))
+    let second = observe_presence(Some(&decided_on), reported(ReportedStatus::Draining))
         .expect("the second instance decides the same change");
     assert!(matches!(
         first.events.as_slice(),
@@ -419,6 +449,154 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
             )
             .await,
         1,
+    );
+    fixture.shutdown().await;
+}
+
+async fn a_second_live_instance(
+    fixture: &Fixture,
+    fleet: &RunnerType,
+    instance_key: &str,
+) -> RunnerType {
+    let connected = observe_presence(
+        Some(fleet),
+        ObservePresence {
+            runner_type_id: fleet.id(),
+            runner_type: fleet.key().clone(),
+            instance_key: InstanceKey::new(instance_key).expect("a valid instance key"),
+            session_id: PresenceSessionId::new(ids().next()).expect("a v7 session id"),
+            version: RunnerVersion::new("1.4.2").expect("a valid version"),
+            reported_status: ReportedStatus::Ready,
+            capacity: one_run(),
+        },
+    )
+    .expect("a new instance of a known type connects");
+    write::commit_fleet_events(
+        &fixture.store,
+        &ids(),
+        FleetChange {
+            runner_type_id: fleet.id(),
+            runner_type: fleet.key(),
+            decided_on: Some(fleet),
+            events: &connected.events,
+        },
+        &metadata(),
+        Utc::now(),
+    )
+    .await
+    .expect("the second instance connects");
+    FleetReader::load(&fixture.store, fleet.key())
+        .await
+        .expect("the fleet loads")
+        .expect("the runner type is live")
+}
+
+#[tokio::test]
+async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_under_it() {
+    // Given: two live instances of one runner type
+    let fixture = Fixture::start().await;
+    let runner_type = "haulier";
+    let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
+    let first = a_registered_instance(&fixture, runner_type).await;
+    let fleet = a_second_live_instance(&fixture, &first, "instance-b").await;
+    let instance_b = InstanceKey::new("instance-b").expect("a valid instance key");
+
+    // Given: another pod holds the runner type, about to report a status change of instance-a
+    let mut concurrent = fixture
+        .pool
+        .begin()
+        .await
+        .expect("the concurrent transaction opens");
+    PgStore::lock_runner_type(&mut concurrent, fleet.id(), &key)
+        .await
+        .expect("the concurrent pod holds the fleet");
+
+    // When: this pod reacts to instance-b's expiry and reaches the write behind that holder
+    let store = fixture.store.clone();
+    let contended_key = key.clone();
+    let contended_instance = instance_b.clone();
+    let losing = tokio::spawn(async move {
+        presence::record_loss(
+            &store,
+            &UuidV7Factory,
+            &SystemClock,
+            &contended_key,
+            &contended_instance,
+            &ReasonCode::new(bc_jobs::commands::fleet::PRESENCE_EXPIRED)
+                .expect("a valid reason code"),
+        )
+        .await
+    });
+    fixture.await_a_pod_blocked_on_the_fleet_lock().await;
+
+    // When: the other pod's unrelated status change lands first, moving the whole fleet
+    let reported = observe_presence(
+        Some(&fleet),
+        ObservePresence {
+            runner_type_id: fleet.id(),
+            runner_type: key.clone(),
+            instance_key: InstanceKey::new("instance-a").expect("a valid instance key"),
+            session_id: PresenceSessionId::new(ids().next()).expect("a v7 session id"),
+            version: RunnerVersion::new("1.4.2").expect("a valid version"),
+            reported_status: ReportedStatus::Draining,
+            capacity: one_run(),
+        },
+    )
+    .expect("the other pod decides the status change");
+    let written: Vec<(EventId, FleetEvent)> = reported
+        .events
+        .iter()
+        .map(|event| {
+            (
+                EventId::new(ids().next()).expect("a v7 event id"),
+                event.clone(),
+            )
+        })
+        .collect();
+    apply::apply_fleet_events(
+        &mut concurrent,
+        fleet.id(),
+        &written,
+        &metadata(),
+        Utc::now(),
+    )
+    .await
+    .expect("the concurrent status change is written");
+    concurrent
+        .commit()
+        .await
+        .expect("the concurrent pod commits");
+
+    // Then: the loss is not dropped — a moved fleet makes it re-decide, never abandon
+    let outcome = losing.await.expect("the loss task finishes");
+    assert!(
+        matches!(outcome, Ok(true)),
+        "a disconnection is delivered once and never replayed, so a fleet that moved under the \
+         decision must be re-read, not treated as somebody else's write: {outcome:?}",
+    );
+    assert_eq!(
+        fixture
+            .count(
+                "SELECT count(*) AS count FROM domain_events WHERE event_type = $1",
+                "InstanceDisconnected",
+            )
+            .await,
+        1,
+        "the re-decided loss is recorded exactly once",
+    );
+    let settled = FleetReader::load(&fixture.store, &key)
+        .await
+        .expect("the fleet loads")
+        .expect("the runner type still has live instances");
+    assert!(
+        settled.instance(&instance_b).is_none(),
+        "the lost instance leaves the live fleet, so it stops electing work it can never run",
+    );
+    assert!(
+        settled
+            .instance(&InstanceKey::new("instance-a").expect("a valid instance key"))
+            .is_some(),
+        "the surviving instance keeps its own status change",
     );
     fixture.shutdown().await;
 }

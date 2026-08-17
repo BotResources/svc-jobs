@@ -116,11 +116,6 @@ validated_string!(RunnerVersion, "runner_version", |field, value| text(
     value,
     TEXT_MAXIMUM
 ));
-validated_string!(ReportedStatus, "reported_status", |field, value| text(
-    field,
-    value,
-    TEXT_MAXIMUM
-));
 validated_string!(StepLabel, "step_label", |field, value| text(
     field,
     value,

@@ -91,24 +91,45 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     );
     let executing =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await;
-    delta::assert_instance(
-        &delta::assert_fleet(&executing, &runner_type, 0, 1, 1, 0),
+    let carrying = delta::assert_fleet(&executing, &runner_type, 0, 1, 1, 0);
+    let saturated = delta::assert_instance(
+        &carrying,
         "instance-lost",
         true,
         &[first_run],
         &announced_version,
     );
+    assert_eq!(
+        (
+            saturated["capacity"].clone(),
+            carrying["totalCapacity"].clone()
+        ),
+        (json!(1), json!(1)),
+        "an instance carrying as many runs as it declared is busy exactly at saturation, and its \
+         declaration is what the type totals: {executing}",
+    );
 
     // When: the instance reports a new self-declared status, then dies without a goodbye
-    lost.announce("BUSY").await;
+    lost.announce(wire::STATUS_DRAINING).await;
     let reported =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_STATUS_REPORTED, LONG)
             .await;
     let rewritten = delta::fleet_projection(&reported, &runner_type);
     assert_eq!(
         rewritten["instances"][0]["reportedStatus"],
-        json!("BUSY"),
+        json!(wire::STATUS_DRAINING),
         "a presence rewrite carries the instance's self-reported status: {reported}",
+    );
+    assert_eq!(
+        rewritten["totalCapacity"],
+        json!(0),
+        "a draining instance declares no room the type can offer, however wide it is: {reported}",
+    );
+    assert_eq!(
+        rewritten["isAvailable"],
+        json!(false),
+        "an instance winding down takes no new work, so its type stops being available while it \
+         is the only one live: {reported}",
     );
     delta::assert_instance(
         &rewritten,

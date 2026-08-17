@@ -38,9 +38,11 @@ impl RunnerType {
 mod tests {
     use super::*;
     use crate::domain::fleet::RunnerTypeState;
-    use crate::domain::fleet::instance::RunnerInstance;
+    use crate::domain::fleet::capacity::Capacity;
+    use crate::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
+    use crate::domain::fleet::status::ReportedStatus;
     use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
-    use crate::domain::keys::{InstanceKey, ReportedStatus, RunnerTypeKey, RunnerVersion};
+    use crate::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
     use crate::fixtures::ts;
     use uuid::Uuid;
 
@@ -54,17 +56,22 @@ mod tests {
         .unwrap()
     }
 
-    fn live() -> RunnerInstance {
-        RunnerInstance::hydrate(
-            InstanceKey::new("pod-7").unwrap(),
-            PresenceSessionId::new(Uuid::now_v7()).unwrap(),
-            RunnerVersion::new("1.4.2").unwrap(),
-            ReportedStatus::new("idle").unwrap(),
-            ts(1),
-            ts(6),
-            0,
-        )
+    fn reporting(key: &str, status: ReportedStatus) -> RunnerInstance {
+        RunnerInstance::hydrate(RunnerInstanceState {
+            key: InstanceKey::new(key).unwrap(),
+            session_id: PresenceSessionId::new(Uuid::now_v7()).unwrap(),
+            version: RunnerVersion::new("1.4.2").unwrap(),
+            reported_status: status,
+            capacity: Capacity::new(1).unwrap(),
+            connected_at: ts(1),
+            last_observed_at: ts(6),
+            status_change_number: 0,
+        })
         .unwrap()
+    }
+
+    fn live() -> RunnerInstance {
+        reporting("pod-7", ReportedStatus::Ready)
     }
 
     #[test]
@@ -101,5 +108,32 @@ mod tests {
         let populated = runner_type(vec![live()]);
         // When/Then: dispatch is available
         assert_eq!(populated.can_dispatch(), Availability::Available);
+    }
+
+    #[test]
+    fn dispatch_waits_while_every_live_instance_is_draining() {
+        // Given: a type whose only instances announced they are winding down
+        let draining = runner_type(vec![
+            reporting("pod-7", ReportedStatus::Draining),
+            reporting("pod-8", ReportedStatus::Draining),
+        ]);
+        // When: the backend answers whether work may go out
+        // Then: it waits, with the same code as an empty fleet — nobody would take the run,
+        // so no trigger is published that would sit unclaimed
+        assert_eq!(
+            draining.affordances().first().unwrap().reason_code(),
+            Some("runner_type_unavailable")
+        );
+    }
+
+    #[test]
+    fn dispatch_reopens_as_soon_as_a_draining_instance_reports_ready_again() {
+        // Given: a drained fleet where one instance came back
+        let recovered = runner_type(vec![
+            reporting("pod-7", ReportedStatus::Draining),
+            reporting("pod-8", ReportedStatus::Ready),
+        ]);
+        // When/Then: one taker is enough for work to flow again
+        assert_eq!(recovered.can_dispatch(), Availability::Available);
     }
 }

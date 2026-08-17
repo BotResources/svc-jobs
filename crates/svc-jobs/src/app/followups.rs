@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
@@ -10,8 +10,29 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::write::JobChange;
-use crate::db::PgStore;
+use crate::db::{PgStore, hydrate};
 use crate::error::ServiceError;
+
+pub struct HeldRows {
+    ids: BTreeSet<Uuid>,
+    children: HashMap<Uuid, Vec<Uuid>>,
+}
+
+impl HeldRows {
+    pub fn ids(&self) -> &BTreeSet<Uuid> {
+        &self.ids
+    }
+
+    fn locked_children_of(&self, job_id: JobId) -> Vec<Uuid> {
+        self.children
+            .get(&job_id.as_uuid())
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|id| self.ids.contains(id))
+            .collect()
+    }
+}
 
 pub fn settles_job(event: &JobEvent) -> bool {
     matches!(
@@ -29,59 +50,59 @@ fn settling(changes: &[JobChange]) -> impl Iterator<Item = &JobChange> {
 pub async fn rows_to_lock(
     tx: &mut PgConnection,
     changes: &[JobChange],
-) -> Result<BTreeSet<Uuid>, ServiceError> {
-    let mut rows: BTreeSet<Uuid> = changes
+) -> Result<HeldRows, ServiceError> {
+    let mut ids: BTreeSet<Uuid> = changes
         .iter()
         .filter(|change| change.before.is_some())
         .map(|change| change.job_id.as_uuid())
         .collect();
+    let mut children: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     for change in settling(changes) {
         if let Some(predecessor) = change
             .before
             .as_ref()
             .and_then(|before| before.predecessor_job_id())
         {
-            rows.insert(predecessor.as_uuid());
+            ids.insert(predecessor.as_uuid());
         }
-        rows.extend(PgStore::child_ids(tx, change.job_id).await?);
+        let born = PgStore::child_ids(tx, change.job_id).await?;
+        ids.extend(born.iter().copied());
+        children.insert(change.job_id.as_uuid(), born);
     }
-    Ok(rows)
+    Ok(HeldRows { ids, children })
 }
 
 pub async fn of_settled_jobs(
     tx: &mut PgConnection,
     changes: &[JobChange],
-    held: &BTreeSet<Uuid>,
+    held: &HeldRows,
 ) -> Result<Vec<JobChange>, ServiceError> {
+    let mut wanted: BTreeSet<Uuid> = BTreeSet::new();
+    for change in settling(changes) {
+        wanted.insert(change.job_id.as_uuid());
+        wanted.extend(held.locked_children_of(change.job_id));
+    }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let wanted: Vec<Uuid> = wanted.into_iter().collect();
+    let settled_state = hydrate::load_map(tx, &wanted).await?;
     let mut followups = Vec::new();
     for change in settling(changes) {
-        let Some(settled) = PgStore::lock_job(tx, change.job_id).await? else {
+        let Some(settled) = settled_state.get(&change.job_id.as_uuid()) else {
             continue;
         };
-        let children = children_of(tx, change.job_id, held).await?;
-        let events = predecessor_affordances_changed(&settled)
+        let children: Vec<Job> = held
+            .locked_children_of(change.job_id)
             .into_iter()
-            .chain(descendant_affordances_changed(&settled, &children));
+            .filter_map(|id| settled_state.get(&id).cloned())
+            .collect();
+        let events = predecessor_affordances_changed(settled)
+            .into_iter()
+            .chain(descendant_affordances_changed(settled, &children));
         for event in events {
             followups.push(JobChange::new(event.job_id(), None, vec![event]));
         }
     }
     Ok(followups)
-}
-
-async fn children_of(
-    tx: &mut PgConnection,
-    job_id: JobId,
-    held: &BTreeSet<Uuid>,
-) -> Result<Vec<Job>, ServiceError> {
-    let mut children = Vec::new();
-    for id in PgStore::child_ids(tx, job_id).await? {
-        if !held.contains(&id) {
-            continue;
-        }
-        if let Some(child) = PgStore::lock_job(tx, JobId::new(id)?).await? {
-            children.push(child);
-        }
-    }
-    Ok(children)
 }

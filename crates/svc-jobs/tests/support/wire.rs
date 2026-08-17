@@ -17,6 +17,9 @@ pub const LOG_BIND: &str = "jobs.log.>";
 pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
 pub const PRESENCE_BUCKET: &str = "JOBS_PRESENCE";
 
+pub const STATUS_READY: &str = "READY";
+pub const STATUS_DRAINING: &str = "DRAINING";
+
 pub const FACT_QUEUED: &str = "queued";
 pub const FACT_CREATION_REJECTED: &str = "creation_rejected";
 pub const FACT_STARTED: &str = "started";

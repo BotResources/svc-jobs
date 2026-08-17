@@ -17,6 +17,13 @@ every consumer, so each version is deliberate. Release headings are plain
   (`Trigger`, `RunStarted`, `PlanDeclared`, `StepStarted`, `RunCompleted`,
   `RunFailed`, `LogLine`, `CancelRun`, `Presence`) with the declared stream and
   bucket names.
+- `Presence.status` is the closed enum `RunnerStatus` (`READY` | `DRAINING`),
+  per the registry offer: `READY` takes new deliveries, `DRAINING` is alive and
+  finishing its current runs while taking none. Any other code fails to parse,
+  so a presence entry can never be read as `READY` by default.
+- `Presence.capacity` is required and at least 1 (`Capacity`): a missing, zero
+  or negative capacity fails to parse, so a presence entry is never read with a
+  defaulted room.
 - Three shapes are supersets of the sealed offer text, each accepting a message
   that follows the offer literally: `CreateJob.producer` names the producing
   bounded context that the domain, the database and the administrator surface

@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::fleet::capacity::Capacity;
+use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
-use crate::domain::keys::{InstanceKey, ReasonCode, ReportedStatus, RunnerTypeKey, RunnerVersion};
+use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use crate::error::JobsError;
 
 pub const RUNNER_TYPE_AGGREGATE_TYPE: &str = "RunnerType";
@@ -21,6 +23,7 @@ pub struct InstanceConnected {
     pub session_id: PresenceSessionId,
     pub version: RunnerVersion,
     pub reported_status: ReportedStatus,
+    pub capacity: Capacity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +34,7 @@ pub struct InstanceStatusReported {
     pub session_id: PresenceSessionId,
     pub version: RunnerVersion,
     pub reported_status: ReportedStatus,
+    pub capacity: Capacity,
     pub change_number: u32,
 }
 

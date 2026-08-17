@@ -17,6 +17,7 @@ pub struct GqlRunnerInstance {
     pub instance_key: String,
     pub version: String,
     pub reported_status: String,
+    pub capacity: i32,
     pub is_busy: bool,
     pub current_run_ids: Vec<Uuid>,
 }
@@ -27,6 +28,7 @@ pub struct GqlRunnerType {
     pub type_key: String,
     pub instances: Vec<GqlRunnerInstance>,
     pub is_available: bool,
+    pub total_capacity: i32,
     pub busy_instance_count: i32,
     pub idle_instance_count: i32,
     pub waiting_job_count: i32,
@@ -91,6 +93,7 @@ fn runner_type_of(
                     reported_status: announced
                         .map(|live| live.reported_status().as_str().to_owned())
                         .unwrap_or_default(),
+                    capacity: count(load.capacity().get()),
                     is_busy: load.is_busy(),
                     current_run_ids: load
                         .current_run_ids()
@@ -101,6 +104,7 @@ fn runner_type_of(
             })
             .collect(),
         is_available: known.is_some_and(RunnerType::is_available),
+        total_capacity: count(projection.total_capacity()),
         busy_instance_count: count(projection.busy_instance_count()),
         idle_instance_count: count(projection.idle_instance_count()),
         waiting_job_count: count(projection.waiting_job_count()),

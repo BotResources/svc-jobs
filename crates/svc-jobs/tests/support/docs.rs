@@ -73,9 +73,9 @@ pub const FLEET: &str = r#"
 query($runnerType: String) {
   jobsFleet(runnerType: $runnerType) {
     runnerType {
-      typeKey isAvailable busyInstanceCount idleInstanceCount
+      typeKey isAvailable totalCapacity busyInstanceCount idleInstanceCount
       waitingJobCount executingJobCount
-      instances { instanceKey version reportedStatus isBusy currentRunIds }
+      instances { instanceKey version reportedStatus capacity isBusy currentRunIds }
     }
     affordances { action allowed reasonCode params }
   }

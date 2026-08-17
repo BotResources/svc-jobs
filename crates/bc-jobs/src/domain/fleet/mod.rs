@@ -1,4 +1,6 @@
+pub mod capacity;
 pub mod instance;
+pub mod status;
 pub mod view;
 
 use chrono::{DateTime, Utc};
@@ -71,32 +73,40 @@ impl RunnerType {
     }
 
     pub fn is_available(&self) -> bool {
-        !self.instances.is_empty()
+        self.instances.iter().any(|live| live.accepts_new_work())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::fleet::capacity::Capacity;
+    use crate::domain::fleet::instance::RunnerInstanceState;
+    use crate::domain::fleet::status::ReportedStatus;
     use crate::domain::ids::PresenceSessionId;
-    use crate::domain::keys::{ReportedStatus, RunnerVersion};
+    use crate::domain::keys::RunnerVersion;
     use uuid::Uuid;
 
     fn at(offset: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_700_000_000 + offset, 0).unwrap()
     }
 
-    fn live(key: &str, connected: i64) -> RunnerInstance {
-        RunnerInstance::hydrate(
-            InstanceKey::new(key).unwrap(),
-            PresenceSessionId::new(Uuid::now_v7()).unwrap(),
-            RunnerVersion::new("1.4.2").unwrap(),
-            ReportedStatus::new("idle").unwrap(),
-            at(connected),
-            at(connected + 5),
-            0,
-        )
+    fn reporting(key: &str, connected: i64, status: ReportedStatus) -> RunnerInstance {
+        RunnerInstance::hydrate(RunnerInstanceState {
+            key: InstanceKey::new(key).unwrap(),
+            session_id: PresenceSessionId::new(Uuid::now_v7()).unwrap(),
+            version: RunnerVersion::new("1.4.2").unwrap(),
+            reported_status: status,
+            capacity: Capacity::new(1).unwrap(),
+            connected_at: at(connected),
+            last_observed_at: at(connected + 5),
+            status_change_number: 0,
+        })
         .unwrap()
+    }
+
+    fn live(key: &str, connected: i64) -> RunnerInstance {
+        reporting(key, connected, ReportedStatus::Ready)
     }
 
     fn state(instances: Vec<RunnerInstance>) -> RunnerTypeState {
@@ -117,6 +127,30 @@ mod tests {
         // Then: availability follows presence, never a stored flag
         assert!(!empty.is_available());
         assert!(populated.is_available());
+    }
+
+    #[test]
+    fn a_type_whose_every_live_instance_is_draining_is_not_available() {
+        // Given: a type whose two live instances are both finishing their current work
+        let draining = RunnerType::hydrate(state(vec![
+            reporting("pod-7", 1, ReportedStatus::Draining),
+            reporting("pod-8", 1, ReportedStatus::Draining),
+        ]))
+        .unwrap();
+        // Then: presence alone is not availability — nobody there would take a new run
+        assert!(!draining.is_available());
+    }
+
+    #[test]
+    fn one_ready_instance_among_draining_ones_keeps_the_type_available() {
+        // Given: a fleet mid-rollout, one instance drained and one already restarted
+        let mixed = RunnerType::hydrate(state(vec![
+            reporting("pod-7", 1, ReportedStatus::Draining),
+            reporting("pod-8", 1, ReportedStatus::Ready),
+        ]))
+        .unwrap();
+        // Then: a single taker is enough — availability is not unanimity
+        assert!(mixed.is_available());
     }
 
     #[test]

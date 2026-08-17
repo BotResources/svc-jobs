@@ -12,6 +12,17 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 - The Job and RunnerType aggregates, their commands, events, affordances and
   policies, with the double-barrier invariants.
+- A runner instance's reported status is the closed `ReportedStatus`
+  (`READY` | `DRAINING`); a runner type is available only while at least one of
+  its live instances is `READY`, so an all-draining type blocks dispatch while
+  the runs its instances already carry keep going untouched.
+- A runner instance declares a `Capacity` (at least 1) alongside its status. An
+  instance is busy once its current runs reach that capacity, and a runner type
+  reports the total capacity of its live, non-draining instances. A capacity
+  change is recorded as the same presence fact as a status change: presence is
+  one self-declared record the runner rewrites whole, so the fleet keeps one
+  fact per rewrite instead of inventing per-field facts the source never
+  distinguishes.
 - `ServiceLimits` and `RetryPolicy` are constructed through a validating `new`
   and expose their figures through accessors: a default budget above its own
   ceiling, a non-positive duration, a zero retry factor, a maximum delay under

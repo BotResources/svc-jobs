@@ -1,8 +1,10 @@
 use async_trait::async_trait;
-use bc_jobs::domain::fleet::instance::RunnerInstance;
+use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
+use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::fleet::{RunnerType, RunnerTypeState};
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
-use bc_jobs::domain::keys::{InstanceKey, ReportedStatus, RunnerTypeKey, RunnerVersion};
+use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
 use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::fleet::FleetReader;
@@ -24,11 +26,13 @@ const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
 
 const INSTANCES_SQL: &str = "SELECT ri.runner_type_id::uuid AS runner_type_id, ri.instance_key, \
      s.id::uuid AS session_id, s.version, s.connected_at, s.last_observed_at, \
-     c.reported_status AS reported_status, c.change_number AS change_number \
+     c.reported_status AS reported_status, c.capacity AS capacity, \
+     c.change_number AS change_number \
      FROM runner_instances ri \
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
      JOIN runner_presence_sessions s ON s.instance_id = ri.id AND s.disconnected_at IS NULL \
-     LEFT JOIN LATERAL (SELECT reported_status, change_number FROM runner_status_changes \
+     LEFT JOIN LATERAL (SELECT reported_status, capacity, change_number \
+        FROM runner_status_changes \
         WHERE session_id = s.id ORDER BY change_number DESC LIMIT 1) c ON true \
      WHERE $1::text IS NULL OR rt.type_key = $1";
 
@@ -112,7 +116,15 @@ impl PgStore {
                 .execute(&mut *tx)
                 .await
                 .map_err(unavailable)?;
-                status_change(tx, fact.session_id, 1, fact.reported_status.as_str(), at).await?;
+                status_change(
+                    tx,
+                    fact.session_id,
+                    1,
+                    fact.reported_status.as_str(),
+                    fact.capacity,
+                    at,
+                )
+                .await?;
             }
             FleetEvent::InstanceStatusReported(fact) => {
                 sqlx::query(
@@ -130,6 +142,7 @@ impl PgStore {
                     fact.session_id,
                     i32::try_from(fact.change_number).unwrap_or(i32::MAX),
                     fact.reported_status.as_str(),
+                    fact.capacity,
                     at,
                 )
                 .await?;
@@ -158,15 +171,17 @@ async fn status_change(
     session: PresenceSessionId,
     change_number: i32,
     status: &str,
+    capacity: Capacity,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     sqlx::query(
         "INSERT INTO runner_status_changes (session_id, change_number, reported_status, \
-         observed_at) VALUES ($1, $2, $3, $4)",
+         capacity, observed_at) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(session.as_uuid())
     .bind(change_number)
     .bind(status)
+    .bind(i32::try_from(capacity.get()).unwrap_or(i32::MAX))
     .bind(at)
     .execute(&mut *tx)
     .await
@@ -191,15 +206,23 @@ async fn load_types(
         let reported = reported.ok_or(bc_jobs::JobsError::CorruptState {
             reason_code: "presence_session_without_status",
         })?;
-        let live = RunnerInstance::hydrate(
-            InstanceKey::new(row.get::<String, _>("instance_key"))?,
-            PresenceSessionId::new(row.get("session_id"))?,
-            RunnerVersion::new(row.get::<String, _>("version"))?,
-            ReportedStatus::new(reported)?,
-            row.get("connected_at"),
-            row.get("last_observed_at"),
-            u32::try_from(row.get::<Option<i32>, _>("change_number").unwrap_or(1)).unwrap_or(1),
-        )?;
+        let declared: Option<i32> = row.get("capacity");
+        let declared = declared.ok_or(bc_jobs::JobsError::CorruptState {
+            reason_code: "presence_session_without_capacity",
+        })?;
+        let live = RunnerInstance::hydrate(RunnerInstanceState {
+            key: InstanceKey::new(row.get::<String, _>("instance_key"))?,
+            session_id: PresenceSessionId::new(row.get("session_id"))?,
+            version: RunnerVersion::new(row.get::<String, _>("version"))?,
+            reported_status: ReportedStatus::new(reported)?,
+            capacity: Capacity::new(u32::try_from(declared).unwrap_or_default())?,
+            connected_at: row.get("connected_at"),
+            last_observed_at: row.get("last_observed_at"),
+            status_change_number: u32::try_from(
+                row.get::<Option<i32>, _>("change_number").unwrap_or(1),
+            )
+            .unwrap_or(1),
+        })?;
         instances
             .entry(row.get("runner_type_id"))
             .or_default()

@@ -1,17 +1,19 @@
 use bc_jobs::commands::fleet::{ObserveLoss, ObservePresence, observe_loss, observe_presence};
 use bc_jobs::commands::job::backstop::ReclaimRun;
+use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::ids::{PresenceSessionId, ResolutionId, RetryScheduleId, RunId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::keys::{
-    InstanceKey, ReasonCode, ReportedStatus, RunnerTypeKey, RunnerVersion,
-};
+use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use bc_jobs::policies::fleet::runs_lost_with_instance;
+use bc_jobs::ports::environment::{Clock, IdFactory};
 use bc_jobs::ports::fleet::FleetReader;
 use contract_jobs::runner as wire;
 
 use super::write::JobChange;
 use super::{Jobs, service_metadata, write};
+use crate::db::PgStore;
 use crate::error::ServiceError;
 
 pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceError> {
@@ -27,7 +29,8 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
         instance_key: InstanceKey::new(&presence.instance_key)?,
         session_id: PresenceSessionId::new(jobs.ids.next())?,
         version: RunnerVersion::new(&presence.runner_version)?,
-        reported_status: ReportedStatus::new(&presence.status)?,
+        reported_status: ReportedStatus::new(presence.status.as_str())?,
+        capacity: Capacity::new(presence.capacity.get())?,
     };
     let result = observe_presence(known.as_ref(), command)?;
     recorded(
@@ -56,6 +59,8 @@ fn recorded(outcome: Result<(), ServiceError>) -> Result<bool, ServiceError> {
     }
 }
 
+const LOSS_DECISION_ATTEMPTS: usize = 5;
+
 pub async fn lost(
     jobs: &Jobs,
     runner_type: &str,
@@ -64,38 +69,71 @@ pub async fn lost(
 ) -> Result<(), ServiceError> {
     let key = RunnerTypeKey::new(runner_type)?;
     let instance_key = InstanceKey::new(instance_key)?;
-    let Some(known) = FleetReader::load(&jobs.store, &key).await? else {
-        return Ok(());
-    };
-    if known.instance(&instance_key).is_none() {
-        return Ok(());
-    }
-    let result = observe_loss(
-        &known,
-        ObserveLoss {
-            instance_key: instance_key.clone(),
-            reason_code: ReasonCode::new(reason_code)?,
-        },
-    )?;
-    let this_pod_recorded_the_loss = recorded(
-        write::commit_fleet_events(
-            &jobs.store,
-            jobs.ids.as_ref(),
-            write::FleetChange {
-                runner_type_id: known.id(),
-                runner_type: &key,
-                decided_on: Some(&known),
-                events: &result.events,
-            },
-            &service_metadata(),
-            jobs.clock.now(),
-        )
-        .await,
-    )?;
+    let reason_code = ReasonCode::new(reason_code)?;
+    let this_pod_recorded_the_loss = record_loss(
+        &jobs.store,
+        jobs.ids.as_ref(),
+        jobs.clock.as_ref(),
+        &key,
+        &instance_key,
+        &reason_code,
+    )
+    .await?;
     if !this_pod_recorded_the_loss {
         return Ok(());
     }
     reclaim_runs(jobs, &key, &instance_key).await
+}
+
+pub async fn record_loss(
+    store: &PgStore,
+    ids: &dyn IdFactory,
+    clock: &dyn Clock,
+    runner_type: &RunnerTypeKey,
+    instance_key: &InstanceKey,
+    reason_code: &ReasonCode,
+) -> Result<bool, ServiceError> {
+    for _ in 0..LOSS_DECISION_ATTEMPTS {
+        let Some(known) = FleetReader::load(store, runner_type).await? else {
+            return Ok(false);
+        };
+        if known.instance(instance_key).is_none() {
+            return Ok(false);
+        }
+        let result = observe_loss(
+            &known,
+            ObserveLoss {
+                instance_key: instance_key.clone(),
+                reason_code: reason_code.clone(),
+            },
+        )?;
+        let written = recorded(
+            write::commit_fleet_events(
+                store,
+                ids,
+                write::FleetChange {
+                    runner_type_id: known.id(),
+                    runner_type,
+                    decided_on: Some(&known),
+                    events: &result.events,
+                },
+                &service_metadata(),
+                clock.now(),
+            )
+            .await,
+        )?;
+        if written {
+            return Ok(true);
+        }
+    }
+    tracing::error!(
+        runner_type = %runner_type.as_str(),
+        instance_key = %instance_key.as_str(),
+        attempts = LOSS_DECISION_ATTEMPTS,
+        "an instance loss found the fleet moving under every attempt; its presence session stays \
+         open and its runs wait for the backstop instead of being reclaimed"
+    );
+    Err(ServiceError::Contended)
 }
 
 async fn reclaim_runs(

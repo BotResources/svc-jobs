@@ -39,10 +39,9 @@ async fn dispatch_one(
     job: &Job,
     runner_type: Option<&RunnerType>,
 ) -> Result<(), ServiceError> {
-    let Some(runner_type) = runner_type else {
+    if !runner_type.is_some_and(RunnerType::is_available) {
         return Ok(());
-    };
-    runner_type.guard_dispatch()?;
+    }
     let result = job.dispatch_run(
         DispatchRun {
             run_id: RunId::new(jobs.ids.next())?,

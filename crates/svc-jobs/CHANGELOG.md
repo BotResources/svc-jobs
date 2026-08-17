@@ -21,6 +21,18 @@ to `## Unreleased`).
   for the eight published events), the confined runner transport (trigger
   publication and withdrawal, status and log consumption, the desired-state
   cancel bucket, the presence watch), and the dispatch and backstop loops.
+- A presence entry announces `READY` or `DRAINING`. A `DRAINING` instance stays
+  live and keeps the runs it already carries, but is excluded from its runner
+  type's availability: while every live instance of a type drains, the type
+  reports unavailable and dispatch waits instead of publishing a trigger nobody
+  would take. An unknown status code is refused at ingest — the entry is ignored
+  and logged, never read as `READY`.
+- A presence entry also declares a `capacity` (required, at least 1): how many
+  runs the instance carries at once. It is declarative — dispatch stays
+  pull-based and capacity never gates delivery — and feeds the fleet reads: an
+  instance is busy once its runs reach its declared capacity, and a runner type
+  totals the capacity of its live, non-draining instances. A capacity that is
+  absent, zero or negative is refused at ingest with the entry.
 - Every knob is configuration, validated once at boot. The declared
   environment: `PORT`, `DATABASE_URL`, `DATABASE_URL_OWNER`, `NATS_URL`,
   `NATS_USER`, `NATS_PASSWORD`, `JOBS_APP_PASSWORD`; the domain and timing

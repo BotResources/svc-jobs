@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::ids::{EventId, JobId, RunnerTypeId};
@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::app::{fingerprint, followups, integration};
-use crate::db::{PgStore, apply};
+use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
 pub struct JobChange {
@@ -63,12 +63,7 @@ pub async fn commit_job_changes(
     }
     let mut tx = store.begin().await?;
     let held = followups::rows_to_lock(&mut tx, &changes).await?;
-    let mut locked: HashMap<Uuid, Job> = HashMap::new();
-    for row in &held {
-        if let Some(job) = PgStore::lock_job(&mut tx, JobId::new(*row)?).await? {
-            locked.insert(*row, job);
-        }
-    }
+    let locked = lock_in_ascending_order(&mut tx, held.ids()).await?;
     for change in changes.iter().filter(|change| change.before.is_some()) {
         guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
     }
@@ -80,6 +75,19 @@ pub async fn commit_job_changes(
     }
     tx.commit().await?;
     Ok(())
+}
+
+async fn lock_in_ascending_order(
+    tx: &mut sqlx::PgConnection,
+    rows: &BTreeSet<Uuid>,
+) -> Result<HashMap<Uuid, Job>, ServiceError> {
+    let mut held = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let Some(locked) = PgStore::lock_job_row(&mut *tx, JobId::new(*row)?).await? {
+            held.push(locked);
+        }
+    }
+    Ok(hydrate::load_map(tx, &held).await?)
 }
 
 async fn apply_change(

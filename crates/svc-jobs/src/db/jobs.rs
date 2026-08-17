@@ -40,17 +40,15 @@ impl PgStore {
         self.pool().begin().await.map_err(unavailable)
     }
 
-    pub async fn lock_job(tx: &mut PgConnection, job_id: JobId) -> Result<Option<Job>, PortError> {
-        let locked: Option<Uuid> =
-            sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE id = $1 FOR UPDATE")
-                .bind(job_id.as_uuid())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-        match locked {
-            None => Ok(None),
-            Some(id) => Ok(load_many(&mut *tx, &[id]).await?.pop()),
-        }
+    pub async fn lock_job_row(
+        tx: &mut PgConnection,
+        job_id: JobId,
+    ) -> Result<Option<Uuid>, PortError> {
+        sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE id = $1 FOR UPDATE")
+            .bind(job_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)
     }
 
     pub async fn child_ids(tx: &mut PgConnection, job_id: JobId) -> Result<Vec<Uuid>, PortError> {

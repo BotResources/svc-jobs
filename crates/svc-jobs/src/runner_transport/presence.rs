@@ -27,7 +27,7 @@ pub async fn watch(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), Serv
             }
         };
         let outcome = match entry.operation {
-            Operation::Put => observed(&jobs, &entry.value).await,
+            Operation::Put => observed(&jobs, &entry.key, &entry.value).await,
             Operation::Delete => lost(&jobs, &entry.key, GRACEFUL_SHUTDOWN).await,
             Operation::Purge => lost(&jobs, &entry.key, PRESENCE_EXPIRED).await,
         };
@@ -42,8 +42,19 @@ pub async fn watch(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), Serv
     Ok(())
 }
 
-async fn observed(jobs: &Jobs, value: &[u8]) -> Result<(), ServiceError> {
-    let announced: wire::Presence = serde_json::from_slice(value)?;
+async fn observed(jobs: &Jobs, key: &str, value: &[u8]) -> Result<(), ServiceError> {
+    let announced: wire::Presence = match serde_json::from_slice(value) {
+        Ok(announced) => announced,
+        Err(error) => {
+            tracing::warn!(
+                key = %key,
+                error = %error,
+                "a presence entry this service cannot read is ignored; an unknown status code is \
+                 never taken for READY"
+            );
+            return Ok(());
+        }
+    };
     presence::observed(jobs, &announced).await
 }
 

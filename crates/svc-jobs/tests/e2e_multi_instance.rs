@@ -22,7 +22,8 @@ async fn two_jobs_instances_dispatch_a_waiting_job_exactly_once() {
     let runner_type = wire::unique_runner_type("shared");
     let idle_type = wire::unique_runner_type("unrelated");
     let producer = Producer::new(fixture.fabric(), "projects");
-    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    let mut instance =
+        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(2);
 
     let declaration = JobDeclaration::new(&runner_type).with_max_attempts(2);
     let job_id = declaration.job_id;
@@ -149,14 +150,39 @@ async fn two_jobs_instances_dispatch_a_waiting_job_exactly_once() {
     for fleet_watch in fleet_watches.iter_mut() {
         let executing =
             stream::await_fleet_event(fleet_watch, wire::KIND_JOB_BEGAN_EXECUTING, LONG).await;
-        delta::assert_instance(
-            &delta::assert_fleet(&executing, &runner_type, 0, 1, 1, 0),
-            "instance-a",
-            true,
-            &[run],
-            &instance.version,
+        let projection = delta::assert_fleet(&executing, &runner_type, 0, 1, 0, 1);
+        let live =
+            delta::assert_instance(&projection, "instance-a", false, &[run], &instance.version);
+        assert_eq!(
+            live["capacity"],
+            json!(2),
+            "the fleet shows the room the instance declared, not a guess: {executing}",
+        );
+        assert_eq!(
+            projection["totalCapacity"],
+            json!(2),
+            "the type totals the room its live, non-draining instances declared: {executing}",
         );
     }
+    // When: the instance narrows the room it declares, mid-session
+    instance.announce_capacity(1).await;
+    for fleet_watch in fleet_watches.iter_mut() {
+        let redeclared =
+            stream::await_fleet_event(fleet_watch, wire::KIND_INSTANCE_STATUS_REPORTED, LONG).await;
+        let projection = delta::assert_fleet(&redeclared, &runner_type, 0, 1, 1, 0);
+        let live =
+            delta::assert_instance(&projection, "instance-a", true, &[run], &instance.version);
+        assert_eq!(
+            (
+                live["capacity"].clone(),
+                projection["totalCapacity"].clone()
+            ),
+            (json!(1), json!(1)),
+            "a capacity declared anew mid-session is taken like any presence change, and the one \
+             run it already carries now saturates it: {redeclared}",
+        );
+    }
+
     events
         .expect_exactly(wire::FACT_STARTED, job_id, 1, QUIET)
         .await;

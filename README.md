@@ -93,6 +93,34 @@ Runner-type and instance-key segments are validated by one shared alphabet
 (`contract-jobs::segment::SubjectSegment`), so no input can widen a rendered
 subject into a wildcard.
 
+A presence entry declares two things about the instance that wrote it: a
+`status` and a `capacity`.
+
+`status` is a closed set of two codes:
+
+| Code | Meaning |
+|---|---|
+| `READY` | Alive and taking new deliveries; counts towards the runner type's availability. |
+| `DRAINING` | Alive, finishing the runs it already holds, taking no new deliveries; does **not** count towards availability. |
+
+Draining is a status change, never a disconnection: the instance keeps its
+presence session and its running runs are not reclaimed. When every live
+instance of a type is `DRAINING`, the type reports `isAvailable: false` and
+dispatch waits — no trigger is published that nobody would take. Any other
+status code is refused at ingest: the presence entry is ignored and logged,
+never read as `READY`.
+
+`capacity` is the number of runs the instance carries at once — required, at
+least 1, refreshed with every heartbeat and free to change over a session (a
+rewrite with a different capacity is an ordinary presence change, exactly like a
+status change). It is **declarative only**: dispatch stays pull-based and
+capacity never gates trigger delivery. It feeds what the fleet reads: an
+instance is busy once it carries as many runs as it declared
+(`JobsRunnerInstance.capacity`), and a runner type totals the capacity of its
+live, non-draining instances (`JobsRunnerType.totalCapacity`). A missing, zero
+or negative capacity is refused at ingest like an unknown status — the entry is
+ignored and logged, never defaulted.
+
 ## GraphQL surface — platform administrators only
 
 The entire user-facing surface is restricted to platform administrators: a
@@ -161,6 +189,7 @@ failing job by job.
 | `JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS` | `30` | Supervised-task restart backoff ceiling. |
 | `JOBS_TASK_RESTART_BUDGET` | `10` | Restarts before a task leaves the pod NOT READY for an operator. |
 | `JOBS_TASK_STABILITY_SECONDS` | `60` | Uptime after which a task's restart budget resets. |
+| `JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS` | `180` | Margin below which boot logs the remaining `run_logs` partition horizon as an `error!`. |
 
 ## Probes & operations
 

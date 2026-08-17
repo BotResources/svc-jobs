@@ -15,6 +15,7 @@ pub struct FakeRunner<'a> {
     pub instance_key: String,
     pub version: String,
     status: Arc<Mutex<String>>,
+    capacity: Arc<Mutex<u32>>,
     heartbeat: Option<JoinHandle<()>>,
     cursor: u64,
 }
@@ -26,19 +27,34 @@ impl<'a> FakeRunner<'a> {
             runner_type: runner_type.to_string(),
             instance_key: instance_key.to_string(),
             version: "0.1.0".to_string(),
-            status: Arc::new(Mutex::new("IDLE".to_string())),
+            status: Arc::new(Mutex::new(wire::STATUS_READY.to_string())),
+            capacity: Arc::new(Mutex::new(1)),
             heartbeat: None,
             cursor: 1,
         }
     }
 
+    pub fn declaring_capacity(self, capacity: u32) -> Self {
+        self.set_capacity(capacity);
+        self
+    }
+
+    pub async fn announce_capacity(&self, capacity: u32) {
+        self.set_capacity(capacity);
+        self.rewrite_presence().await;
+    }
+
     pub async fn connect(&mut self) {
-        self.announce("IDLE").await;
+        self.announce(wire::STATUS_READY).await;
         self.start_refreshing().await;
     }
 
     pub async fn announce(&self, status: &str) {
         self.set_status(status);
+        self.rewrite_presence().await;
+    }
+
+    async fn rewrite_presence(&self) {
         let store = self
             .nats
             .jetstream()
@@ -73,6 +89,7 @@ impl<'a> FakeRunner<'a> {
         self.stop_refreshing();
         let key = self.presence_key();
         let status = Arc::clone(&self.status);
+        let capacity = Arc::clone(&self.capacity);
         let runner_type = self.runner_type.clone();
         let instance_key = self.instance_key.clone();
         let version = self.version.clone();
@@ -86,7 +103,13 @@ impl<'a> FakeRunner<'a> {
             loop {
                 tokio::time::sleep(infra::PRESENCE_REFRESH).await;
                 let current = current_status(&status);
-                let value = presence_value(&runner_type, &instance_key, &version, &current);
+                let value = presence_value(
+                    &runner_type,
+                    &instance_key,
+                    &version,
+                    &current,
+                    current_capacity(&capacity),
+                );
                 if store.put(key.clone(), value.into()).await.is_err() {
                     return;
                 }
@@ -107,6 +130,13 @@ impl<'a> FakeRunner<'a> {
             .expect("the announced status is writable") = status.to_string();
     }
 
+    fn set_capacity(&self, capacity: u32) {
+        *self
+            .capacity
+            .lock()
+            .expect("the declared capacity is writable") = capacity;
+    }
+
     fn presence_key(&self) -> String {
         wire::presence_key(&self.runner_type, &self.instance_key)
     }
@@ -117,6 +147,7 @@ impl<'a> FakeRunner<'a> {
             &self.instance_key,
             &self.version,
             &current_status(&self.status),
+            current_capacity(&self.capacity),
         )
     }
 
@@ -372,12 +403,23 @@ fn current_status(status: &Arc<Mutex<String>>) -> String {
         .clone()
 }
 
-fn presence_value(runner_type: &str, instance_key: &str, version: &str, status: &str) -> Vec<u8> {
+fn current_capacity(capacity: &Arc<Mutex<u32>>) -> u32 {
+    *capacity.lock().expect("the declared capacity is readable")
+}
+
+fn presence_value(
+    runner_type: &str,
+    instance_key: &str,
+    version: &str,
+    status: &str,
+    capacity: u32,
+) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "runner_type": runner_type,
         "instance_key": instance_key,
         "runner_version": version,
         "status": status,
+        "capacity": capacity,
         "observed_at": Utc::now().to_rfc3339(),
     }))
     .expect("presence value serializes")

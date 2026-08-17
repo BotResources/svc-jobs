@@ -137,3 +137,6 @@ fn report_death(
         Err(join) => tracing::error!(task = name, error = %join, "a background task panicked"),
     }
 }
+
+#[cfg(test)]
+mod tests;

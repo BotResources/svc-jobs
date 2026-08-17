@@ -123,10 +123,12 @@ CREATE TABLE runner_status_changes (
     session_id uuid_v7 NOT NULL REFERENCES runner_presence_sessions(id),
     change_number integer NOT NULL,
     reported_status text NOT NULL,
+    capacity integer NOT NULL,
     observed_at timestamptz NOT NULL,
     PRIMARY KEY (session_id, change_number),
     CHECK (change_number > 0),
-    CHECK (reported_status <> '')
+    CHECK (reported_status <> ''),
+    CHECK (capacity >= 1)
 );
 
 CREATE TABLE jobs (
