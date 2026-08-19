@@ -71,10 +71,13 @@ spec:
                   name: {{ .Values.postgres.existingSecret | quote }}
                   key: {{ .Values.postgres.keys.databaseUrlOwner | quote }}
             {{- if .Values.postgres.keys.appPassword }}
-            # When set, svc-jobs creates/updates the jobs_app role at boot with
-            # this password and grants it after migrating. Clear the key when
-            # the role is provisioned out of band, so a Secret without it never
-            # fails the pod with CreateContainerConfigError.
+            # When set, svc-jobs provisions the jobs_app role at boot with this
+            # password ONLY when the role does not already accept it (a probe
+            # guards the PG16-denied ALTER ROLE on re-boot; rotation belongs to
+            # the CNPG roles reconciler, not the service), and grants it after
+            # migrating. Clear the key when the role is provisioned out of
+            # band, so a Secret without it never fails the pod with
+            # CreateContainerConfigError.
             - name: JOBS_APP_PASSWORD
               valueFrom:
                 secretKeyRef:

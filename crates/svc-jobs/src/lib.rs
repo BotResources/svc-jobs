@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod edge;
 pub mod error;
+mod pg;
 pub mod runner_transport;
 pub mod runtime;
 pub mod stream;
@@ -127,12 +128,42 @@ async fn boot(
     Ok(())
 }
 
+/// Two PostgreSQL roles, one boot, in this exact order.
+///
+/// `jobs_owner` is the GitOps-declared migration role reached through
+/// `init_migration_pool` (`DATABASE_URL_OWNER`). It owns the schema, it is by
+/// definition an RLS-bypassing DB-management agent, and its pool is closed
+/// before anything serves a request. `jobs_app` (`DATABASE_URL`) is the
+/// least-privilege role every query afterwards runs as.
+///
+/// Provisioning happens here rather than split between a migration and the
+/// cluster: `ensure_app_role` completes before the migrations, `grant_app_access`
+/// after them, so the role exists at the moment it is granted. Two asynchronous
+/// actors have no such ordering, and the failure mode is a silently skipped
+/// grant that never re-runs.
+///
+/// Provisioning is guarded by an observation rather than assumed idempotent.
+/// `ensure_app_role` guards its CREATE with `IF NOT EXISTS` but then runs
+/// `ALTER ROLE … PASSWORD` unconditionally, and under PostgreSQL 16 that ALTER
+/// is denied on the second boot: the implicit membership `jobs_owner` acquired
+/// by creating `jobs_app` is revoked by the CNPG roles reconciler (the owner
+/// declares no `inRoles`), and CREATEROLE alone no longer confers authority
+/// over a role the grantee holds no ADMIN OPTION on. So we ask the catalog the
+/// only question that matters — does the role already accept the configured
+/// password? — and touch nothing when the answer is yes.
 async fn migrate(settings: &Settings) -> Result<(), ServiceError> {
     let migration_pool = init_migration_pool().await.map_err(infra)?;
     if let Some(password) = settings.app_password.as_deref() {
-        ensure_app_role(&migration_pool, APP_ROLE, password)
-            .await
-            .map_err(infra)?;
+        if pg::role_password_already_works(&settings.database_url, APP_ROLE, password).await? {
+            tracing::info!(
+                role = APP_ROLE,
+                "runtime role already accepts the configured password — skipping ensure_app_role"
+            );
+        } else {
+            ensure_app_role(&migration_pool, APP_ROLE, password)
+                .await
+                .map_err(infra)?;
+        }
     }
     sqlx::migrate!("./migrations")
         .run(&migration_pool)
