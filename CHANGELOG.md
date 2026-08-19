@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## 0.1.1 - 2026-08-19
+
+### Fixed
+
+- **The service survives a restart.** `svc-jobs` provisioned its runtime role
+  unconditionally at boot: `ensure_app_role` guards its CREATE with `IF NOT
+  EXISTS` but then runs `ALTER ROLE jobs_app PASSWORD …` every time. Under
+  PostgreSQL 16 (`createrole_self_grant=''`) that ALTER is denied on every boot
+  after the first — the implicit membership `jobs_owner` gains by creating
+  `jobs_app` is revoked by the CNPG roles reconciler, and CREATEROLE alone no
+  longer confers authority over a role the grantee holds no ADMIN OPTION on.
+  The first boot succeeded and every later one failed
+  `permission denied to alter role`, exiting the pod into CrashLoopBackOff
+  behind a stuck rollout. Boot now probes whether `jobs_app` already accepts the
+  configured password and skips provisioning when it does; a probe failure that
+  is not credentials-class (`28P01` / `28000` / `3D000`) fails the boot loudly
+  rather than falling through to the denied ALTER. This is the guard the
+  sibling services already carry, ported unchanged.
+
 ## 0.1.0 - 2026-08-17
 
 First release — the complete service, verified end to end against real
