@@ -10,6 +10,19 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.1.1 - 2026-08-19
+
+- **The service survives a restart.** Boot no longer runs `ensure_app_role`
+  unconditionally: a probe (`role_password_already_works`, the same guard
+  svc-identity, svc-projects, svc-services, svc-tasks, svc-timesheet and
+  svc-website carry) first asks whether `jobs_app` already accepts the
+  configured password, and provisioning is skipped when it does. Under
+  PostgreSQL 16/CNPG the unconditional `ALTER ROLE jobs_app PASSWORD …` was
+  denied on every boot after the first (`permission denied to alter role`),
+  crashlooping the pod. Non-credentials probe failures fail the boot loudly
+  instead of falling through to the denied ALTER. Fixes contract breach
+  `01a019f6-cdd1-783f-9aff-6700fcc02ed5` (registry patch 0.1.1).
+
 ## 0.1.0 - 2026-08-17
 
 - The service: migrations realising the sealed 0.1 database schema (including
