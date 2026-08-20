@@ -5,6 +5,7 @@ use bc_jobs::domain::config::RunnerConfig;
 use bc_jobs::domain::ids::{JobId, SourceEntityId};
 use bc_jobs::domain::keys::{DisplayName, ProducerKey, RunnerTypeKey};
 use bc_jobs::domain::references::KnownUser;
+use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{EventMetadata, UserId};
 use contract_jobs::command::CreateJob as Wire;
@@ -33,6 +34,11 @@ async fn decide(
     command: CreateJob,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
+    if let Some(runner_type) = FleetReader::load(&jobs.store, &command.runner_type).await?
+        && let Err(refusal) = runner_type.guard_accept_job()
+    {
+        return reject(jobs, wire, &refusal, metadata).await;
+    }
     let existing = JobReader::load(&jobs.store, command.id).await?;
     let parent = match command.parent_job_id {
         Some(parent) => JobReader::load(&jobs.store, parent).await?,
@@ -55,9 +61,10 @@ async fn decide(
             let change = write::JobChange::new(command.id, None, result.events)
                 .claiming_source(command.source());
             match jobs.commit(vec![change], metadata).await {
-                Err(ServiceError::Domain(refusal @ JobsError::SourceAlreadyActive { .. })) => {
-                    reject(jobs, wire, &refusal, metadata).await
-                }
+                Err(ServiceError::Domain(
+                    refusal @ (JobsError::SourceAlreadyActive { .. }
+                    | JobsError::RunnerTypeRetired { .. }),
+                )) => reject(jobs, wire, &refusal, metadata).await,
                 settled => settled,
             }
         }

@@ -16,15 +16,25 @@ pub async fn write(
     match event {
         FleetEvent::RunnerTypeRegistered(fact) => {
             sqlx::query(
-                "INSERT INTO runner_types (id, type_key) VALUES ($1, $2) \
-                 ON CONFLICT (type_key) DO NOTHING",
+                "INSERT INTO registered_runner_types (runner_type_id, lifecycle, registered_at) \
+                 VALUES ($1, 'ACTIVE', $2) ON CONFLICT (runner_type_id) DO NOTHING",
             )
             .bind(fact.runner_type_id.as_uuid())
-            .bind(fact.runner_type.as_str())
+            .bind(at)
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
         }
+        FleetEvent::RunnerTypeDeprecated(fact) => {
+            set_lifecycle(tx, fact.runner_type_id, "DEPRECATED").await?;
+        }
+        FleetEvent::RunnerTypeReactivated(fact) => {
+            set_lifecycle(tx, fact.runner_type_id, "ACTIVE").await?;
+        }
+        FleetEvent::RunnerTypeRetired(fact) => {
+            set_lifecycle(tx, fact.runner_type_id, "RETIRED").await?;
+        }
+        FleetEvent::RunnerTypeAffordancesChanged(_) => {}
         FleetEvent::InstanceConnected(fact) => {
             let instance =
                 refs::runner_instance_id(tx, fact.runner_type_id.as_uuid(), &fact.instance_key)
@@ -87,6 +97,20 @@ pub async fn write(
             .map_err(unavailable)?;
         }
     }
+    Ok(())
+}
+
+async fn set_lifecycle(
+    tx: &mut PgConnection,
+    runner_type_id: bc_jobs::domain::ids::RunnerTypeId,
+    lifecycle: &str,
+) -> Result<(), PortError> {
+    sqlx::query("UPDATE registered_runner_types SET lifecycle = $2 WHERE runner_type_id = $1")
+        .bind(runner_type_id.as_uuid())
+        .bind(lifecycle)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
     Ok(())
 }
 

@@ -12,6 +12,9 @@ pub fn of_service(error: ServiceError) -> EdgeError {
     match error {
         ServiceError::Domain(domain) => of_domain(&domain),
         ServiceError::JobNotFound => EdgeError::not_found().with_reason("job_not_found"),
+        ServiceError::RunnerTypeNotFound => {
+            EdgeError::not_found().with_reason("runner_type_not_found")
+        }
         ServiceError::Contended => EdgeError::conflict().with_reason("concurrent_modification"),
         ServiceError::Infra(detail) => EdgeError::internal(detail),
         other => EdgeError::internal(other.to_string()),
@@ -68,6 +71,12 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunNotStarted { .. }
         | JobsError::RunWithinMaxDuration { .. }
         | JobsError::RunnerTypeUnavailable { .. }
+        | JobsError::RunnerTypeRetired { .. }
+        | JobsError::RunnerTypeNotActive { .. }
+        | JobsError::RunnerTypeNotDeprecated { .. }
+        | JobsError::RunnerTypeHasNonTerminalJobs { .. }
+        | JobsError::RunnerTypeHasRecentTerminalRuns { .. }
+        | JobsError::RunnerTypeHasNoLiveInstances
         | JobsError::RunnerTypeMismatch { .. }
         | JobsError::InstanceNotLive { .. }
         | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),

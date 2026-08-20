@@ -50,6 +50,9 @@ pub const ACTION_CANCEL: &str = "cancel";
 pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
 pub const ACTION_DELETE: &str = "delete";
 pub const ACTION_DISPATCH: &str = "dispatch";
+pub const ACTION_DEPRECATE: &str = "deprecate";
+pub const ACTION_REACTIVATE: &str = "reactivate";
+pub const ACTION_RETIRE: &str = "retire";
 
 pub const EVT_QUEUED: &str = "JobsJobQueuedEvent";
 pub const EVT_RUN_DISPATCHED: &str = "JobsRunDispatchedEvent";
@@ -68,6 +71,10 @@ pub const EVT_JOB_DELETED: &str = "JobsJobDeletedEvent";
 pub const EVT_AFFORDANCES_CHANGED: &str = "JobsJobAffordancesChangedEvent";
 
 pub const KIND_TYPE_REGISTERED: &str = "RUNNER_TYPE_REGISTERED";
+pub const KIND_TYPE_DEPRECATED: &str = "RUNNER_TYPE_DEPRECATED";
+pub const KIND_TYPE_REACTIVATED: &str = "RUNNER_TYPE_REACTIVATED";
+pub const KIND_TYPE_RETIRED: &str = "RUNNER_TYPE_RETIRED";
+pub const KIND_TYPE_AFFORDANCES_CHANGED: &str = "RUNNER_TYPE_AFFORDANCES_CHANGED";
 pub const KIND_INSTANCE_CONNECTED: &str = "INSTANCE_CONNECTED";
 pub const KIND_INSTANCE_DISCONNECTED: &str = "INSTANCE_DISCONNECTED";
 pub const KIND_INSTANCE_STATUS_REPORTED: &str = "INSTANCE_STATUS_REPORTED";
@@ -79,6 +86,12 @@ pub const KIND_JOB_STOPPED_EXECUTING: &str = "JOB_STOPPED_EXECUTING";
 pub const REASON_INSTANCE_LOST: &str = "instance_lost";
 pub const REASON_RUNNER_TYPE_UNAVAILABLE: &str = "runner_type_unavailable";
 pub const REASON_ID_REUSE: &str = "id_reuse";
+
+pub const RUNNER_TYPE_CATALOG_PREFIX: &str = "jobs.runner_type.";
+
+pub fn runner_type_catalog_key(runner_type: &str) -> String {
+    format!("{RUNNER_TYPE_CATALOG_PREFIX}{runner_type}")
+}
 
 pub fn trigger_subject(runner_type: &str) -> String {
     format!("jobs.trigger.{runner_type}")

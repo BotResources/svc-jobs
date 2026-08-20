@@ -1,14 +1,11 @@
 use async_graphql::SimpleObject;
-use bc_jobs::domain::actions::fleet::unregistered_affordances;
 use bc_jobs::domain::fleet::RunnerType;
-use bc_jobs::domain::fleet::view::{FleetView, fleet_view, unregistered_fleet_view};
-use bc_jobs::domain::job::Job;
-use bc_jobs::domain::keys::RunnerTypeKey;
+use bc_jobs::domain::fleet::view::FleetView;
 use br_util_graphql::Affordance;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use super::enums::GqlFleetEventKind;
+use super::enums::{GqlFleetEventKind, GqlRunnerTypeLifecycle};
 use crate::edge::project::affordance_list;
 
 #[derive(SimpleObject, Clone)]
@@ -26,6 +23,7 @@ pub struct GqlRunnerInstance {
 #[graphql(name = "JobsRunnerType")]
 pub struct GqlRunnerType {
     pub type_key: String,
+    pub lifecycle: GqlRunnerTypeLifecycle,
     pub instances: Vec<GqlRunnerInstance>,
     pub is_available: bool,
     pub total_capacity: i32,
@@ -58,33 +56,23 @@ fn count(value: u32) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
 
-pub fn view_of(key: &RunnerTypeKey, known: Option<&RunnerType>, jobs: &[Job]) -> GqlRunnerTypeView {
-    let projection = match known {
-        Some(runner_type) => fleet_view(runner_type, jobs),
-        None => unregistered_fleet_view(key, jobs),
-    };
+pub fn view_of(view: crate::app::fleet::RunnerTypeView) -> GqlRunnerTypeView {
+    let known = &view.runner_type;
     GqlRunnerTypeView {
-        runner_type: runner_type_of(key, known, &projection),
-        affordances: affordance_list(match known {
-            Some(runner_type) => runner_type.affordances(),
-            None => unregistered_affordances(key),
-        }),
+        runner_type: runner_type_of(known, &view.fleet),
+        affordances: affordance_list(view.affordances),
     }
 }
 
-fn runner_type_of(
-    key: &RunnerTypeKey,
-    known: Option<&RunnerType>,
-    projection: &FleetView,
-) -> GqlRunnerType {
+fn runner_type_of(known: &RunnerType, projection: &FleetView) -> GqlRunnerType {
     GqlRunnerType {
-        type_key: key.as_str().to_owned(),
+        type_key: known.key().as_str().to_owned(),
+        lifecycle: known.lifecycle().into(),
         instances: projection
             .instances()
             .iter()
             .map(|load| {
-                let announced = known
-                    .and_then(|runner_type| runner_type.instance(load.instance().instance_key()));
+                let announced = known.instance(load.instance().instance_key());
                 GqlRunnerInstance {
                     instance_key: load.instance().instance_key().as_str().to_owned(),
                     version: announced
@@ -103,7 +91,7 @@ fn runner_type_of(
                 }
             })
             .collect(),
-        is_available: known.is_some_and(RunnerType::is_available),
+        is_available: known.is_available(),
         total_capacity: count(projection.total_capacity()),
         busy_instance_count: count(projection.busy_instance_count()),
         idle_instance_count: count(projection.idle_instance_count()),

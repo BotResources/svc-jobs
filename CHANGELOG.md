@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## 0.2.0 - 2026-08-20
+
+### Added
+
+- Runner types are durable lifecycle entities (`ACTIVE`, `DEPRECATED`,
+  `RETIRED`) with administrator mutations, backend-owned action affordances,
+  and complete snapshot-then-delta fleet updates.
+- Active and deprecated runner types are projected to Published Language under
+  `jobs.runner_type.{runner_type}`. Retirement retracts the entry; boot performs
+  a full repair pass so a missed post-commit KV write is recoverable.
+- PostgreSQL migration `0002_runner_type_catalog.sql` separates historical Job
+  routing keys from registered aggregates and backfills only types proven by
+  historical presence.
+- A durable timer emits `RunnerTypeAffordancesChanged` when the retirement
+  quiet period elapses without another state transition.
+
+### Changed
+
+- Retired types refuse new jobs and dispatch while still recording presence.
+  Reactivation from retired requires a live instance; retirement requires a
+  deprecated type, no non-terminal jobs, and a 24-hour quiet period after the
+  latest terminal run.
+- Published Language writes and reconciliation are ordered across pods by a
+  distributed PostgreSQL lock; outages remove the pod from readiness until a
+  complete reconciliation succeeds.
+
 ## 0.1.1 - 2026-08-19
 
 ### Fixed

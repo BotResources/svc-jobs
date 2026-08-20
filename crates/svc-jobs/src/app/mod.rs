@@ -4,6 +4,7 @@ pub mod create;
 pub mod dispatch;
 pub mod environment;
 pub mod fingerprint;
+pub mod fleet;
 pub mod followups;
 pub mod integration;
 pub mod logs;
@@ -12,6 +13,7 @@ pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
 pub mod run_facts;
+pub mod runner_type_impacts;
 pub mod write;
 
 use std::sync::Arc;
@@ -21,6 +23,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::{Clock, IdFactory, JitterSource};
+use bc_jobs::ports::fleet::RunnerTypeCatalogWriter;
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
@@ -41,6 +44,7 @@ pub struct Jobs {
     pub jitter: Arc<dyn JitterSource>,
     pub limits: ServiceLimits,
     pub retry: RetryPolicy,
+    pub catalog: Arc<dyn RunnerTypeCatalogWriter>,
 }
 
 pub fn service_metadata() -> EventMetadata {
@@ -81,7 +85,37 @@ impl Jobs {
             return Ok(());
         };
         self.transport_effects(&job, events).await;
+        if let Err(error) = self.catalog.project_current(job.runner_type()).await {
+            tracing::error!(
+                runner_type = job.runner_type().as_str(),
+                error = %error,
+                "the durable runner-type catalog projection failed after the job commit; \
+                 startup healing will repair it"
+            );
+        }
         Ok(())
+    }
+
+    pub async fn project_runner_type(
+        &self,
+        key: &bc_jobs::domain::keys::RunnerTypeKey,
+    ) -> Result<(), ServiceError> {
+        self.catalog.project_current(key).await?;
+        Ok(())
+    }
+
+    pub async fn project_runner_type_best_effort(
+        &self,
+        key: &bc_jobs::domain::keys::RunnerTypeKey,
+    ) {
+        if let Err(error) = self.project_runner_type(key).await {
+            tracing::error!(
+                runner_type = key.as_str(),
+                error = %error,
+                "the durable runner-type catalog projection failed after commit; startup healing \
+                 will repair it and the committed mutation remains acknowledged"
+            );
+        }
     }
 
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {

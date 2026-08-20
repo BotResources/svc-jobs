@@ -3,8 +3,10 @@ use br_util_graphql::MutationResult;
 
 use super::error::of_service;
 use super::state::{EdgeState, administrator};
-use super::types::input::{GqlCancelJobInput, GqlDeleteJobInput, GqlManualRetryJobInput};
-use crate::app::admin::{self, ManualRetryInput};
+use super::types::input::{
+    GqlCancelJobInput, GqlDeleteJobInput, GqlManualRetryJobInput, GqlRunnerTypeInput,
+};
+use crate::app::admin::{self, ManualRetryInput, RunnerTypeAction};
 
 pub struct MutationRoot;
 
@@ -57,4 +59,41 @@ impl MutationRoot {
             .map_err(|error| async_graphql::Error::from(of_service(error)))?;
         Ok(MutationResult::ok())
     }
+
+    async fn jobs_deprecate_runner_type(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlRunnerTypeInput,
+    ) -> Result<MutationResult> {
+        change_runner_type(ctx, input, RunnerTypeAction::Deprecate).await
+    }
+
+    async fn jobs_reactivate_runner_type(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlRunnerTypeInput,
+    ) -> Result<MutationResult> {
+        change_runner_type(ctx, input, RunnerTypeAction::Reactivate).await
+    }
+
+    async fn jobs_retire_runner_type(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlRunnerTypeInput,
+    ) -> Result<MutationResult> {
+        change_runner_type(ctx, input, RunnerTypeAction::Retire).await
+    }
+}
+
+async fn change_runner_type(
+    ctx: &Context<'_>,
+    input: GqlRunnerTypeInput,
+    action: RunnerTypeAction,
+) -> Result<MutationResult> {
+    let actor = administrator(ctx)?;
+    let state = ctx.data::<EdgeState>()?;
+    admin::change_runner_type(&state.jobs, actor, input.runner_type, action)
+        .await
+        .map_err(|error| async_graphql::Error::from(of_service(error)))?;
+    Ok(MutationResult::ok())
 }

@@ -192,6 +192,15 @@ pub async fn commit_fleet_events(
     if fingerprint::of_fleet(change.decided_on) != fingerprint::of_fleet(locked.as_ref()) {
         return Err(ServiceError::Contended);
     }
+    if change
+        .events
+        .iter()
+        .any(|event| matches!(event, FleetEvent::RunnerTypeRetired(_)))
+    {
+        let locked = locked.as_ref().ok_or(ServiceError::Contended)?;
+        let facts = PgStore::runner_type_decision_facts_in(&mut tx, change.runner_type, at).await?;
+        locked.guard_retire(facts)?;
+    }
     let mut recorded = Vec::with_capacity(change.events.len());
     for event in change.events {
         recorded.push((EventId::new(ids.next())?, event.clone()));

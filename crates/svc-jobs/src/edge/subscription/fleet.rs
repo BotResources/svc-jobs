@@ -82,6 +82,12 @@ async fn fleet_deltas(
     }
     let kind = match event {
         FleetEvent::RunnerTypeRegistered(_) => GqlFleetEventKind::RunnerTypeRegistered,
+        FleetEvent::RunnerTypeDeprecated(_) => GqlFleetEventKind::RunnerTypeDeprecated,
+        FleetEvent::RunnerTypeReactivated(_) => GqlFleetEventKind::RunnerTypeReactivated,
+        FleetEvent::RunnerTypeRetired(_) => GqlFleetEventKind::RunnerTypeRetired,
+        FleetEvent::RunnerTypeAffordancesChanged(_) => {
+            GqlFleetEventKind::RunnerTypeAffordancesChanged
+        }
         FleetEvent::InstanceConnected(_) => GqlFleetEventKind::InstanceConnected,
         FleetEvent::InstanceStatusReported(_) => GqlFleetEventKind::InstanceStatusReported,
         FleetEvent::InstanceDisconnected(_) => GqlFleetEventKind::InstanceDisconnected,

@@ -62,7 +62,10 @@ impl JobsFixture {
             .with_app_role(APP_ROLE, APP_PASSWORD)
             .await;
 
-        let fabric = FabricTestNats::start().await;
+        let fabric = FabricTestNats::start()
+            .await
+            .with_published_language()
+            .await;
         let nats = TestNats::setup_on(&fabric.url()).await;
         infra::provision_runner_transport(&nats).await;
 
@@ -132,6 +135,24 @@ impl JobsFixture {
             .map(|instance| instance.logs())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub async fn restart_first(&mut self, knobs: &Knobs) {
+        let previous = self.instances.remove(0);
+        previous.shutdown().await;
+        self.urls.remove(0);
+
+        let db = self
+            .db
+            .as_ref()
+            .expect("the database is live until shutdown");
+        let fabric = self
+            .fabric
+            .as_ref()
+            .expect("the fabric is live until shutdown");
+        let (service, url) = spawn_instance(db, &fabric.url(), knobs).await;
+        self.instances.insert(0, service);
+        self.urls.insert(0, url);
     }
 
     pub async fn shutdown(mut self) {

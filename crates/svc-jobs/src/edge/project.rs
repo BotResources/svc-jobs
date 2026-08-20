@@ -3,11 +3,9 @@ use std::sync::Arc;
 
 use async_graphql::Result;
 use bc_jobs::domain::actions::Affordance as DomainAffordance;
-use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::job::parenting::ParentContext;
 use bc_jobs::domain::keys::RunnerTypeKey;
-use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use br_util_graphql::Affordance;
 use uuid::Uuid;
@@ -116,41 +114,8 @@ pub async fn fleet_views(
         .map(RunnerTypeKey::new)
         .transpose()
         .map_err(edge_error)?;
-    let live = FleetReader::load_all(store).await.map_err(edge_error)?;
-    let jobs = match &watched {
-        Some(key) => store
-            .active_jobs_of_type(key.as_str())
-            .await
-            .map_err(edge_error)?,
-        None => store.active_jobs().await.map_err(edge_error)?,
-    };
-    let keys = match &watched {
-        Some(key) => vec![key.clone()],
-        None => known_keys(store, &live).await?,
-    };
-    Ok(keys
-        .iter()
-        .map(|key| {
-            let known = live.iter().find(|runner_type| runner_type.key() == key);
-            view_of(key, known, &jobs)
-        })
-        .collect())
-}
-
-async fn known_keys(store: &PgStore, live: &[RunnerType]) -> Result<Vec<RunnerTypeKey>> {
-    let mut keys: Vec<RunnerTypeKey> = live
-        .iter()
-        .map(|runner_type| runner_type.key().clone())
-        .collect();
-    for key in store
-        .runner_type_keys_with_jobs()
+    crate::app::fleet::views(store, watched.as_ref(), chrono::Utc::now())
         .await
-        .map_err(edge_error)?
-    {
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
-    }
-    keys.sort();
-    Ok(keys)
+        .map_err(edge_error)
+        .map(|views| views.into_iter().map(view_of).collect())
 }

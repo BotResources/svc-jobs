@@ -101,9 +101,17 @@ impl Supervisor {
         self.publish_readiness();
     }
 
+    pub fn dependency_down(&self, name: &'static str) {
+        self.mark_down(name);
+    }
+
     fn mark_up(&self, name: &'static str) {
         self.down_names().remove(name);
         self.publish_readiness();
+    }
+
+    pub fn dependency_up(&self, name: &'static str) {
+        self.mark_up(name);
     }
 
     fn down_names(&self) -> std::sync::MutexGuard<'_, BTreeSet<&'static str>> {

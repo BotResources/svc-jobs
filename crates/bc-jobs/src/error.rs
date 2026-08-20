@@ -107,6 +107,22 @@ pub enum JobsError {
     RunnerTypeUnavailable {
         runner_type: String,
     },
+    RunnerTypeRetired {
+        runner_type: String,
+    },
+    RunnerTypeNotActive {
+        lifecycle: &'static str,
+    },
+    RunnerTypeNotDeprecated {
+        lifecycle: &'static str,
+    },
+    RunnerTypeHasNonTerminalJobs {
+        count: u32,
+    },
+    RunnerTypeHasRecentTerminalRuns {
+        eligible_at: DateTime<Utc>,
+    },
+    RunnerTypeHasNoLiveInstances,
     RetryBudgetExhausted {
         attempts: u32,
         max_attempts: u32,
@@ -187,6 +203,12 @@ impl JobsError {
             Self::RunWithinMaxDuration { .. } => "run_within_max_duration",
             Self::RunnerTypeMismatch { .. } => "runner_type_mismatch",
             Self::RunnerTypeUnavailable { .. } => "runner_type_unavailable",
+            Self::RunnerTypeRetired { .. } => "runner_type_retired",
+            Self::RunnerTypeNotActive { .. } => "runner_type_not_active",
+            Self::RunnerTypeNotDeprecated { .. } => "runner_type_not_deprecated",
+            Self::RunnerTypeHasNonTerminalJobs { .. } => "runner_type_has_non_terminal_jobs",
+            Self::RunnerTypeHasRecentTerminalRuns { .. } => "runner_type_has_recent_terminal_runs",
+            Self::RunnerTypeHasNoLiveInstances => "runner_type_has_no_live_instances",
             Self::RetryBudgetExhausted { .. } => "retry_budget_exhausted",
             Self::RetryNotScheduled => "retry_not_scheduled",
             Self::RetryNotDue { .. } => "retry_not_due",
@@ -223,6 +245,7 @@ impl JobsError {
             | Self::JobStillActive
             | Self::RetryNotScheduled
             | Self::EmptyPlan => json!({}),
+            Self::RunnerTypeHasNoLiveInstances => json!({}),
             Self::JobIdConflict { job_id } => json!({ "jobId": job_id }),
             Self::SourceAlreadyActive { active_job_id } => json!({ "activeJobId": active_job_id }),
             Self::ParentJobUnknown { parent_job_id }
@@ -253,6 +276,13 @@ impl JobsError {
                 json!({ "expected": expected, "claimed": claimed })
             }
             Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
+            Self::RunnerTypeRetired { runner_type } => json!({ "runnerType": runner_type }),
+            Self::RunnerTypeNotActive { lifecycle }
+            | Self::RunnerTypeNotDeprecated { lifecycle } => json!({ "lifecycle": lifecycle }),
+            Self::RunnerTypeHasNonTerminalJobs { count } => json!({ "count": count }),
+            Self::RunnerTypeHasRecentTerminalRuns { eligible_at } => {
+                json!({ "eligibleAt": eligible_at })
+            }
             Self::RetryBudgetExhausted {
                 attempts,
                 max_attempts,

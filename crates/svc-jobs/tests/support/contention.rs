@@ -187,14 +187,7 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
 
 pub async fn a_registered_instance(fixture: &Fixture, runner_type: &str) -> RunnerType {
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
-    let runner_type_id = RunnerTypeId::new(
-        fixture
-            .store
-            .ensure_runner_type(&key)
-            .await
-            .expect("the runner type row exists"),
-    )
-    .expect("a v7 runner type id");
+    let runner_type_id = RunnerTypeId::new(ids().next()).expect("a v7 runner type id");
     let connected = observe_presence(None, announcing(runner_type_id, &key, "instance-a"))
         .expect("a first presence registers the type and the instance");
     write::commit_fleet_events(

@@ -6,6 +6,7 @@ pub mod edge;
 pub mod error;
 mod pg;
 pub mod runner_transport;
+pub mod runner_type_catalog;
 pub mod runtime;
 pub mod stream;
 pub mod supervision;
@@ -29,6 +30,7 @@ use db::PgStore;
 use edge::HttpState;
 pub use error::ServiceError;
 use runner_transport::RunnerChannels;
+use runner_type_catalog::PublishedRunnerTypeCatalog;
 use stream::Hub;
 use supervision::Supervisor;
 
@@ -97,6 +99,12 @@ async fn boot(
     channels.verify_declared_streams().await?;
     bus::verify_durables(&fabric).await?;
 
+    let supervisor = Supervisor::new(readiness.clone(), settings.restart_policy);
+    let catalog = Arc::new(
+        PublishedRunnerTypeCatalog::open(&fabric, store.clone(), supervisor.clone()).await?,
+    );
+    bc_jobs::ports::fleet::RunnerTypeCatalogWriter::reconcile(catalog.as_ref()).await?;
+
     let hub = Hub::new();
     let jobs = Arc::new(Jobs {
         store: store.clone(),
@@ -106,9 +114,9 @@ async fn boot(
         jitter: Arc::new(NanosecondJitter),
         limits: settings.limits,
         retry: settings.retry_policy,
+        catalog,
     });
 
-    let supervisor = Supervisor::new(readiness.clone(), settings.restart_policy);
     tasks::spawn_supervised(
         &supervisor,
         &settings,

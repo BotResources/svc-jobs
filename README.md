@@ -80,6 +80,19 @@ creation naming no `producer` is exactly that case — a domain refusal is
 acknowledged and discarded; only infrastructure failures and lost write races
 are redelivered.
 
+### Published runner-type catalog
+
+Every active or deprecated runner type is published in the shared
+`PUBLISHED_LANGUAGE` KV bucket under `jobs.runner_type.{runner_type}` as a
+`contract_jobs::catalog::PublishedRunnerType`. The entry carries the type key
+and its `ACTIVE` or `DEPRECATED` lifecycle. Retirement retracts the key;
+reactivation recreates it. Every projection and reconciliation takes the same
+distributed PostgreSQL lock before reloading canonical state, so concurrent
+pods cannot publish an older lifecycle last. Boot and the periodic reconciler
+repair the full prefix. An unavailable bucket cannot turn a committed mutation
+into a false error; it removes the pod from readiness until full reconciliation
+succeeds.
+
 **Who the owner is.** A resolution command is accepted only when its envelope
 declares the same actor that declared the job (inherited along a manual-retry
 chain). In practice the parent's runner resolves its child, the producing
@@ -175,7 +188,9 @@ recorded is always the passport's own id.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a
   pinned failed resolution, even past the retry budget), `jobsDeleteJob`
-  (soft-delete of a terminal job; the audit trail remains).
+  (soft-delete of a terminal job; the audit trail remains), plus
+  `jobsDeprecateRunnerType`, `jobsReactivateRunnerType` and
+  `jobsRetireRunnerType`.
 - **Subscriptions** (GraphQL over SSE: `POST /graphql` with
   `Accept: text/event-stream`) — `jobsChanged`, `jobsJobChanged` (the whole
   job tree), `jobsJobLogTail`, `jobsFleetChanged`. Every subscription first
@@ -187,6 +202,12 @@ recorded is always the passport's own id.
   blocked with a reason code); when affordances change without a job state
   change, a dedicated `JobsJobAffordancesChangedEvent` is emitted. Clients
   render these decisions, they never derive them.
+  Every runner-type view and fleet delta likewise carries the complete
+  `deprecate`, `reactivate`, and `retire` decisions. Retirement is available
+  only for a deprecated type with no non-terminal job and no terminal run in
+  the preceding 24 hours; reactivating a retired type requires live presence.
+  If that 24-hour boundary is the only changing fact, the durable timer emits a
+  typed `RUNNER_TYPE_AFFORDANCES_CHANGED` delta at the boundary.
 
 The full SDL is served at `GET /sdl` and printed by `svc-jobs schema` — one
 document, two readers.

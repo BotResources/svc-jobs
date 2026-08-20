@@ -147,3 +147,22 @@ fn the_restart_backoff_doubles_up_to_its_ceiling_and_never_overflows() {
     // Then: a long-crashing task shifts no further than the clamp, whatever the count
     assert_eq!(policy.backoff(u32::MAX), Duration::from_secs(30));
 }
+
+#[test]
+fn a_declared_dependency_recovers_readiness_only_after_reconciliation_marks_it_up() {
+    let readiness = ReadinessHandle::not_ready("booting");
+    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    supervisor.boot_complete();
+    assert!(readiness.is_ready());
+
+    supervisor.dependency_down("runner type Published Language catalog");
+    assert_eq!(
+        readiness.snapshot(),
+        Readiness::NotReady {
+            reason: "background tasks are down: runner type Published Language catalog".to_owned(),
+        }
+    );
+
+    supervisor.dependency_up("runner type Published Language catalog");
+    assert!(readiness.is_ready());
+}

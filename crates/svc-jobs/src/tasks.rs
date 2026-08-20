@@ -133,11 +133,30 @@ fn spawn_timers(
         }
     });
 
+    let backstop_jobs = Arc::clone(&jobs);
     supervisor.spawn("backstop loop", move || {
-        let jobs = Arc::clone(&jobs);
+        let jobs = Arc::clone(&backstop_jobs);
         let channels = channels.clone();
         async move {
             runtime::backstop_loop(jobs, channels, backstop_interval).await;
+            Ok(())
+        }
+    });
+
+    let impact_jobs = Arc::clone(&jobs);
+    supervisor.spawn("runner-type affordance impact loop", move || {
+        let jobs = Arc::clone(&impact_jobs);
+        async move {
+            runtime::runner_type_impact_loop(jobs, minimum_wake).await;
+            Ok(())
+        }
+    });
+
+    let catalog_jobs = Arc::clone(&jobs);
+    supervisor.spawn("runner-type catalog reconciliation loop", move || {
+        let jobs = Arc::clone(&catalog_jobs);
+        async move {
+            runtime::runner_type_catalog_reconciliation_loop(jobs, backstop_interval).await;
             Ok(())
         }
     });

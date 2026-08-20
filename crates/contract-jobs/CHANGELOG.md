@@ -5,6 +5,12 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.2.0 - 2026-08-20
+
+- Added the `jobs.runner_type.{runner_type}` Published Language key builder and
+  `PublishedRunnerType` DTO. Entries carry `ACTIVE` or `DEPRECATED`; retirement
+  is represented by retracting the key.
+
 ## 0.1.0 - 2026-08-17
 
 - The offered subjects and KV key templates as constants, plus typed

@@ -1,27 +1,28 @@
 use async_trait::async_trait;
 use bc_jobs::domain::fleet::capacity::Capacity;
 use bc_jobs::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
+use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::fleet::{RunnerType, RunnerTypeState};
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
 use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::fleet::{ClosedPresenceSession, FleetReader, OpenPresenceSession};
+use bc_jobs::ports::fleet::{
+    ClosedPresenceSession, FleetProjectionSource, FleetReader, OpenPresenceSession,
+};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::apply::refs;
 use super::hydrate::unavailable;
 
 const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
-     min(s.connected_at) AS registered_at \
+     registered.lifecycle::text AS lifecycle, registered.registered_at \
      FROM runner_types rt \
-     JOIN runner_instances ri ON ri.runner_type_id = rt.id \
-     JOIN runner_presence_sessions s ON s.instance_id = ri.id \
+     JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
      WHERE $1::text IS NULL OR rt.type_key = $1 \
-     GROUP BY rt.id, rt.type_key";
+     ORDER BY rt.type_key";
 
 const OPEN_SESSIONS_SQL: &str = "SELECT rt.type_key, ri.instance_key, s.id::uuid AS session_id \
      FROM runner_presence_sessions s \
@@ -62,11 +63,15 @@ impl PgStore {
             .collect()
     }
 
-    pub async fn ensure_runner_type(&self, key: &RunnerTypeKey) -> Result<Uuid, PortError> {
-        let mut tx = self.begin().await?;
-        let id = refs::runner_type_id(&mut tx, key).await?;
-        tx.commit().await.map_err(unavailable)?;
-        Ok(id)
+    pub async fn runner_type_route_id(
+        &self,
+        key: &RunnerTypeKey,
+    ) -> Result<Option<Uuid>, PortError> {
+        sqlx::query_scalar("SELECT id::uuid FROM runner_types WHERE type_key = $1")
+            .bind(key.as_str())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(unavailable)
     }
 
     pub async fn load_fleet_in(
@@ -76,21 +81,176 @@ impl PgStore {
         load_one(&mut *tx, key).await
     }
 
+    pub async fn load_all_fleet_in(tx: &mut PgConnection) -> Result<Vec<RunnerType>, PortError> {
+        load_types(&mut *tx, None).await
+    }
+
     pub async fn lock_runner_type(
         tx: &mut PgConnection,
         runner_type_id: RunnerTypeId,
         key: &RunnerTypeKey,
     ) -> Result<Option<RunnerType>, PortError> {
-        let locked: Option<Uuid> =
-            sqlx::query_scalar("SELECT id::uuid FROM runner_types WHERE id = $1 FOR UPDATE")
-                .bind(runner_type_id.as_uuid())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(unavailable)?;
-        if locked.is_none() {
+        let actual: Uuid = sqlx::query_scalar(
+            "INSERT INTO runner_types (id, type_key) VALUES ($1, $2) \
+             ON CONFLICT (type_key) DO UPDATE SET type_key = EXCLUDED.type_key \
+             RETURNING id::uuid",
+        )
+        .bind(runner_type_id.as_uuid())
+        .bind(key.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        if actual != runner_type_id.as_uuid() {
             return Err(PortError::ConcurrentModification);
         }
         load_one(&mut *tx, key).await
+    }
+
+    async fn load_runner_type_decision_facts(
+        &self,
+        key: &RunnerTypeKey,
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts, PortError> {
+        let row = sqlx::query(
+            "SELECT \
+                count(DISTINCT j.id) FILTER (WHERE jr.job_id IS NULL)::bigint AS active_count, \
+                max(term.occurred_at) AS latest_terminal_run_at \
+             FROM runner_types rt \
+             JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
+             LEFT JOIN jobs j ON j.runner_type_id = rt.id \
+             LEFT JOIN job_resolutions jr ON jr.job_id = j.id \
+             LEFT JOIN runs r ON r.job_id = j.id \
+             LEFT JOIN run_terminals term ON term.run_id = r.id \
+             WHERE rt.type_key = $1",
+        )
+        .bind(key.as_str())
+        .fetch_one(self.pool())
+        .await
+        .map_err(unavailable)?;
+        let active_count: i64 = row.get("active_count");
+        Ok(bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts {
+            non_terminal_job_count: u32::try_from(active_count).unwrap_or(u32::MAX),
+            latest_terminal_run_at: row.get("latest_terminal_run_at"),
+            evaluated_at,
+        })
+    }
+
+    pub async fn runner_type_decision_facts_in(
+        tx: &mut PgConnection,
+        key: &RunnerTypeKey,
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts, PortError> {
+        let row = sqlx::query(
+            "SELECT \
+                count(DISTINCT j.id) FILTER (WHERE jr.job_id IS NULL)::bigint AS active_count, \
+                max(term.occurred_at) AS latest_terminal_run_at \
+             FROM runner_types rt \
+             JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
+             LEFT JOIN jobs j ON j.runner_type_id = rt.id \
+             LEFT JOIN job_resolutions jr ON jr.job_id = j.id \
+             LEFT JOIN runs r ON r.job_id = j.id \
+             LEFT JOIN run_terminals term ON term.run_id = r.id \
+             WHERE rt.type_key = $1",
+        )
+        .bind(key.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        let active_count: i64 = row.get("active_count");
+        Ok(bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts {
+            non_terminal_job_count: u32::try_from(active_count).unwrap_or(u32::MAX),
+            latest_terminal_run_at: row.get("latest_terminal_run_at"),
+            evaluated_at,
+        })
+    }
+
+    async fn load_runner_type_decision_facts_for(
+        &self,
+        keys: &[RunnerTypeKey],
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<
+        std::collections::HashMap<String, bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts>,
+        PortError,
+    > {
+        if keys.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let raw: Vec<&str> = keys.iter().map(RunnerTypeKey::as_str).collect();
+        let rows = sqlx::query(
+            "SELECT rt.type_key, \
+                count(DISTINCT j.id) FILTER (WHERE jr.job_id IS NULL)::bigint AS active_count, \
+                max(term.occurred_at) AS latest_terminal_run_at \
+             FROM runner_types rt \
+             JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
+             LEFT JOIN jobs j ON j.runner_type_id = rt.id \
+             LEFT JOIN job_resolutions jr ON jr.job_id = j.id \
+             LEFT JOIN runs r ON r.job_id = j.id \
+             LEFT JOIN run_terminals term ON term.run_id = r.id \
+             WHERE rt.type_key = ANY($1) \
+             GROUP BY rt.id, rt.type_key",
+        )
+        .bind(&raw)
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let active_count: i64 = row.get("active_count");
+                (
+                    row.get("type_key"),
+                    bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts {
+                        non_terminal_job_count: u32::try_from(active_count).unwrap_or(u32::MAX),
+                        latest_terminal_run_at: row.get("latest_terminal_run_at"),
+                        evaluated_at,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    async fn runner_type_decision_facts_for_in(
+        tx: &mut PgConnection,
+        keys: &[RunnerTypeKey],
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<
+        std::collections::HashMap<String, bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts>,
+        PortError,
+    > {
+        if keys.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let raw: Vec<&str> = keys.iter().map(RunnerTypeKey::as_str).collect();
+        let rows = sqlx::query(
+            "SELECT rt.type_key, \
+                count(DISTINCT j.id) FILTER (WHERE jr.job_id IS NULL)::bigint AS active_count, \
+                max(term.occurred_at) AS latest_terminal_run_at \
+             FROM runner_types rt \
+             JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
+             LEFT JOIN jobs j ON j.runner_type_id = rt.id \
+             LEFT JOIN job_resolutions jr ON jr.job_id = j.id \
+             LEFT JOIN runs r ON r.job_id = j.id \
+             LEFT JOIN run_terminals term ON term.run_id = r.id \
+             WHERE rt.type_key = ANY($1) GROUP BY rt.id, rt.type_key",
+        )
+        .bind(&raw)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let active_count: i64 = row.get("active_count");
+                (
+                    row.get("type_key"),
+                    bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts {
+                        non_terminal_job_count: u32::try_from(active_count).unwrap_or(u32::MAX),
+                        latest_terminal_run_at: row.get("latest_terminal_run_at"),
+                        evaluated_at,
+                    },
+                )
+            })
+            .collect())
     }
 }
 
@@ -145,6 +305,7 @@ async fn load_types(
             id: RunnerTypeId::new(id)?,
             key: RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
             registered_at: row.get::<DateTime<Utc>, _>("registered_at"),
+            lifecycle: RunnerTypeLifecycle::from_db_str(&row.get::<String, _>("lifecycle"))?,
             instances: instances.remove(&id).unwrap_or_default(),
         })?);
     }
@@ -199,5 +360,61 @@ impl FleetReader for PgStore {
             connected_at: row.get("connected_at"),
             disconnected_at: row.get("disconnected_at"),
         }))
+    }
+
+    async fn decision_facts(
+        &self,
+        key: &RunnerTypeKey,
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts, PortError> {
+        self.load_runner_type_decision_facts(key, evaluated_at)
+            .await
+    }
+
+    async fn decision_facts_for(
+        &self,
+        keys: &[RunnerTypeKey],
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<
+        std::collections::HashMap<String, bc_jobs::domain::actions::fleet::RunnerTypeDecisionFacts>,
+        PortError,
+    > {
+        self.load_runner_type_decision_facts_for(keys, evaluated_at)
+            .await
+    }
+
+    async fn projection_source(
+        &self,
+        key: Option<&RunnerTypeKey>,
+        evaluated_at: DateTime<Utc>,
+    ) -> Result<FleetProjectionSource, PortError> {
+        let mut tx = self.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        let runner_types = load_types(&mut tx, key).await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT j.id::uuid FROM jobs j JOIN runner_types rt ON rt.id = j.runner_type_id \
+             WHERE NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
+               AND ($1::text IS NULL OR rt.type_key = $1)",
+        )
+        .bind(key.map(RunnerTypeKey::as_str))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        let active_jobs = super::hydrate::load_many(&mut tx, &ids).await?;
+        let keys: Vec<RunnerTypeKey> = runner_types
+            .iter()
+            .map(|runner_type| runner_type.key().clone())
+            .collect();
+        let decision_facts =
+            Self::runner_type_decision_facts_for_in(&mut tx, &keys, evaluated_at).await?;
+        tx.commit().await.map_err(unavailable)?;
+        Ok(FleetProjectionSource {
+            runner_types,
+            active_jobs,
+            decision_facts,
+        })
     }
 }

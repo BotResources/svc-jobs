@@ -1,9 +1,33 @@
+use chrono::{DateTime, TimeDelta, Utc};
+
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::fleet::RunnerType;
+use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use crate::domain::keys::RunnerTypeKey;
 use crate::error::JobsError;
 
 pub const DISPATCH: &str = "dispatch";
+pub const DEPRECATE: &str = "deprecate";
+pub const REACTIVATE: &str = "reactivate";
+pub const RETIRE: &str = "retire";
+pub const RETIREMENT_QUIET_PERIOD: TimeDelta = TimeDelta::hours(24);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunnerTypeDecisionFacts {
+    pub non_terminal_job_count: u32,
+    pub latest_terminal_run_at: Option<DateTime<Utc>>,
+    pub evaluated_at: DateTime<Utc>,
+}
+
+impl RunnerTypeDecisionFacts {
+    pub fn unused(evaluated_at: DateTime<Utc>) -> Self {
+        Self {
+            non_terminal_job_count: 0,
+            latest_terminal_run_at: None,
+            evaluated_at,
+        }
+    }
+}
 
 pub fn unregistered_affordances(runner_type: &RunnerTypeKey) -> Vec<Affordance> {
     vec![Affordance::new(
@@ -15,7 +39,12 @@ pub fn unregistered_affordances(runner_type: &RunnerTypeKey) -> Vec<Affordance> 
 }
 
 impl RunnerType {
+    pub fn guard_accept_job(&self) -> Result<(), JobsError> {
+        guard_accept_job(self.lifecycle(), self.key())
+    }
+
     pub fn guard_dispatch(&self) -> Result<(), JobsError> {
+        self.guard_accept_job()?;
         if self.is_available() {
             Ok(())
         } else {
@@ -29,8 +58,80 @@ impl RunnerType {
         Availability::from_guard(self.guard_dispatch())
     }
 
-    pub fn affordances(&self) -> Vec<Affordance> {
-        vec![Affordance::new(DISPATCH, self.can_dispatch())]
+    pub fn guard_deprecate(&self) -> Result<(), JobsError> {
+        match self.lifecycle() {
+            RunnerTypeLifecycle::Active => Ok(()),
+            lifecycle => Err(JobsError::RunnerTypeNotActive {
+                lifecycle: lifecycle.as_str(),
+            }),
+        }
+    }
+
+    pub fn can_deprecate(&self) -> Availability {
+        Availability::from_guard(self.guard_deprecate())
+    }
+
+    pub fn guard_reactivate(&self) -> Result<(), JobsError> {
+        match self.lifecycle() {
+            RunnerTypeLifecycle::Deprecated => Ok(()),
+            RunnerTypeLifecycle::Retired if self.instances().is_empty() => {
+                Err(JobsError::RunnerTypeHasNoLiveInstances)
+            }
+            RunnerTypeLifecycle::Retired => Ok(()),
+            lifecycle => Err(JobsError::RunnerTypeNotDeprecated {
+                lifecycle: lifecycle.as_str(),
+            }),
+        }
+    }
+
+    pub fn can_reactivate(&self) -> Availability {
+        Availability::from_guard(self.guard_reactivate())
+    }
+
+    pub fn guard_retire(&self, facts: RunnerTypeDecisionFacts) -> Result<(), JobsError> {
+        if self.lifecycle() != RunnerTypeLifecycle::Deprecated {
+            return Err(JobsError::RunnerTypeNotDeprecated {
+                lifecycle: self.lifecycle().as_str(),
+            });
+        }
+        if facts.non_terminal_job_count > 0 {
+            return Err(JobsError::RunnerTypeHasNonTerminalJobs {
+                count: facts.non_terminal_job_count,
+            });
+        }
+        if let Some(last_terminal) = facts.latest_terminal_run_at {
+            let eligible_at = last_terminal + RETIREMENT_QUIET_PERIOD;
+            if facts.evaluated_at < eligible_at {
+                return Err(JobsError::RunnerTypeHasRecentTerminalRuns { eligible_at });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn can_retire(&self, facts: RunnerTypeDecisionFacts) -> Availability {
+        Availability::from_guard(self.guard_retire(facts))
+    }
+
+    pub fn affordances(&self, facts: RunnerTypeDecisionFacts) -> Vec<Affordance> {
+        vec![
+            Affordance::new(DISPATCH, self.can_dispatch()),
+            Affordance::new(DEPRECATE, self.can_deprecate()),
+            Affordance::new(REACTIVATE, self.can_reactivate()),
+            Affordance::new(RETIRE, self.can_retire(facts)),
+        ]
+    }
+}
+
+pub fn guard_accept_job(
+    lifecycle: RunnerTypeLifecycle,
+    key: &RunnerTypeKey,
+) -> Result<(), JobsError> {
+    if lifecycle.accepts_jobs() {
+        Ok(())
+    } else {
+        Err(JobsError::RunnerTypeRetired {
+            runner_type: key.as_str().to_owned(),
+        })
     }
 }
 
@@ -40,6 +141,7 @@ mod tests {
     use crate::domain::fleet::RunnerTypeState;
     use crate::domain::fleet::capacity::Capacity;
     use crate::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
+    use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
     use crate::domain::fleet::status::ReportedStatus;
     use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
     use crate::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
@@ -51,6 +153,7 @@ mod tests {
             id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
             key: RunnerTypeKey::new("analyst").unwrap(),
             registered_at: ts(0),
+            lifecycle: RunnerTypeLifecycle::Active,
             instances,
         })
         .unwrap()
@@ -81,7 +184,11 @@ mod tests {
         // When: the backend answers whether work may go out
         // Then: the wait is explained by a code, not inferred by the client
         assert_eq!(
-            empty.affordances().first().unwrap().reason_code(),
+            empty
+                .affordances(RunnerTypeDecisionFacts::unused(ts(10)))
+                .first()
+                .unwrap()
+                .reason_code(),
             Some("runner_type_unavailable")
         );
     }
@@ -98,7 +205,11 @@ mod tests {
         assert_eq!(unregistered.first().unwrap().action(), DISPATCH);
         assert_eq!(
             unregistered.first().unwrap().reason_code(),
-            registered.affordances().first().unwrap().reason_code()
+            registered
+                .affordances(RunnerTypeDecisionFacts::unused(ts(10)))
+                .first()
+                .unwrap()
+                .reason_code()
         );
     }
 
@@ -121,7 +232,11 @@ mod tests {
         // Then: it waits, with the same code as an empty fleet — nobody would take the run,
         // so no trigger is published that would sit unclaimed
         assert_eq!(
-            draining.affordances().first().unwrap().reason_code(),
+            draining
+                .affordances(RunnerTypeDecisionFacts::unused(ts(10)))
+                .first()
+                .unwrap()
+                .reason_code(),
             Some("runner_type_unavailable")
         );
     }
@@ -135,5 +250,36 @@ mod tests {
         ]);
         // When/Then: one taker is enough for work to flow again
         assert_eq!(recovered.can_dispatch(), Availability::Available);
+    }
+
+    #[test]
+    fn retirement_is_the_same_decision_used_by_the_affordance() {
+        let mut state = RunnerTypeState {
+            id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+            key: RunnerTypeKey::new("analyst").unwrap(),
+            registered_at: ts(0),
+            lifecycle: RunnerTypeLifecycle::Deprecated,
+            instances: vec![],
+        };
+        let facts = RunnerTypeDecisionFacts {
+            non_terminal_job_count: 1,
+            latest_terminal_run_at: None,
+            evaluated_at: ts(100),
+        };
+        let runner_type = RunnerType::hydrate(state.clone()).unwrap();
+        assert_eq!(
+            runner_type.guard_retire(facts),
+            Err(JobsError::RunnerTypeHasNonTerminalJobs { count: 1 })
+        );
+        assert_eq!(
+            runner_type.can_retire(facts).reason_code(),
+            Some("runner_type_has_non_terminal_jobs")
+        );
+
+        state.instances = vec![live()];
+        state.lifecycle = RunnerTypeLifecycle::Retired;
+        let retired = RunnerType::hydrate(state).unwrap();
+        assert_eq!(retired.guard_reactivate(), Ok(()));
+        assert!(retired.can_reactivate().is_available());
     }
 }

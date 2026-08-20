@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::docs::{
-    CANCEL_JOB, DELETE_JOB, FLEET, JOB_BY_SOURCE, JOB_DETAIL, JOB_LOGS, JOBS_LIST, MANUAL_RETRY_JOB,
+    CANCEL_JOB, DELETE_JOB, DEPRECATE_RUNNER_TYPE, FLEET, JOB_BY_SOURCE, JOB_DETAIL, JOB_LOGS,
+    JOBS_LIST, MANUAL_RETRY_JOB, REACTIVATE_RUNNER_TYPE, RETIRE_RUNNER_TYPE,
 };
 
 pub async fn ready(base_url: &str) -> bool {
@@ -54,6 +55,44 @@ pub async fn delete_job(gql: &GraphqlClient, passport: &Passport, job_id: Uuid) 
         passport,
         DELETE_JOB,
         json!({ "input": { "jobId": job_id.to_string() } }),
+    )
+    .await
+}
+
+pub async fn deprecate_runner_type(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    runner_type: &str,
+) -> Value {
+    runner_type_action(gql, passport, DEPRECATE_RUNNER_TYPE, runner_type).await
+}
+
+pub async fn reactivate_runner_type(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    runner_type: &str,
+) -> Value {
+    runner_type_action(gql, passport, REACTIVATE_RUNNER_TYPE, runner_type).await
+}
+
+pub async fn retire_runner_type(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    runner_type: &str,
+) -> Value {
+    runner_type_action(gql, passport, RETIRE_RUNNER_TYPE, runner_type).await
+}
+
+async fn runner_type_action(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    document: &str,
+    runner_type: &str,
+) -> Value {
+    gql.query(
+        passport,
+        document,
+        json!({ "input": { "runnerType": runner_type } }),
     )
     .await
 }
@@ -284,6 +323,24 @@ pub fn data_of(response: &Value, field: &str) -> Value {
         "expected data.{field} in the response, got: {response}"
     );
     value.clone()
+}
+
+pub fn mutation_error_reason(response: &Value, what: &str) -> String {
+    let reason = response["errors"][0]["extensions"]["reason"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{what}: a refused mutation carries a stable reason: {response}"))
+        .to_owned();
+    super::codes::assert_stable_reason(&reason, what);
+    reason
+}
+
+pub fn mutation_error_params(response: &Value, what: &str) -> Value {
+    let params = response["errors"][0]["extensions"]["params"].clone();
+    assert!(
+        params.is_object(),
+        "{what}: a state refusal carries structured params: {response}"
+    );
+    params
 }
 
 pub fn affordance(view: &Value, action: &str) -> Value {
