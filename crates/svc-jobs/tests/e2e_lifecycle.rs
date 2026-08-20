@@ -31,7 +31,8 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     delta::assert_page_info(&opening_list["jobs"]);
     let mut fleet_watch =
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
-    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    let opening_fleet = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(opening_fleet["runnerTypes"], json!([]));
 
     // When: the producer declares the job
     let entity_id = Uuid::now_v7();
@@ -57,15 +58,12 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     let queued_row = delta::assert_upserted_summary(&queued, job_id, "PENDING");
     delta::assert_active_affordances(&queued_row);
 
-    let waiting =
-        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await;
-    assert_eq!(waiting["event"]["jobId"], json!(job_id.to_string()));
-    delta::assert_fleet(&waiting, &runner_type, 1, 0, 0, 0);
-    assert_eq!(
-        delta::fleet_projection(&waiting, &runner_type)["isAvailable"],
-        json!(false),
-        "no instance has signalled presence yet",
-    );
+    fleet_watch
+        .expect_silence(
+            "queued work cannot materialize an unregistered runner type",
+            QUIET,
+        )
+        .await;
 
     let mut watch = SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
     let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
@@ -117,25 +115,16 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     delta::assert_active_affordances(&gql::listed_row(&listed, job_id));
 
     let idle_fleet = gql::fleet_of(&client, admin, &runner_type).await;
-    assert_eq!(
-        idle_fleet.len(),
-        1,
-        "a type nobody serves yet still answers the fleet read — it is exactly the state an \
-         administrator opens the page to diagnose: {idle_fleet:?}",
+    assert!(
+        idle_fleet.is_empty(),
+        "a routing value is absent from fleet reads until presence first registers its durable \
+         RunnerType entity: {idle_fleet:?}",
     );
-    let unserved = delta::assert_fleet(&idle_fleet[0], &runner_type, 1, 0, 0, 0);
-    assert_eq!(
-        unserved["isAvailable"],
-        json!(false),
-        "no instance has signalled presence, so the read says so exactly as the stream did: \
-         {unserved}",
-    );
-    assert_eq!(
-        unserved["instances"],
-        json!([]),
-        "an unserved type shows no live instance: {unserved}",
-    );
-    gql::assert_affordances_well_formed(&idle_fleet[0], "the fleet read of an unserved type");
+    drop(fleet_watch);
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    let post_declaration = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(post_declaration["runnerTypes"], json!([]));
     instance.expect_no_trigger(QUIET).await;
 
     // When: the first instance of the type signals presence
@@ -143,9 +132,23 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     let registered =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
     assert_eq!(registered["event"]["runnerType"], json!(runner_type));
+    delta::assert_fleet(&registered, &runner_type, 1, 0, 0, 1);
+    gql::assert_allowed(&registered, wire::ACTION_DISPATCH);
+    gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
+        "runner_type_not_deprecated",
+    );
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_RETIRE),
+        "runner_type_not_deprecated",
+    );
     let connected =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
     assert_eq!(connected["event"]["instanceKey"], json!("instance-a"));
+    let connected_type = delta::fleet_projection(&connected, &runner_type);
+    assert_eq!(connected_type["isAvailable"], json!(true));
+    delta::assert_instance(&connected_type, "instance-a", false, &[], &instance.version);
     assert_eq!(
         delta::fleet_projection(&connected, &runner_type)["isAvailable"],
         json!(true)

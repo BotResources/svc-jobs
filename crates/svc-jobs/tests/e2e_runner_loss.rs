@@ -40,7 +40,8 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
     let mut fleet_watch =
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
-    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    let opening_fleet = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(opening_fleet["runnerTypes"], json!([]));
 
     let declaration = JobDeclaration::new(&runner_type).with_max_attempts(3);
     let job_id = declaration.job_id;
@@ -51,7 +52,21 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         job_id,
         "PENDING",
     ));
-    stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await;
+    fleet_watch
+        .expect_silence(
+            "queued work cannot materialize an unregistered runner type",
+            QUIET,
+        )
+        .await;
+    assert!(
+        gql::fleet_of(&client, admin, &runner_type).await.is_empty(),
+        "the fleet omits the routing key until first presence registers it",
+    );
+    drop(fleet_watch);
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    let post_declaration = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(post_declaration["runnerTypes"], json!([]));
 
     let mut job_watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
@@ -61,7 +76,30 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
 
     // When: an instance appears, claims the job and reports its first progress
     lost.connect().await;
-    stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    let registered =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
+    delta::assert_fleet(&registered, &runner_type, 1, 0, 0, 1);
+    gql::assert_allowed(&registered, wire::ACTION_DISPATCH);
+    gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
+        "runner_type_not_deprecated",
+    );
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_RETIRE),
+        "runner_type_not_deprecated",
+    );
+    let connected =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    let connected_type = delta::fleet_projection(&connected, &runner_type);
+    assert_eq!(connected_type["isAvailable"], json!(true));
+    delta::assert_instance(
+        &connected_type,
+        "instance-lost",
+        false,
+        &[],
+        &announced_version,
+    );
     let first = lost.next_trigger(LONG).await;
     let first_run = runner::run_id(&first);
     let first_dispatch =

@@ -39,7 +39,8 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
     let mut fleet_watch =
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&parent_type)).await;
-    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    let opening_fleet = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(opening_fleet["runnerTypes"], json!([]));
 
     let parent = JobDeclaration::new(&parent_type);
     let parent_id = parent.job_id;
@@ -50,11 +51,21 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     delta::assert_active_affordances(&delta::assert_upserted_summary(
         &queued, parent_id, "PENDING",
     ));
-    assert_eq!(
-        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await["event"]
-            ["jobId"],
-        json!(parent_id.to_string())
+    fleet_watch
+        .expect_silence(
+            "queued work cannot materialize an unregistered runner type",
+            QUIET,
+        )
+        .await;
+    assert!(
+        gql::fleet_of(&client, admin, &parent_type).await.is_empty(),
+        "fleet reads omit a routing key until its first presence registers the entity",
     );
+    drop(fleet_watch);
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&parent_type)).await;
+    let post_declaration = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(post_declaration["runnerTypes"], json!([]));
 
     let mut parent_watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(parent_id)).await;
@@ -64,6 +75,30 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
 
     // When: the parent runner claims its work and reports its progression
     orchestrator.connect().await;
+    let registered =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
+    delta::assert_fleet(&registered, &parent_type, 1, 0, 0, 1);
+    gql::assert_allowed(&registered, wire::ACTION_DISPATCH);
+    gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
+        "runner_type_not_deprecated",
+    );
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_RETIRE),
+        "runner_type_not_deprecated",
+    );
+    let connected =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    let connected_type = delta::fleet_projection(&connected, &parent_type);
+    assert_eq!(connected_type["isAvailable"], json!(true));
+    delta::assert_instance(
+        &connected_type,
+        "orchestrator-a",
+        false,
+        &[],
+        &orchestrator.version,
+    );
     let parent_trigger = orchestrator.next_trigger(LONG).await;
     let parent_run = runner::run_id(&parent_trigger);
     let parent_dispatched = stream::await_delta(

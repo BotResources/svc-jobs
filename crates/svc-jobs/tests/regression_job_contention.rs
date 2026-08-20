@@ -8,13 +8,14 @@ use bc_jobs::ports::job::JobReader;
 use svc_jobs::ServiceError;
 use svc_jobs::app::write::JobChange;
 
-use support::contention::{Fixture, a_job_with_one_dispatched_run, commit};
+use support::contention::{Fixture, a_job_with_one_dispatched_run, a_registered_instance, commit};
 
 #[tokio::test]
 async fn two_instances_replaying_the_same_run_start_write_one_fact_and_publish_it_once() {
     // Given: a job with one dispatched run, and the state both instances hydrated before deciding
     let fixture = Fixture::start().await;
     let runner_type = "analyst";
+    a_registered_instance(&fixture, runner_type).await;
     let (decided_on, run_id) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
     let fact = RunStartedFact {
         run_id,
@@ -94,7 +95,9 @@ async fn two_instances_replaying_the_same_run_start_write_one_fact_and_publish_i
 async fn a_job_event_is_refused_when_the_run_lifecycle_moved_under_the_decision() {
     // Given: a job with one dispatched run, hydrated before any start
     let fixture = Fixture::start().await;
-    let (decided_on, run_id) = a_job_with_one_dispatched_run(&fixture, "auditor").await;
+    let runner_type = "auditor";
+    a_registered_instance(&fixture, runner_type).await;
+    let (decided_on, run_id) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
     let instance = RunnerInstanceReference::new(
         RunnerTypeKey::new("auditor").expect("a valid runner type"),
         InstanceKey::new("instance-b").expect("a valid instance key"),
@@ -151,7 +154,9 @@ async fn a_job_event_is_refused_when_the_run_lifecycle_moved_under_the_decision(
 async fn a_matching_lifecycle_still_admits_the_next_fact() {
     // Given: a job whose run has started, re-read after the write
     let fixture = Fixture::start().await;
-    let (job, run_id) = a_job_with_one_dispatched_run(&fixture, "planner").await;
+    let runner_type = "planner";
+    a_registered_instance(&fixture, runner_type).await;
+    let (job, run_id) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
     let started = job
         .record_run_started(RunStartedFact {
             run_id,

@@ -25,7 +25,14 @@ const DECLARED_QUERIES: [&str; 5] = [
     "jobsLogs",
 ];
 
-const DECLARED_MUTATIONS: [&str; 3] = ["jobsCancelJob", "jobsDeleteJob", "jobsManualRetryJob"];
+const DECLARED_MUTATIONS: [&str; 6] = [
+    "jobsCancelJob",
+    "jobsDeleteJob",
+    "jobsDeprecateRunnerType",
+    "jobsManualRetryJob",
+    "jobsReactivateRunnerType",
+    "jobsRetireRunnerType",
+];
 
 const DECLARED_SUBSCRIPTIONS: [&str; 4] = [
     "jobsChanged",

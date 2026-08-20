@@ -30,7 +30,8 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
     let mut fleet_watch =
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
-    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    let opening_fleet = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(opening_fleet["runnerTypes"], json!([]));
 
     let entity_id = Uuid::now_v7();
     let accepted = JobDeclaration::new(&runner_type).with_source("projects", entity_id);
@@ -47,10 +48,21 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         accepted_id,
         "PENDING",
     ));
-    let waiting =
-        stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await;
-    assert_eq!(waiting["event"]["jobId"], json!(accepted_id.to_string()));
-    delta::assert_fleet(&waiting, &runner_type, 1, 0, 0, 0);
+    fleet_watch
+        .expect_silence(
+            "accepted work cannot materialize an unregistered runner type",
+            QUIET,
+        )
+        .await;
+    assert!(
+        gql::fleet_of(&client, admin, &runner_type).await.is_empty(),
+        "the fleet omits a routing key until first presence registers the entity",
+    );
+    drop(fleet_watch);
+    let mut fleet_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    let post_declaration = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+    assert_eq!(post_declaration["runnerTypes"], json!([]));
 
     let mut valid_watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(accepted_id)).await;
@@ -251,8 +263,24 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
 
     // When: the runner type finally becomes available
     instance.connect().await;
-    stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
-    stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    let registered =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
+    delta::assert_fleet(&registered, &runner_type, 1, 0, 0, 1);
+    gql::assert_allowed(&registered, wire::ACTION_DISPATCH);
+    gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
+        "runner_type_not_deprecated",
+    );
+    assert_eq!(
+        gql::assert_blocked(&registered, wire::ACTION_RETIRE),
+        "runner_type_not_deprecated",
+    );
+    let connected =
+        stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    let connected_type = delta::fleet_projection(&connected, &runner_type);
+    assert_eq!(connected_type["isAvailable"], json!(true));
+    delta::assert_instance(&connected_type, "instance-a", false, &[], &instance.version);
 
     let trigger = instance.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&trigger), accepted_id);
