@@ -16,6 +16,9 @@ pub enum ServiceError {
     #[error("job_not_found")]
     JobNotFound,
 
+    #[error("runner_type_not_found")]
+    RunnerTypeNotFound,
+
     #[error("concurrent_modification")]
     Contended,
 

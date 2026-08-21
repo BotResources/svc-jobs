@@ -1,4 +1,5 @@
 use async_graphql::Enum;
+use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolutionKind};
 use bc_jobs::domain::job::status::JobStatus;
 use bc_jobs::domain::log::RunLogLevel;
@@ -173,6 +174,10 @@ impl GqlDeletedFilter {
 #[graphql(name = "JobsFleetEventKind")]
 pub enum GqlFleetEventKind {
     RunnerTypeRegistered,
+    RunnerTypeDeprecated,
+    RunnerTypeReactivated,
+    RunnerTypeRetired,
+    RunnerTypeBecameRetirable,
     InstanceConnected,
     InstanceStatusReported,
     InstanceDisconnected,
@@ -180,6 +185,24 @@ pub enum GqlFleetEventKind {
     JobStoppedWaiting,
     JobBeganExecuting,
     JobStoppedExecuting,
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "JobsRunnerTypeLifecycle")]
+pub enum GqlRunnerTypeLifecycle {
+    Active,
+    Deprecated,
+    Retired,
+}
+
+impl From<RunnerTypeLifecycle> for GqlRunnerTypeLifecycle {
+    fn from(lifecycle: RunnerTypeLifecycle) -> Self {
+        match lifecycle {
+            RunnerTypeLifecycle::Active => Self::Active,
+            RunnerTypeLifecycle::Deprecated => Self::Deprecated,
+            RunnerTypeLifecycle::Retired => Self::Retired,
+        }
+    }
 }
 
 impl From<FleetSignal> for GqlFleetEventKind {

@@ -1,11 +1,13 @@
 pub mod capacity;
 pub mod instance;
+pub mod lifecycle;
 pub mod status;
 pub mod view;
 
 use chrono::{DateTime, Utc};
 
 use crate::domain::fleet::instance::RunnerInstance;
+use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use crate::domain::ids::RunnerTypeId;
 use crate::domain::keys::{InstanceKey, RunnerTypeKey};
 use crate::error::JobsError;
@@ -15,6 +17,7 @@ pub struct RunnerTypeState {
     pub id: RunnerTypeId,
     pub key: RunnerTypeKey,
     pub registered_at: DateTime<Utc>,
+    pub lifecycle: RunnerTypeLifecycle,
     pub instances: Vec<RunnerInstance>,
 }
 
@@ -23,6 +26,7 @@ pub struct RunnerType {
     id: RunnerTypeId,
     key: RunnerTypeKey,
     registered_at: DateTime<Utc>,
+    lifecycle: RunnerTypeLifecycle,
     instances: Vec<RunnerInstance>,
 }
 
@@ -48,6 +52,7 @@ impl RunnerType {
             id: state.id,
             key: state.key,
             registered_at: state.registered_at,
+            lifecycle: state.lifecycle,
             instances: state.instances,
         })
     }
@@ -68,12 +73,20 @@ impl RunnerType {
         &self.instances
     }
 
+    pub fn lifecycle(&self) -> RunnerTypeLifecycle {
+        self.lifecycle
+    }
+
     pub fn instance(&self, key: &InstanceKey) -> Option<&RunnerInstance> {
         self.instances.iter().find(|live| live.key() == key)
     }
 
     pub fn is_available(&self) -> bool {
-        self.instances.iter().any(|live| live.accepts_new_work())
+        self.lifecycle.accepts_jobs() && self.instances.iter().any(|live| live.accepts_new_work())
+    }
+
+    pub fn published_lifecycle(&self) -> Option<RunnerTypeLifecycle> {
+        self.lifecycle.accepts_jobs().then_some(self.lifecycle)
     }
 }
 
@@ -114,6 +127,7 @@ mod tests {
             id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
             key: RunnerTypeKey::new("analyst").unwrap(),
             registered_at: at(0),
+            lifecycle: RunnerTypeLifecycle::Active,
             instances,
         }
     }
@@ -151,6 +165,31 @@ mod tests {
         .unwrap();
         // Then: a single taker is enough — availability is not unanimity
         assert!(mixed.is_available());
+    }
+
+    fn with_lifecycle(lifecycle: RunnerTypeLifecycle) -> RunnerType {
+        let mut state = state(vec![]);
+        state.lifecycle = lifecycle;
+        RunnerType::hydrate(state).unwrap()
+    }
+
+    #[test]
+    fn a_type_is_published_exactly_while_it_accepts_jobs() {
+        // Given: the three lifecycles a runner type can be stored in
+        // When: each is asked what the catalog should announce
+        // Then: a retired type has no entry, and the others announce their own lifecycle
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Active).published_lifecycle(),
+            Some(RunnerTypeLifecycle::Active)
+        );
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Deprecated).published_lifecycle(),
+            Some(RunnerTypeLifecycle::Deprecated)
+        );
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Retired).published_lifecycle(),
+            None
+        );
     }
 
     #[test]

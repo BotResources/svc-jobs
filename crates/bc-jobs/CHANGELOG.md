@@ -8,6 +8,16 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.2.0 - 2026-08-21
+
+- RunnerType now owns a total `ACTIVE`/`DEPRECATED`/`RETIRED` lifecycle and
+  granular lifecycle facts.
+- One decision API drives the lifecycle command guards and the `deprecate`,
+  `reactivate`, and `retire` affordances. Retirement consumes explicit current
+  usage facts; reactivation from retired consumes live presence.
+- Dispatch and job acceptance fail closed for retired types while presence is
+  still recorded without implicit reactivation.
+
 ## 0.1.0 - 2026-08-17
 
 - The Job and RunnerType aggregates, their commands, events, affordances and

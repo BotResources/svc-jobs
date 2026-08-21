@@ -131,9 +131,12 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     events
         .expect_none(wire::FACT_CANCELLED, parent_id, QUIET)
         .await;
-    watch
-        .expect_silence("a refused cancellation reaches no job subscriber", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut watch,
+        "a refused cancellation reaches no job subscriber",
+        QUIET,
+    )
+    .await;
     root.expect_no_cancel_entry(parent_run, QUIET).await;
     durable
         .assert_count(
@@ -153,9 +156,13 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     // When: the administrator cancels the root
     let resolution_id = Uuid::now_v7();
     let ack = gql::cancel_job(&client, admin, resolution_id, parent_id).await;
-    verdict::expect_ack(&ack, "an administrator cancels a non-terminal job");
+    gql::expect_success(
+        &ack,
+        wire::FIELD_CANCEL_JOB,
+        "an administrator cancels a non-terminal job",
+    );
     assert_eq!(
-        ack["data"]["jobsCancelJob"],
+        ack["data"][wire::FIELD_CANCEL_JOB],
         json!({ "success": true }),
         "the mutation answers a verdict, never the cancelled state",
     );
@@ -327,8 +334,7 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     events
         .expect_exactly(wire::FACT_CANCELLED, parent_id, 1, QUIET)
         .await;
-    tail.expect_silence("cancellation appends no log line", QUIET)
-        .await;
+    stream::expect_total_silence(&mut tail, "cancellation appends no log line", QUIET).await;
 
     for job_id in [
         parent_id,

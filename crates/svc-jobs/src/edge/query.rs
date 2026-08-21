@@ -126,6 +126,6 @@ impl QueryRoot {
     ) -> Result<Vec<GqlRunnerTypeView>> {
         administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?;
-        project::fleet_views(&state.store, runner_type.as_deref()).await
+        project::fleet_views(state, runner_type.as_deref()).await
     }
 }

@@ -72,3 +72,9 @@ pub struct GqlManualRetryJobInput {
 pub struct GqlDeleteJobInput {
     pub job_id: Uuid,
 }
+
+#[derive(InputObject)]
+#[graphql(name = "JobsRunnerTypeInput")]
+pub struct GqlRunnerTypeInput {
+    pub runner_type: String,
+}

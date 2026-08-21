@@ -150,7 +150,7 @@ async fn terminal(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    crate::db::impacts::record_terminal(tx, run_id, at).await
 }
 
 pub async fn cancellation_requested(

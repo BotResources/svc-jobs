@@ -95,6 +95,7 @@ fn a_default_budget_above_the_ceiling_is_refused_at_construction() {
         attempts(5),
         TimeDelta::hours(1),
         TimeDelta::hours(1),
+        TimeDelta::hours(24),
     );
     // Then: the service refuses to hold a configuration whose every job would fail its budget
     assert_eq!(
@@ -115,7 +116,8 @@ fn a_non_positive_service_duration_is_refused_at_construction() {
             attempts(3),
             attempts(1),
             TimeDelta::zero(),
-            TimeDelta::hours(1)
+            TimeDelta::hours(1),
+            TimeDelta::hours(24)
         ),
         Err(JobsError::InvalidDuration {
             field: "max_run_duration"
@@ -126,10 +128,23 @@ fn a_non_positive_service_duration_is_refused_at_construction() {
             attempts(3),
             attempts(1),
             TimeDelta::hours(1),
-            TimeDelta::seconds(-1)
+            TimeDelta::seconds(-1),
+            TimeDelta::hours(24)
         ),
         Err(JobsError::InvalidDuration {
             field: "inactivity_timeout"
+        })
+    );
+    assert_eq!(
+        ServiceLimits::new(
+            attempts(3),
+            attempts(1),
+            TimeDelta::hours(1),
+            TimeDelta::hours(1),
+            TimeDelta::zero()
+        ),
+        Err(JobsError::InvalidDuration {
+            field: "retirement_quiet_period"
         })
     );
 }
@@ -172,12 +187,14 @@ fn a_valid_configuration_is_accepted_and_reads_back_its_own_figures() {
         attempts(2),
         TimeDelta::seconds(600),
         TimeDelta::seconds(300),
+        TimeDelta::seconds(900),
     )
     .unwrap();
     let policy = RetryPolicy::new(TimeDelta::seconds(2), 3, TimeDelta::minutes(10), 2_000).unwrap();
     // When/Then: the configured figures govern, none of them hard-coded
     assert_eq!(limits.max_run_duration(), TimeDelta::seconds(600));
     assert_eq!(limits.inactivity_timeout(), TimeDelta::seconds(300));
+    assert_eq!(limits.retirement_quiet_period(), TimeDelta::seconds(900));
     assert_eq!(limits.budget(None).unwrap().get(), 2);
     assert_eq!(policy.base_delay(), TimeDelta::seconds(2));
     assert_eq!(

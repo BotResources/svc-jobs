@@ -11,16 +11,24 @@ use futures::StreamExt;
 use super::{RunnerChannels, transport_error};
 use crate::app::{Jobs, presence};
 use crate::error::ServiceError;
+use crate::supervision::Established;
 
 pub const PRESENCE_EXPIRED: &str = "presence_expired";
 pub const GRACEFUL_SHUTDOWN: &str = "graceful_shutdown";
 
-pub async fn watch(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+const EVERY_KEY: &str = ">";
+
+pub async fn watch(
+    channels: RunnerChannels,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let entries = channels
         .presence_bucket()
-        .watch_all()
+        .watch_with_history(EVERY_KEY)
         .await
         .map_err(|error| ServiceError::Infra(error.to_string()))?;
+    established.signal();
     let mut entries = std::pin::pin!(entries);
     while let Some(entry) = entries.next().await {
         let entry = match entry {

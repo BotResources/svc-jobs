@@ -4,6 +4,7 @@ pub mod create;
 pub mod dispatch;
 pub mod environment;
 pub mod fingerprint;
+pub mod fleet;
 pub mod followups;
 pub mod integration;
 pub mod logs;
@@ -12,15 +13,20 @@ pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
 pub mod run_facts;
+pub mod runner_type_catalog;
+pub mod runner_type_impacts;
+pub mod runner_type_lifecycle;
 pub mod write;
 
 use std::sync::Arc;
 
+use bc_jobs::domain::actions::fleet::RetirementWindow;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::{Clock, IdFactory, JitterSource};
+use bc_jobs::ports::fleet::RunnerTypeCatalogWriter;
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
@@ -41,6 +47,7 @@ pub struct Jobs {
     pub jitter: Arc<dyn JitterSource>,
     pub limits: ServiceLimits,
     pub retry: RetryPolicy,
+    pub catalog: Arc<dyn RunnerTypeCatalogWriter>,
 }
 
 pub fn service_metadata() -> EventMetadata {
@@ -82,6 +89,13 @@ impl Jobs {
         };
         self.transport_effects(&job, events).await;
         Ok(())
+    }
+
+    pub fn retirement_window(&self) -> RetirementWindow {
+        RetirementWindow {
+            evaluated_at: self.clock.now(),
+            quiet_period: self.limits.retirement_quiet_period(),
+        }
     }
 
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {

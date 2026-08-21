@@ -11,11 +11,16 @@ use super::RunnerChannels;
 use crate::app::{Jobs, logs, run_facts};
 use crate::config::ConsumerTuning;
 use crate::error::ServiceError;
+use crate::supervision::Established;
 
 const STATUS_DURABLE: &str = "svc_jobs_status";
 const LOG_DURABLE: &str = "svc_jobs_logs";
 
-pub async fn consume_status(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_status(
+    channels: RunnerChannels,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let stream = bind(channels.context(), wire::STATUS_STREAM).await?;
     let consumer = durable(
         &stream,
@@ -24,6 +29,7 @@ pub async fn consume_status(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result
         channels.consumer_tuning(),
     )
     .await?;
+    established.signal();
     run(consumer, move |subject, payload| {
         let jobs = Arc::clone(&jobs);
         async move { handle_status(&jobs, &subject, &payload).await }
@@ -31,7 +37,11 @@ pub async fn consume_status(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result
     .await
 }
 
-pub async fn consume_logs(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_logs(
+    channels: RunnerChannels,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let stream = bind(channels.context(), wire::LOG_STREAM).await?;
     let consumer = durable(
         &stream,
@@ -40,6 +50,7 @@ pub async fn consume_logs(channels: RunnerChannels, jobs: Arc<Jobs>) -> Result<(
         channels.consumer_tuning(),
     )
     .await?;
+    established.signal();
     run(consumer, move |_subject, payload| {
         let jobs = Arc::clone(&jobs);
         async move {

@@ -73,7 +73,7 @@ pub const FLEET: &str = r#"
 query($runnerType: String) {
   jobsFleet(runnerType: $runnerType) {
     runnerType {
-      typeKey isAvailable totalCapacity busyInstanceCount idleInstanceCount
+      typeKey lifecycle isAvailable totalCapacity busyInstanceCount idleInstanceCount
       waitingJobCount executingJobCount
       instances { instanceKey version reportedStatus capacity isBusy currentRunIds }
     }
@@ -92,4 +92,16 @@ mutation($input: JobsManualRetryJobInput!) { jobsManualRetryJob(input: $input) {
 
 pub const DELETE_JOB: &str = r#"
 mutation($input: JobsDeleteJobInput!) { jobsDeleteJob(input: $input) { success } }
+"#;
+
+pub const DEPRECATE_RUNNER_TYPE: &str = r#"
+mutation($input: JobsRunnerTypeInput!) { jobsDeprecateRunnerType(input: $input) { success } }
+"#;
+
+pub const REACTIVATE_RUNNER_TYPE: &str = r#"
+mutation($input: JobsRunnerTypeInput!) { jobsReactivateRunnerType(input: $input) { success } }
+"#;
+
+pub const RETIRE_RUNNER_TYPE: &str = r#"
+mutation($input: JobsRunnerTypeInput!) { jobsRetireRunnerType(input: $input) { success } }
 "#;

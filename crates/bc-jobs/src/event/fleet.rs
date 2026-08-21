@@ -16,6 +16,30 @@ pub struct RunnerTypeRegistered {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeDeprecated {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeReactivated {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeRetired {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeBecameRetirable {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceConnected {
     pub runner_type_id: RunnerTypeId,
     pub runner_type: RunnerTypeKey,
@@ -50,6 +74,10 @@ pub struct InstanceDisconnected {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FleetEvent {
     RunnerTypeRegistered(RunnerTypeRegistered),
+    RunnerTypeDeprecated(RunnerTypeDeprecated),
+    RunnerTypeReactivated(RunnerTypeReactivated),
+    RunnerTypeRetired(RunnerTypeRetired),
+    RunnerTypeBecameRetirable(RunnerTypeBecameRetirable),
     InstanceConnected(InstanceConnected),
     InstanceStatusReported(InstanceStatusReported),
     InstanceDisconnected(InstanceDisconnected),
@@ -59,15 +87,36 @@ impl FleetEvent {
     pub fn event_type(&self) -> &'static str {
         match self {
             Self::RunnerTypeRegistered(_) => "RunnerTypeRegistered",
+            Self::RunnerTypeDeprecated(_) => "RunnerTypeDeprecated",
+            Self::RunnerTypeReactivated(_) => "RunnerTypeReactivated",
+            Self::RunnerTypeRetired(_) => "RunnerTypeRetired",
+            Self::RunnerTypeBecameRetirable(_) => "RunnerTypeBecameRetirable",
             Self::InstanceConnected(_) => "InstanceConnected",
             Self::InstanceStatusReported(_) => "InstanceStatusReported",
             Self::InstanceDisconnected(_) => "InstanceDisconnected",
         }
     }
 
+    pub fn changes_published_catalog(&self) -> bool {
+        match self {
+            Self::RunnerTypeRegistered(_)
+            | Self::RunnerTypeDeprecated(_)
+            | Self::RunnerTypeReactivated(_)
+            | Self::RunnerTypeRetired(_) => true,
+            Self::RunnerTypeBecameRetirable(_)
+            | Self::InstanceConnected(_)
+            | Self::InstanceStatusReported(_)
+            | Self::InstanceDisconnected(_) => false,
+        }
+    }
+
     pub fn runner_type_id(&self) -> RunnerTypeId {
         match self {
             Self::RunnerTypeRegistered(fact) => fact.runner_type_id,
+            Self::RunnerTypeDeprecated(fact) => fact.runner_type_id,
+            Self::RunnerTypeReactivated(fact) => fact.runner_type_id,
+            Self::RunnerTypeRetired(fact) => fact.runner_type_id,
+            Self::RunnerTypeBecameRetirable(fact) => fact.runner_type_id,
             Self::InstanceConnected(fact) => fact.runner_type_id,
             Self::InstanceStatusReported(fact) => fact.runner_type_id,
             Self::InstanceDisconnected(fact) => fact.runner_type_id,
@@ -77,6 +126,14 @@ impl FleetEvent {
     pub fn decode(event_type: &str, payload: Value) -> Result<Self, JobsError> {
         let decoded = match event_type {
             "RunnerTypeRegistered" => Self::RunnerTypeRegistered(serde_json::from_value(payload)?),
+            "RunnerTypeDeprecated" => Self::RunnerTypeDeprecated(serde_json::from_value(payload)?),
+            "RunnerTypeReactivated" => {
+                Self::RunnerTypeReactivated(serde_json::from_value(payload)?)
+            }
+            "RunnerTypeRetired" => Self::RunnerTypeRetired(serde_json::from_value(payload)?),
+            "RunnerTypeBecameRetirable" => {
+                Self::RunnerTypeBecameRetirable(serde_json::from_value(payload)?)
+            }
             "InstanceConnected" => Self::InstanceConnected(serde_json::from_value(payload)?),
             "InstanceStatusReported" => {
                 Self::InstanceStatusReported(serde_json::from_value(payload)?)
@@ -95,6 +152,10 @@ impl FleetEvent {
     pub fn runner_type(&self) -> &RunnerTypeKey {
         match self {
             Self::RunnerTypeRegistered(fact) => &fact.runner_type,
+            Self::RunnerTypeDeprecated(fact) => &fact.runner_type,
+            Self::RunnerTypeReactivated(fact) => &fact.runner_type,
+            Self::RunnerTypeRetired(fact) => &fact.runner_type,
+            Self::RunnerTypeBecameRetirable(fact) => &fact.runner_type,
             Self::InstanceConnected(fact) => &fact.runner_type,
             Self::InstanceStatusReported(fact) => &fact.runner_type,
             Self::InstanceDisconnected(fact) => &fact.runner_type,
@@ -104,6 +165,10 @@ impl FleetEvent {
     pub fn instance_key(&self) -> Option<&InstanceKey> {
         match self {
             Self::RunnerTypeRegistered(_) => None,
+            Self::RunnerTypeDeprecated(_) => None,
+            Self::RunnerTypeReactivated(_) => None,
+            Self::RunnerTypeRetired(_) => None,
+            Self::RunnerTypeBecameRetirable(_) => None,
             Self::InstanceConnected(fact) => Some(&fact.instance_key),
             Self::InstanceStatusReported(fact) => Some(&fact.instance_key),
             Self::InstanceDisconnected(fact) => Some(&fact.instance_key),
@@ -113,6 +178,10 @@ impl FleetEvent {
     pub fn payload(&self) -> Result<Value, JobsError> {
         match self {
             Self::RunnerTypeRegistered(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeDeprecated(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeReactivated(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeRetired(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeBecameRetirable(fact) => serde_json::to_value(fact),
             Self::InstanceConnected(fact) => serde_json::to_value(fact),
             Self::InstanceStatusReported(fact) => serde_json::to_value(fact),
             Self::InstanceDisconnected(fact) => serde_json::to_value(fact),
@@ -142,5 +211,27 @@ mod tests {
         assert_eq!(event.event_type(), "InstanceDisconnected");
         assert_eq!(payload["reason_code"], "presence_expired");
         assert_eq!(payload["instance_key"], "pod-7");
+    }
+
+    #[test]
+    fn only_a_lifecycle_fact_moves_the_published_catalog() {
+        // Given: an instance reporting its status, and the type being deprecated
+        let reported = FleetEvent::InstanceStatusReported(InstanceStatusReported {
+            runner_type_id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+            runner_type: RunnerTypeKey::new("analyst").unwrap(),
+            instance_key: InstanceKey::new("pod-7").unwrap(),
+            session_id: PresenceSessionId::new(Uuid::now_v7()).unwrap(),
+            version: RunnerVersion::new("1.4.2").unwrap(),
+            reported_status: ReportedStatus::Draining,
+            capacity: Capacity::new(1).unwrap(),
+            change_number: 3,
+        });
+        let deprecated = FleetEvent::RunnerTypeDeprecated(RunnerTypeDeprecated {
+            runner_type_id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+            runner_type: RunnerTypeKey::new("analyst").unwrap(),
+        });
+        // Then: presence traffic never reaches the bucket, a lifecycle change always does
+        assert!(!reported.changes_published_catalog());
+        assert!(deprecated.changes_published_catalog());
     }
 }

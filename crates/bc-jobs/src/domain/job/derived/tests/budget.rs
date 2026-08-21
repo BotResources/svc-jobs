@@ -6,6 +6,7 @@ fn lowered_to(ceiling: u32) -> ServiceLimits {
         MaxAttempts::new(1).unwrap(),
         chrono::TimeDelta::hours(72),
         chrono::TimeDelta::hours(24),
+        chrono::TimeDelta::hours(24),
     )
     .unwrap()
 }

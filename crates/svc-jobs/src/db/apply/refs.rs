@@ -5,17 +5,14 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
+use crate::db::fleet::load;
 use crate::db::hydrate::unavailable;
 
 pub async fn runner_type_id(tx: &mut PgConnection, key: &RunnerTypeKey) -> Result<Uuid, PortError> {
-    upsert_key(
-        tx,
-        "INSERT INTO runner_types (id, type_key) VALUES ($1, $2) \
-         ON CONFLICT (type_key) DO UPDATE SET type_key = EXCLUDED.type_key \
-         RETURNING id::uuid AS id",
-        key.as_str(),
-    )
-    .await
+    match load::route_id(&mut *tx, key).await? {
+        Some(id) => Ok(id),
+        None => load::upsert_route(tx, Uuid::now_v7(), key).await,
+    }
 }
 
 pub async fn producer_id(tx: &mut PgConnection, key: &ProducerKey) -> Result<Uuid, PortError> {

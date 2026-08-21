@@ -298,15 +298,24 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     );
 
     // Then: nothing moved on any channel, neither for the edge nor for the intruding context
-    watch
-        .expect_silence("a refused caller reaches no job subscriber", QUIET)
-        .await;
-    listing
-        .expect_silence("a refused caller reaches no list subscriber", QUIET)
-        .await;
-    fleet_watch
-        .expect_silence("a refused caller moves no fleet count", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut watch,
+        "a refused caller reaches no job subscriber",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut listing,
+        "a refused caller reaches no list subscriber",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a refused caller moves no fleet count",
+        QUIET,
+    )
+    .await;
     for refused in [
         wire::FACT_CANCELLED,
         wire::FACT_COMPLETED,
@@ -367,8 +376,9 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
 
     // Then: an impersonated administrator is audited as the passport says, not as the operator
     let (impersonated, operator_id) = impersonating_admin();
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::delete_job(&client, &impersonated, failed_id).await,
+        wire::FIELD_DELETE_JOB,
         "a super administrator acting through an impersonated passport",
     );
     let audited = gql::job(&client, admin, failed_id).await;

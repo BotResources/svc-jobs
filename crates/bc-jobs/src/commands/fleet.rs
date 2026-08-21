@@ -1,4 +1,5 @@
 use crate::commands::{CommandResult, CommandWarning, FleetCommandResult};
+use crate::domain::actions::fleet::RunnerTypeDecisionFacts;
 use crate::domain::fleet::RunnerType;
 use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstance;
@@ -8,7 +9,8 @@ use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion}
 use crate::error::JobsError;
 use crate::event::fleet::{
     FleetEvent, InstanceConnected, InstanceDisconnected, InstanceStatusReported,
-    RunnerTypeRegistered,
+    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeReactivated, RunnerTypeRegistered,
+    RunnerTypeRetired,
 };
 
 pub const PRESENCE_EXPIRED: &str = "presence_expired";
@@ -103,6 +105,54 @@ pub fn observe_loss(
             reason_code: command.reason_code,
         },
     )))
+}
+
+pub fn deprecate(runner_type: &RunnerType) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_deprecate()?;
+    Ok(CommandResult::from_event(FleetEvent::RunnerTypeDeprecated(
+        RunnerTypeDeprecated {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        },
+    )))
+}
+
+pub fn reactivate(runner_type: &RunnerType) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_reactivate()?;
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeReactivated(RunnerTypeReactivated {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        }),
+    ))
+}
+
+pub fn retire(
+    runner_type: &RunnerType,
+    facts: RunnerTypeDecisionFacts,
+) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_retire(facts)?;
+    Ok(CommandResult::from_event(FleetEvent::RunnerTypeRetired(
+        RunnerTypeRetired {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        },
+    )))
+}
+
+pub fn became_retirable(
+    runner_type: &RunnerType,
+    facts: RunnerTypeDecisionFacts,
+) -> FleetCommandResult {
+    if runner_type.guard_retire(facts).is_err() {
+        return CommandResult::new(vec![]);
+    }
+    CommandResult::from_event(FleetEvent::RunnerTypeBecameRetirable(
+        RunnerTypeBecameRetirable {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        },
+    ))
 }
 
 fn connected(

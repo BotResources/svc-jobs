@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicUsize;
 
 use br_util_axum_readiness::Readiness;
+use tokio::sync::Notify;
 
 use super::*;
 
@@ -19,10 +20,11 @@ fn attempt_counter() -> Arc<AtomicUsize> {
 
 fn spawn_always_failing(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
     let tally = tally.clone();
-    supervisor.spawn(name, move || {
+    supervisor.spawn(name, move |established| {
         let tally = tally.clone();
         async move {
             tally.fetch_add(1, Ordering::SeqCst);
+            established.signal();
             Err(ServiceError::Infra("the source of work died".to_owned()))
         }
     });
@@ -30,12 +32,34 @@ fn spawn_always_failing(supervisor: &Supervisor, name: &'static str, tally: &Arc
 
 fn spawn_failing_once(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
     let tally = tally.clone();
-    supervisor.spawn(name, move || {
+    supervisor.spawn(name, move |established| {
         let tally = tally.clone();
         async move {
             if tally.fetch_add(1, Ordering::SeqCst) == 0 {
+                established.signal();
                 return Err(ServiceError::Infra("the connection dropped".to_owned()));
             }
+            established.signal();
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    });
+}
+
+fn spawn_failing_then_never_establishing(
+    supervisor: &Supervisor,
+    name: &'static str,
+    tally: &Arc<AtomicUsize>,
+) {
+    let tally = tally.clone();
+    supervisor.spawn(name, move |established| {
+        let tally = tally.clone();
+        async move {
+            if tally.fetch_add(1, Ordering::SeqCst) == 0 {
+                established.signal();
+                return Err(ServiceError::Infra("the connection dropped".to_owned()));
+            }
+            drop(established);
             std::future::pending::<()>().await;
             Ok(())
         }
@@ -44,10 +68,28 @@ fn spawn_failing_once(supervisor: &Supervisor, name: &'static str, tally: &Arc<A
 
 fn spawn_healthy(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
     let tally = tally.clone();
-    supervisor.spawn(name, move || {
+    supervisor.spawn(name, move |established| {
         let tally = tally.clone();
         async move {
             tally.fetch_add(1, Ordering::SeqCst);
+            established.signal();
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    });
+}
+
+fn spawn_establishing_when_released(
+    supervisor: &Supervisor,
+    name: &'static str,
+    release: &Arc<Notify>,
+) {
+    let release = release.clone();
+    supervisor.spawn(name, move |established| {
+        let release = release.clone();
+        async move {
+            release.notified().await;
+            established.signal();
             std::future::pending::<()>().await;
             Ok(())
         }
@@ -62,6 +104,57 @@ async fn until(condition: impl Fn() -> bool) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     panic!("the supervised tasks never reached the state this scenario waits for");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_task_that_has_not_bound_its_source_of_work_keeps_a_booted_pod_out_of_rotation() {
+    // Given: a spawned task that has not yet bound the subscription it lives on
+    let readiness = ReadinessHandle::ready();
+    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let release = Arc::new(Notify::new());
+    spawn_establishing_when_released(&supervisor, "presence_watch", &release);
+
+    // When: boot completes while that task is still binding
+    supervisor.boot_complete();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Then: spawned is not bound — the pod serves nothing and names what is missing
+    assert_eq!(
+        readiness.snapshot(),
+        Readiness::NotReady {
+            reason: "background tasks are down: presence_watch".to_owned()
+        },
+        "a subscription that is not bound yet can still miss the signal it exists to catch",
+    );
+
+    // When: the task binds its source of work
+    release.notify_one();
+
+    // Then: readiness opens on the establishment, not on the spawn
+    until(|| readiness.is_ready()).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restarted_task_reopens_the_pod_only_when_it_binds_again() {
+    // Given: a booted service whose task fails once, then runs without ever binding again
+    let readiness = ReadinessHandle::ready();
+    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    supervisor.boot_complete();
+    let attempts = attempt_counter();
+    spawn_failing_then_never_establishing(&supervisor, "hub_pump", &attempts);
+
+    // When: the retry runs and holds
+    until(|| attempts.load(Ordering::SeqCst) == 2).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Then: a running attempt is not a bound subscription — readiness stays down
+    assert_eq!(
+        readiness.snapshot(),
+        Readiness::NotReady {
+            reason: "background tasks are down: hub_pump".to_owned()
+        },
+        "restarting a task re-establishes nothing on its own; only the task can say it is bound",
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -146,4 +239,23 @@ fn the_restart_backoff_doubles_up_to_its_ceiling_and_never_overflows() {
 
     // Then: a long-crashing task shifts no further than the clamp, whatever the count
     assert_eq!(policy.backoff(u32::MAX), Duration::from_secs(30));
+}
+
+#[test]
+fn a_declared_dependency_recovers_readiness_only_after_reconciliation_marks_it_up() {
+    let readiness = ReadinessHandle::not_ready("booting");
+    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    supervisor.boot_complete();
+    assert!(readiness.is_ready());
+
+    supervisor.mark_down("runner type Published Language catalog");
+    assert_eq!(
+        readiness.snapshot(),
+        Readiness::NotReady {
+            reason: "background tasks are down: runner type Published Language catalog".to_owned(),
+        }
+    );
+
+    supervisor.mark_up("runner type Published Language catalog");
+    assert!(readiness.is_ready());
 }

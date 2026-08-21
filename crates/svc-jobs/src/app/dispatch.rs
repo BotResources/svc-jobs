@@ -58,7 +58,7 @@ async fn dispatch_one(
     job: &Job,
     runner_type: Option<&RunnerType>,
 ) -> Result<Outcome, ServiceError> {
-    if !runner_type.is_some_and(RunnerType::is_available) {
+    if runner_type.is_none_or(|known| known.guard_dispatch().is_err()) {
         return Ok(Outcome::NobodyWouldTakeIt);
     }
     let result = job.dispatch_run(

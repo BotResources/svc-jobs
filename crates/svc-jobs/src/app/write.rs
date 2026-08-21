@@ -1,6 +1,8 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use bc_jobs::domain::actions::fleet::{RetirementWindow, guard_accept_job};
 use bc_jobs::domain::fleet::RunnerType;
+use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::ids::{EventId, JobId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
@@ -14,6 +16,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::app::{fingerprint, followups, integration};
+use crate::db::fleet::load;
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
@@ -67,6 +70,8 @@ pub async fn commit_job_changes(
     for change in changes.iter().filter(|change| change.before.is_some()) {
         guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
     }
+    let routed = resolve_runner_type_routes(&mut tx, ids, &changes).await?;
+    guard_runner_types_still_accept_jobs(&routed)?;
     for change in &changes {
         apply_change(&mut tx, ids, change, metadata, at).await?;
     }
@@ -115,6 +120,46 @@ async fn apply_change(
             stage(&mut *tx, &record)
                 .await
                 .map_err(|error| ServiceError::Infra(error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+pub struct RoutedRunnerType<'a> {
+    key: &'a RunnerTypeKey,
+    lifecycle: Option<RunnerTypeLifecycle>,
+}
+
+async fn resolve_runner_type_routes<'a>(
+    tx: &mut sqlx::PgConnection,
+    ids: &dyn IdFactory,
+    changes: &'a [JobChange],
+) -> Result<Vec<RoutedRunnerType<'a>>, ServiceError> {
+    let mut claimed: BTreeMap<&str, &RunnerTypeKey> = BTreeMap::new();
+    for change in changes {
+        for event in &change.events {
+            if let JobEvent::JobQueued(fact) = event {
+                claimed.insert(fact.runner_type.as_str(), &fact.runner_type);
+            }
+        }
+    }
+    let mut routed = Vec::with_capacity(claimed.len());
+    for key in claimed.into_values() {
+        let route = load::upsert_route(&mut *tx, ids.next(), key).await?;
+        routed.push(RoutedRunnerType {
+            key,
+            lifecycle: load::registered_lifecycle(&mut *tx, route).await?,
+        });
+    }
+    Ok(routed)
+}
+
+fn guard_runner_types_still_accept_jobs(
+    routed: &[RoutedRunnerType<'_>],
+) -> Result<(), ServiceError> {
+    for runner_type in routed {
+        if let Some(lifecycle) = runner_type.lifecycle {
+            guard_accept_job(lifecycle, runner_type.key)?;
         }
     }
     Ok(())
@@ -183,6 +228,17 @@ pub async fn commit_fleet_events(
     metadata: &EventMetadata,
     at: DateTime<Utc>,
 ) -> Result<(), ServiceError> {
+    commit_fleet(store, ids, change, None, metadata, at).await
+}
+
+pub async fn commit_fleet(
+    store: &PgStore,
+    ids: &dyn IdFactory,
+    change: FleetChange<'_>,
+    revalidate_retirement_within: Option<RetirementWindow>,
+    metadata: &EventMetadata,
+    at: DateTime<Utc>,
+) -> Result<(), ServiceError> {
     if change.events.is_empty() {
         return Ok(());
     }
@@ -191,6 +247,12 @@ pub async fn commit_fleet_events(
         PgStore::lock_runner_type(&mut tx, change.runner_type_id, change.runner_type).await?;
     if fingerprint::of_fleet(change.decided_on) != fingerprint::of_fleet(locked.as_ref()) {
         return Err(ServiceError::Contended);
+    }
+    if let Some(window) = revalidate_retirement_within {
+        let locked = locked.as_ref().ok_or(ServiceError::Contended)?;
+        let facts =
+            PgStore::runner_type_decision_facts_in(&mut tx, change.runner_type, window).await?;
+        locked.guard_retire(facts)?;
     }
     let mut recorded = Vec::with_capacity(change.events.len());
     for event in change.events {

@@ -147,9 +147,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
             .await;
     }
     instance.expect_no_trigger(QUIET).await;
-    watch
-        .expect_silence("a refused intervention pushes nothing", QUIET)
-        .await;
+    stream::expect_total_silence(&mut watch, "a refused intervention pushes nothing", QUIET).await;
     let untouched = gql::job_view(&client, admin, predecessor_id).await;
     assert!(
         untouched["job"]["manualRetry"].is_null(),
@@ -169,10 +167,10 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         failed_resolution_id,
     )
     .await;
-    verdict::expect_ack(&ack, "an administrator retries an eligible failed job");
-    assert_eq!(
-        ack["data"]["jobsManualRetryJob"],
-        json!({ "success": true })
+    gql::expect_success(
+        &ack,
+        wire::FIELD_MANUAL_RETRY_JOB,
+        "an administrator retries an eligible failed job",
     );
 
     let intervention = stream::await_delta(
@@ -222,9 +220,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         ),
         ("deleting a non-terminal job", non_terminal_code),
     ]);
-    watch
-        .expect_silence("a refused deletion pushes nothing", QUIET)
-        .await;
+    stream::expect_total_silence(&mut watch, "a refused deletion pushes nothing", QUIET).await;
     durable
         .assert_count(
             db::DELETIONS_OF_JOB,
@@ -420,7 +416,11 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         failed_resolution_id,
     )
     .await;
-    verdict::expect_ack(&absorbed, "an identical redelivery of the intervention");
+    gql::expect_success(
+        &absorbed,
+        wire::FIELD_MANUAL_RETRY_JOB,
+        "an identical redelivery of the intervention",
+    );
 
     let mut state_refusals = Vec::new();
     for (intervention, candidate, resolution, what) in [
@@ -473,9 +473,7 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
              is refused",
         );
     }
-    watch
-        .expect_silence("a refused intervention pushes nothing", QUIET)
-        .await;
+    stream::expect_total_silence(&mut watch, "a refused intervention pushes nothing", QUIET).await;
     instance.expect_no_trigger(QUIET).await;
 
     durable

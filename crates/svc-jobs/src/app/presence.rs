@@ -8,7 +8,7 @@ use bc_jobs::ports::environment::{Clock, IdFactory};
 use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
 use contract_jobs::runner as wire;
 
-use super::{Jobs, reclaim, service_metadata, write};
+use super::{Jobs, reclaim, runner_type_catalog, service_metadata, write};
 use crate::db::PgStore;
 use crate::error::ServiceError;
 
@@ -21,23 +21,37 @@ pub async fn observed(jobs: &Jobs, presence: &wire::Presence) -> Result<(), Serv
 
 async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceError> {
     let key = RunnerTypeKey::new(&presence.runner_type)?;
-    let known = FleetReader::load(&jobs.store, &key).await?;
-    let runner_type_id = match &known {
-        Some(runner_type) => runner_type.id(),
-        None => RunnerTypeId::new(jobs.store.ensure_runner_type(&key).await?)?,
-    };
-    let command = ObservePresence {
-        runner_type_id,
-        runner_type: key.clone(),
-        instance_key: InstanceKey::new(&presence.instance_key)?,
-        session_id: PresenceSessionId::new(jobs.ids.next())?,
-        version: RunnerVersion::new(&presence.runner_version)?,
-        reported_status: ReportedStatus::new(presence.status.as_str())?,
-        capacity: Capacity::new(presence.capacity.get())?,
-    };
-    let result = observe_presence(known.as_ref(), command)?;
-    recorded(
-        write::commit_fleet_events(
+    let instance_key = InstanceKey::new(&presence.instance_key)?;
+    let version = RunnerVersion::new(&presence.runner_version)?;
+    let reported_status = ReportedStatus::new(presence.status.as_str())?;
+    let capacity = Capacity::new(presence.capacity.get())?;
+    for _ in 0..PRESENCE_DECISION_ATTEMPTS {
+        let known = FleetReader::load(&jobs.store, &key).await?;
+        let runner_type_id = match &known {
+            Some(runner_type) => runner_type.id(),
+            None => RunnerTypeId::new(
+                jobs.store
+                    .runner_type_route_id(&key)
+                    .await?
+                    .unwrap_or_else(|| jobs.ids.next()),
+            )?,
+        };
+        let result = observe_presence(
+            known.as_ref(),
+            ObservePresence {
+                runner_type_id,
+                runner_type: key.clone(),
+                instance_key: instance_key.clone(),
+                session_id: PresenceSessionId::new(jobs.ids.next())?,
+                version: version.clone(),
+                reported_status,
+                capacity,
+            },
+        )?;
+        if result.events.is_empty() {
+            return Ok(());
+        }
+        match write::commit_fleet_events(
             &jobs.store,
             jobs.ids.as_ref(),
             write::FleetChange {
@@ -49,9 +63,17 @@ async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceE
             &service_metadata(),
             jobs.clock.now(),
         )
-        .await,
-    )
-    .map(|_| ())
+        .await
+        {
+            Ok(()) => {
+                runner_type_catalog::project_committed(jobs, &key, &result.events).await;
+                return Ok(());
+            }
+            Err(ServiceError::Contended) => continue,
+            Err(other) => return Err(other),
+        }
+    }
+    Err(ServiceError::Contended)
 }
 
 async fn refused(
@@ -78,34 +100,34 @@ pub async fn drained(
 ) -> Result<(), ServiceError> {
     let key = RunnerTypeKey::new(runner_type)?;
     let instance_key = InstanceKey::new(instance_key)?;
-    let Some(known) = FleetReader::load(&jobs.store, &key).await? else {
-        return Ok(());
-    };
-    let Some(live) = known.instance(&instance_key) else {
-        return Ok(());
-    };
-    let command = ObservePresence {
-        runner_type_id: known.id(),
-        runner_type: key.clone(),
-        instance_key: instance_key.clone(),
-        session_id: live.session_id(),
-        version: live.version().clone(),
-        reported_status: ReportedStatus::Draining,
-        capacity: live.capacity(),
-    };
-    let result = observe_presence(Some(&known), command)?;
-    if result.events.is_empty() {
-        return Ok(());
-    }
-    tracing::warn!(
-        runner_type = %key.as_str(),
-        instance_key = %instance_key.as_str(),
-        "a live instance whose presence entry this service refuses is recorded as draining, so it \
-         keeps its session and its runs but takes no new work until an entry the domain accepts \
-         says otherwise"
-    );
-    recorded(
-        write::commit_fleet_events(
+    for _ in 0..PRESENCE_DECISION_ATTEMPTS {
+        let Some(known) = FleetReader::load(&jobs.store, &key).await? else {
+            return Ok(());
+        };
+        let Some(live) = known.instance(&instance_key) else {
+            return Ok(());
+        };
+        let result = observe_presence(
+            Some(&known),
+            ObservePresence {
+                runner_type_id: known.id(),
+                runner_type: key.clone(),
+                instance_key: instance_key.clone(),
+                session_id: live.session_id(),
+                version: live.version().clone(),
+                reported_status: ReportedStatus::Draining,
+                capacity: live.capacity(),
+            },
+        )?;
+        if result.events.is_empty() {
+            return Ok(());
+        }
+        tracing::warn!(
+            runner_type = %key.as_str(),
+            instance_key = %instance_key.as_str(),
+            "a live instance whose presence entry this service refuses is recorded as draining"
+        );
+        match write::commit_fleet_events(
             &jobs.store,
             jobs.ids.as_ref(),
             write::FleetChange {
@@ -117,20 +139,20 @@ pub async fn drained(
             &service_metadata(),
             jobs.clock.now(),
         )
-        .await,
-    )
-    .map(|_| ())
-}
-
-fn recorded(outcome: Result<(), ServiceError>) -> Result<bool, ServiceError> {
-    match outcome {
-        Ok(()) => Ok(true),
-        Err(ServiceError::Contended) => Ok(false),
-        Err(other) => Err(other),
+        .await
+        {
+            Ok(()) => {
+                runner_type_catalog::project_committed(jobs, &key, &result.events).await;
+                return Ok(());
+            }
+            Err(ServiceError::Contended) => continue,
+            Err(other) => return Err(other),
+        }
     }
+    Err(ServiceError::Contended)
 }
 
-const LOSS_DECISION_ATTEMPTS: usize = 5;
+const PRESENCE_DECISION_ATTEMPTS: usize = 5;
 
 pub struct ObservedLoss<'a> {
     pub runner_type: &'a RunnerTypeKey,
@@ -200,7 +222,7 @@ pub async fn record_loss(
     observed: ObservedLoss<'_>,
 ) -> Result<Option<PresenceSessionId>, ServiceError> {
     let mut pinned = observed.session_id;
-    for _ in 0..LOSS_DECISION_ATTEMPTS {
+    for _ in 0..PRESENCE_DECISION_ATTEMPTS {
         let Some(known) = FleetReader::load(store, observed.runner_type).await? else {
             return Ok(None);
         };
@@ -229,29 +251,29 @@ pub async fn record_loss(
             }
             Err(other) => return Err(other.into()),
         };
-        let written = recorded(
-            write::commit_fleet_events(
-                store,
-                ids,
-                write::FleetChange {
-                    runner_type_id: known.id(),
-                    runner_type: observed.runner_type,
-                    decided_on: Some(&known),
-                    events: &result.events,
-                },
-                &service_metadata(),
-                clock.now(),
-            )
-            .await,
-        )?;
-        if written {
-            return Ok(Some(session_id));
+        match write::commit_fleet_events(
+            store,
+            ids,
+            write::FleetChange {
+                runner_type_id: known.id(),
+                runner_type: observed.runner_type,
+                decided_on: Some(&known),
+                events: &result.events,
+            },
+            &service_metadata(),
+            clock.now(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(Some(session_id)),
+            Err(ServiceError::Contended) => continue,
+            Err(other) => return Err(other),
         }
     }
     tracing::error!(
         runner_type = %observed.runner_type.as_str(),
         instance_key = %observed.instance_key.as_str(),
-        attempts = LOSS_DECISION_ATTEMPTS,
+        attempts = PRESENCE_DECISION_ATTEMPTS,
         "an instance loss found the fleet moving under every attempt; its presence session stays \
          open and its runs wait for the backstop instead of being reclaimed"
     );

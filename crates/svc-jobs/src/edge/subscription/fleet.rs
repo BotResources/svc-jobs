@@ -4,7 +4,6 @@ use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::policies::fleet::fleet_signals;
-use br_util_graphql::EdgeError;
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use uuid::Uuid;
@@ -65,7 +64,7 @@ pub fn fleet_stream(
 async fn snapshot(state: &EdgeState, runner_type: Option<&str>) -> Result<GqlFleetStreamMessage> {
     Ok(GqlFleetStreamMessage::Snapshot(GqlFleetSnapshot {
         cursor: cursor(Uuid::now_v7()),
-        runner_types: project::fleet_views(&state.store, runner_type).await?,
+        runner_types: project::fleet_views(state, runner_type).await?,
     }))
 }
 
@@ -82,6 +81,10 @@ async fn fleet_deltas(
     }
     let kind = match event {
         FleetEvent::RunnerTypeRegistered(_) => GqlFleetEventKind::RunnerTypeRegistered,
+        FleetEvent::RunnerTypeDeprecated(_) => GqlFleetEventKind::RunnerTypeDeprecated,
+        FleetEvent::RunnerTypeReactivated(_) => GqlFleetEventKind::RunnerTypeReactivated,
+        FleetEvent::RunnerTypeRetired(_) => GqlFleetEventKind::RunnerTypeRetired,
+        FleetEvent::RunnerTypeBecameRetirable(_) => GqlFleetEventKind::RunnerTypeBecameRetirable,
         FleetEvent::InstanceConnected(_) => GqlFleetEventKind::InstanceConnected,
         FleetEvent::InstanceStatusReported(_) => GqlFleetEventKind::InstanceStatusReported,
         FleetEvent::InstanceDisconnected(_) => GqlFleetEventKind::InstanceDisconnected,
@@ -97,7 +100,7 @@ async fn fleet_deltas(
         job_id: None,
         run_id: None,
     };
-    Ok(vec![delta(state, &key, carried).await?])
+    Ok(delta(state, &key, carried).await?.into_iter().collect())
 }
 
 async fn job_deltas(
@@ -131,7 +134,7 @@ async fn job_deltas(
             job_id: Some(job_id.as_uuid()),
             run_id,
         };
-        messages.push(delta(state, &key, carried).await?);
+        messages.extend(delta(state, &key, carried).await?);
     }
     Ok(messages)
 }
@@ -150,15 +153,14 @@ async fn delta(
     state: &EdgeState,
     key: &RunnerTypeKey,
     event: GqlFleetEvent,
-) -> Result<GqlFleetStreamMessage> {
-    let mut views = project::fleet_views(&state.store, Some(key.as_str())).await?;
-    let view = views
-        .pop()
-        .ok_or_else(|| async_graphql::Error::from(EdgeError::internal("fleet_view_absent")))?;
-    Ok(GqlFleetStreamMessage::Delta(GqlRunnerTypeDelta {
+) -> Result<Option<GqlFleetStreamMessage>> {
+    let Some(view) = project::fleet_views(state, Some(key.as_str())).await?.pop() else {
+        return Ok(None);
+    };
+    Ok(Some(GqlFleetStreamMessage::Delta(GqlRunnerTypeDelta {
         cursor: cursor(event.id),
         event,
         runner_type: view.runner_type,
         affordances: view.affordances,
-    }))
+    })))
 }

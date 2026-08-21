@@ -10,6 +10,23 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.2.0 - 2026-08-21
+
+- Added the runner-type lifecycle migration and canonical Postgres adapter,
+  including set-based decision-fact reads for snapshots and a locked retirement
+  recheck that prevents an active-job race.
+- Added ack-only administrator mutations for deprecation, reactivation, and
+  retirement. Fleet reads and every typed fleet delta carry lifecycle and the
+  complete current affordance set from the shared domain decisions.
+- Added the Published Language adapter for `jobs.runner_type.*`; active and
+  deprecated types are put, retired types retracted, and startup reconciles the
+  full prefix. A post-commit KV failure is logged and healed later rather than
+  turning a committed mutation into a false error verdict.
+- Separated Job routing keys from presence-registered RunnerType aggregates;
+  added per-pod periodic catalog reconciliation with readiness health —
+  convergence is by reconciliation, with no cross-pod write ordering — and a
+  durable, idempotent quiet-period affordance impact.
+
 ## 0.1.1 - 2026-08-19
 
 - **The service survives a restart.** Boot no longer runs `ensure_app_role`

@@ -1,3 +1,5 @@
+pub mod runner_type_catalog;
+
 use std::sync::Arc;
 
 use bc_jobs::domain::ids::{JobId, ResolutionId};
@@ -11,6 +13,7 @@ use uuid::Uuid;
 
 use crate::app::{Jobs, create, resolve};
 use crate::error::ServiceError;
+use crate::supervision::Established;
 
 const CREATE_DURABLE: &str = "svc_jobs_job_create";
 const CANCEL_DURABLE: &str = "svc_jobs_job_cancel";
@@ -64,8 +67,13 @@ async fn open<T: DeserializeOwned>(
         .map_err(ServiceError::from)
 }
 
-pub async fn consume_creations(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_creations(
+    fabric: Fabric,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let mut consumer = open::<Value>(&fabric, Verb::Create).await?;
+    established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
@@ -112,8 +120,13 @@ fn declared_job_id(payload: &Value) -> Option<Uuid> {
         .and_then(|raw| Uuid::parse_str(raw).ok())
 }
 
-pub async fn consume_cancellations(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_cancellations(
+    fabric: Fabric,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let mut consumer = open::<wire::CancelJob>(&fabric, Verb::Cancel).await?;
+    established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
@@ -146,8 +159,13 @@ async fn cancel(
     .await
 }
 
-pub async fn consume_completions(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_completions(
+    fabric: Fabric,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let mut consumer = open::<wire::FinishJob>(&fabric, Verb::Finish).await?;
+    established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,
@@ -176,8 +194,13 @@ async fn finish(
     .await
 }
 
-pub async fn consume_failures(fabric: Fabric, jobs: Arc<Jobs>) -> Result<(), ServiceError> {
+pub async fn consume_failures(
+    fabric: Fabric,
+    jobs: Arc<Jobs>,
+    established: Established,
+) -> Result<(), ServiceError> {
     let mut consumer = open::<wire::FailJob>(&fabric, Verb::Fail).await?;
+    established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
             Err(_) => MessageOutcome::Term,

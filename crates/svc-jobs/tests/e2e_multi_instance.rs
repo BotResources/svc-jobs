@@ -192,9 +192,12 @@ async fn two_jobs_instances_dispatch_a_waiting_job_exactly_once() {
         "neither pod dispatches a second run for a job already in flight",
     );
 
-    unrelated
-        .expect_silence("an unrelated window is never woken by this job", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut unrelated,
+        "an unrelated window is never woken by this job",
+        QUIET,
+    )
+    .await;
     for pod in &pods {
         assert!(
             gql::ready(pod).await,

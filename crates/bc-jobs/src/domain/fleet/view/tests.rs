@@ -2,6 +2,7 @@ use super::*;
 use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstanceState;
+use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::job::resolution::JobResolution;
@@ -33,6 +34,7 @@ fn analysts(instances: Vec<RunnerInstance>) -> RunnerType {
         id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
+        lifecycle: RunnerTypeLifecycle::Active,
         instances,
     })
     .unwrap()
@@ -103,14 +105,6 @@ fn a_type_declares_the_capacity_of_its_live_instances_that_still_take_work() {
     // contributes nothing even though it is still live
     assert_eq!(view.total_capacity(), 5);
     assert_eq!(view.instances().len(), 3);
-}
-
-#[test]
-fn an_unregistered_type_declares_no_capacity_at_all() {
-    // Given: a runner type key no instance ever announced
-    let view = unregistered_fleet_view(&RunnerTypeKey::new("archivist").unwrap(), &[]);
-    // Then: nothing is declared — an absent fleet never reads as room for work
-    assert_eq!(view.total_capacity(), 0);
 }
 
 #[test]

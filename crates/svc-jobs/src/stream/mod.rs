@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::db::notify::{DOMAIN_EVENT_CHANNEL, DomainEventSignal, RUN_LOG_CHANNEL, RunLogSignal};
 use crate::error::ServiceError;
+use crate::supervision::Established;
 
 const CAPACITY: usize = 1_024;
 
@@ -71,13 +72,21 @@ impl Hub {
     }
 }
 
-pub async fn listen(pool: PgPool, hub: Hub) -> Result<(), ServiceError> {
+pub async fn listen(pool: PgPool, hub: Hub, established: Established) -> Result<(), ServiceError> {
     let mut listener = PgListener::connect_with(&pool).await?;
     listener
         .listen_all([DOMAIN_EVENT_CHANNEL, RUN_LOG_CHANNEL])
         .await?;
+    established.signal();
     loop {
-        let notification = listener.recv().await?;
+        let Some(notification) = listener.try_recv().await? else {
+            return Err(ServiceError::Infra(
+                "the durable fact listener lost its connection; notifications raised while it \
+                 reconnects are never replayed, so the listener restarts and every subscription \
+                 is cut rather than left live and lossy"
+                    .to_owned(),
+            ));
+        };
         let outcome = match notification.channel() {
             DOMAIN_EVENT_CHANNEL => domain_event(&pool, &hub, notification.payload()).await,
             RUN_LOG_CHANNEL => run_log(&hub, notification.payload()),

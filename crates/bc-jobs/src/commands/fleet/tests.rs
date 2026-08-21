@@ -1,7 +1,9 @@
 use super::*;
+use crate::domain::actions::fleet::RunnerTypeDecisionFacts;
 use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstanceState;
+use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use crate::fixtures::ts;
 use uuid::Uuid;
 
@@ -26,13 +28,25 @@ fn declaring(status: ReportedStatus, capacity: u32) -> ObservePresence {
 }
 
 fn fleet(instances: Vec<RunnerInstance>) -> RunnerType {
+    fleet_in(RunnerTypeLifecycle::Active, instances)
+}
+
+fn fleet_in(lifecycle: RunnerTypeLifecycle, instances: Vec<RunnerInstance>) -> RunnerType {
     RunnerType::hydrate(RunnerTypeState {
         id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
+        lifecycle,
         instances,
     })
     .unwrap()
+}
+
+fn unused() -> RunnerTypeDecisionFacts {
+    RunnerTypeDecisionFacts::unused(crate::domain::actions::fleet::RetirementWindow {
+        evaluated_at: ts(200_000),
+        quiet_period: chrono::TimeDelta::hours(24),
+    })
 }
 
 fn live(status: ReportedStatus, changes: u32) -> RunnerInstance {
@@ -253,5 +267,80 @@ fn a_loss_naming_a_session_the_instance_no_longer_holds_is_refused() {
             observed_session_id: observed.as_uuid(),
             live_session_id: current.as_uuid(),
         })
+    );
+}
+
+#[test]
+fn deprecating_uses_the_same_denial_as_its_affordance() {
+    let deprecated = fleet_in(RunnerTypeLifecycle::Deprecated, vec![]);
+    let decision = deprecated.guard_deprecate();
+    let command = deprecate(&deprecated);
+    assert_eq!(
+        decision,
+        Err(JobsError::RunnerTypeNotActive {
+            lifecycle: "DEPRECATED"
+        })
+    );
+    assert_eq!(command.err(), decision.err());
+    assert_eq!(
+        deprecated.can_deprecate().reason_code(),
+        Some("runner_type_not_active")
+    );
+}
+
+#[test]
+fn each_lifecycle_command_emits_one_granular_fact_when_its_decision_allows_it() {
+    let active = fleet(vec![]);
+    assert!(matches!(
+        deprecate(&active).unwrap().events.as_slice(),
+        [FleetEvent::RunnerTypeDeprecated(_)]
+    ));
+
+    let deprecated = fleet_in(RunnerTypeLifecycle::Deprecated, vec![]);
+    assert!(matches!(
+        reactivate(&deprecated).unwrap().events.as_slice(),
+        [FleetEvent::RunnerTypeReactivated(_)]
+    ));
+    assert!(matches!(
+        retire(&deprecated, unused()).unwrap().events.as_slice(),
+        [FleetEvent::RunnerTypeRetired(_)]
+    ));
+}
+
+#[test]
+fn the_retirable_fact_is_emitted_only_when_the_retirement_decision_itself_opens() {
+    // Given: a deprecated type whose quiet period has elapsed, and one whose has not
+    let deprecated = fleet_in(RunnerTypeLifecycle::Deprecated, vec![]);
+    let still_quiet = RunnerTypeDecisionFacts {
+        non_terminal_job_count: 0,
+        latest_terminal_run_at: Some(ts(199_000)),
+        ..unused()
+    };
+    // When: the durable timer asks whether the type has become retirable
+    // Then: the fact follows the same decision the command enforces, never a second reading
+    assert!(matches!(
+        became_retirable(&deprecated, unused()).events.as_slice(),
+        [FleetEvent::RunnerTypeBecameRetirable(_)]
+    ));
+    assert!(became_retirable(&deprecated, still_quiet).events.is_empty());
+    assert!(
+        became_retirable(&fleet_in(RunnerTypeLifecycle::Active, vec![]), unused())
+            .events
+            .is_empty()
+    );
+}
+
+#[test]
+fn retired_presence_is_recorded_but_never_reactivates_the_type() {
+    let retired = fleet_in(RunnerTypeLifecycle::Retired, vec![]);
+    let result = observe_presence(Some(&retired), presence(ReportedStatus::Ready)).unwrap();
+    assert!(matches!(
+        result.events.as_slice(),
+        [FleetEvent::InstanceConnected(_)]
+    ));
+    assert_eq!(retired.lifecycle(), RunnerTypeLifecycle::Retired);
+    assert_eq!(
+        retired.guard_dispatch().unwrap_err().code(),
+        "runner_type_retired"
     );
 }

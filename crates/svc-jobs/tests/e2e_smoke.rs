@@ -6,11 +6,14 @@ use std::time::{Duration, Instant};
 
 use async_graphql::parser::parse_schema;
 use async_graphql::parser::types::{ServiceDocument, TypeKind, TypeSystemDefinition};
-use br_test_harness::{E2eDatabase, GraphqlClient, SpawnedProcess};
+use br_test_harness::{E2eDatabase, GraphqlClient, SpawnedProcess, SseSubscription};
 use reqwest::StatusCode;
+use serde_json::json;
 use support::fixture::{
     APP_PASSWORD, APP_ROLE, BIN, JobsFixture, free_port, require_provisioned_infrastructure,
 };
+use support::runner::FakeRunner;
+use support::{FLEET_CHANGED, QUIET, SHORT, gql, stream, subs, wire};
 
 const ROOT_FIELD_PREFIX: &str = "jobs";
 
@@ -25,7 +28,14 @@ const DECLARED_QUERIES: [&str; 5] = [
     "jobsLogs",
 ];
 
-const DECLARED_MUTATIONS: [&str; 3] = ["jobsCancelJob", "jobsDeleteJob", "jobsManualRetryJob"];
+const DECLARED_MUTATIONS: [&str; 6] = [
+    "jobsCancelJob",
+    "jobsDeleteJob",
+    "jobsDeprecateRunnerType",
+    "jobsManualRetryJob",
+    "jobsReactivateRunnerType",
+    "jobsRetireRunnerType",
+];
 
 const DECLARED_SUBSCRIPTIONS: [&str; 4] = [
     "jobsChanged",
@@ -85,6 +95,153 @@ async fn operational_probes_and_the_published_schema() {
     );
 
     fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_pod_that_reports_ready_delivers_a_first_presence_signal_promptly() {
+    // Given: a pod subscribed to at the very first moment it answers /readyz 200, with no settling
+    // wait — a pod that were still binding its fan-out or its presence watch would have to make up
+    // the delay somewhere inside the bound asserted below
+    let fixture = JobsFixture::start().await;
+    assert!(
+        gql::ready(fixture.url()).await,
+        "the fixture returns once the pod reports ready, so this scenario starts on the first \
+         200\nlogs:\n{}",
+        fixture.logs(),
+    );
+
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("readiness");
+    let mut watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut watch, FLEET_CHANGED, SHORT).await;
+
+    // When: an instance of a never-seen type announces presence on the cold pod
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    let announced_at = Instant::now();
+    instance.connect().await;
+
+    // Then: the registration delta travels presence KV → durable fan-out → subscriber inside a
+    // tight bound. The presence watch replays history, so a late-bound watch would still deliver
+    // eventually — what a generous budget could never distinguish from a healthy pod. The bound is
+    // the assertion: a pod that reports ready before its fan-out is bound cannot meet it
+    let registered = stream::await_fleet_event(&mut watch, wire::KIND_TYPE_REGISTERED, SHORT).await;
+    let elapsed = announced_at.elapsed();
+    assert!(
+        elapsed < SHORT,
+        "the first presence signal reached the subscriber in {elapsed:?}, outside the {SHORT:?} \
+         budget a pod that answered /readyz owes — readiness that does not already mean 'fan-out \
+         and presence watch bound' is a pod taking traffic it cannot serve\nlogs:\n{}",
+        fixture.logs(),
+    );
+    assert_eq!(
+        registered["runnerType"]["typeKey"],
+        json!(runner_type),
+        "the delta the newly-ready pod pushes is the authoritative projection of the type that \
+         just registered: {registered}",
+    );
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_silence_proof_fails_rather_than_passes_when_the_socket_dies() {
+    // Given: a subscriber holding an open fleet stream
+    let fixture = JobsFixture::start().await;
+    let runner_type = wire::unique_runner_type("dead-stream");
+    let mut watch = SseSubscription::open(
+        fixture.url(),
+        fixture.admin(),
+        &subs::fleet_changed(&runner_type),
+    )
+    .await;
+    stream::snapshot(&mut watch, FLEET_CHANGED, SHORT).await;
+
+    // When: the service goes away under it, and absence is proved on that stream alone — nothing
+    // else runs inside this boundary, so a set-up failure can never be mistaken for the detector
+    fixture.shutdown().await;
+    let outcome = tokio::spawn(async move {
+        stream::expect_total_silence(&mut watch, "a stream the service no longer serves", QUIET)
+            .await;
+    })
+    .await;
+
+    // Then: proving absence on a dead stream must fail loudly. Every `expect no delta` in this
+    // suite rests on this: a dead stream delivers nothing, so it satisfies any silence check by
+    // construction and turns every absence proof built on it into a vacuous pass
+    assert!(
+        outcome.is_err(),
+        "expect_total_silence accepted a stream the service had stopped serving, so every absence \
+         this suite proves on a subscription would be worth nothing",
+    );
+    let message = panic_message(outcome.expect_err("the silence proof panicked"));
+    assert!(
+        message.contains("subscription stream errored")
+            || message.contains("the service ended the subscription"),
+        "the failure must name the dead stream, not something incidental: {message}",
+    );
+}
+
+fn panic_message(failure: tokio::task::JoinError) -> String {
+    assert!(
+        failure.is_panic(),
+        "the silence proof must fail by assertion, not by cancellation: {failure}"
+    );
+    let payload = failure.into_panic();
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_stream_that_ends_with_budget_left_is_a_closed_stream_not_a_timeout() {
+    // Given: a four-second wait, whose end-of-stream margin is the 500ms ceiling
+    let budget = Duration::from_secs(4);
+    let margin = Duration::from_millis(500);
+
+    // Then: an end arriving while a real slice of the budget is unspent is the service closing the
+    // stream. This is the branch that guards every silence proof, and the one a killed socket never
+    // reaches, because the transport errors before the stream can end cleanly
+    assert!(stream::is_stream_end(budget, Duration::from_secs(2)));
+    assert!(stream::is_stream_end(
+        budget,
+        margin + Duration::from_millis(1)
+    ));
+
+    // Then: an end arriving with the budget spent is an ordinary timeout, and the silence is real
+    assert!(!stream::is_stream_end(budget, margin));
+    assert!(!stream::is_stream_end(budget, Duration::from_millis(100)));
+    assert!(!stream::is_stream_end(budget, Duration::ZERO));
+}
+
+#[test]
+fn the_stream_end_margin_scales_with_the_budget_up_to_a_ceiling() {
+    // Then: short windows get a proportional margin, so the detector never goes inert on them
+    assert_eq!(
+        stream::margin_for(Duration::from_millis(400)),
+        Duration::from_millis(100),
+    );
+    assert_eq!(
+        stream::margin_for(Duration::from_millis(40)),
+        Duration::from_millis(10),
+    );
+
+    // Then: long windows are capped, so a generous budget does not blind the detector to a stream
+    // that ends half a second before the deadline
+    assert_eq!(
+        stream::margin_for(Duration::from_secs(4)),
+        Duration::from_millis(500),
+    );
+    assert_eq!(
+        stream::margin_for(Duration::from_secs(20)),
+        Duration::from_millis(500),
+    );
 }
 
 #[tokio::test]

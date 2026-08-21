@@ -353,6 +353,7 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
         id: fleet.id(),
         key: key.clone(),
         registered_at: fleet.registered_at(),
+        lifecycle: fleet.lifecycle(),
         instances: vec![],
     })
     .expect("a runner type with no live instance loads");
@@ -435,6 +436,91 @@ fn recorded(events: &[FleetEvent]) -> Vec<(EventId, FleetEvent)> {
 }
 
 #[tokio::test]
+async fn concurrent_first_presence_registers_one_aggregate_and_the_loser_can_redecide() {
+    let fixture = Fixture::start().await;
+    let key = RunnerTypeKey::new("first-presence-race").unwrap();
+    let left_id = bc_jobs::domain::ids::RunnerTypeId::new(ids().next()).unwrap();
+    let right_id = bc_jobs::domain::ids::RunnerTypeId::new(ids().next()).unwrap();
+    let left = observe_presence(None, announcing(left_id, &key, "instance-a")).unwrap();
+    let right = observe_presence(None, announcing(right_id, &key, "instance-b")).unwrap();
+    let factory = ids();
+    let left_metadata = metadata();
+    let right_metadata = metadata();
+    let (left_outcome, right_outcome) = tokio::join!(
+        write::commit_fleet_events(
+            &fixture.store,
+            &factory,
+            FleetChange {
+                runner_type_id: left_id,
+                runner_type: &key,
+                decided_on: None,
+                events: &left.events,
+            },
+            &left_metadata,
+            clock::now(),
+        ),
+        write::commit_fleet_events(
+            &fixture.store,
+            &factory,
+            FleetChange {
+                runner_type_id: right_id,
+                runner_type: &key,
+                decided_on: None,
+                events: &right.events,
+            },
+            &right_metadata,
+            clock::now(),
+        ),
+    );
+    assert_eq!(
+        [left_outcome.as_ref(), right_outcome.as_ref()]
+            .into_iter()
+            .filter(|outcome| outcome.is_ok())
+            .count(),
+        1,
+    );
+    let registered = reloaded(&fixture, &key).await;
+    let missing = if registered
+        .instance(&InstanceKey::new("instance-a").unwrap())
+        .is_some()
+    {
+        "instance-b"
+    } else {
+        "instance-a"
+    };
+    let retried = observe_presence(
+        Some(&registered),
+        announcing(registered.id(), &key, missing),
+    )
+    .unwrap();
+    write::commit_fleet_events(
+        &fixture.store,
+        &ids(),
+        FleetChange {
+            runner_type_id: registered.id(),
+            runner_type: &key,
+            decided_on: Some(&registered),
+            events: &retried.events,
+        },
+        &metadata(),
+        clock::now(),
+    )
+    .await
+    .expect("the losing presence redecides on the canonical aggregate");
+    assert_eq!(
+        fixture
+            .count(
+                "SELECT count(*) AS count FROM domain_events WHERE event_type = $1",
+                "RunnerTypeRegistered",
+            )
+            .await,
+        1,
+    );
+    assert_eq!(reloaded(&fixture, &key).await.instances().len(), 2);
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
     // Given: an instance executing a run under the session that is about to be lost
     let fixture = Fixture::start().await;
@@ -487,6 +573,7 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
         id: fleet.id(),
         key: key.clone(),
         registered_at: fleet.registered_at(),
+        lifecycle: fleet.lifecycle(),
         instances: vec![],
     })
     .expect("a runner type with no live instance loads");

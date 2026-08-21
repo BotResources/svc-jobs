@@ -53,7 +53,7 @@ fn of_run(run: &Run) -> RunFingerprint {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct FleetFingerprint {
-    has_live_instances: bool,
+    lifecycle: Option<&'static str>,
     instances: Vec<InstanceFingerprint>,
 }
 
@@ -75,7 +75,7 @@ pub fn of_fleet(runner_type: Option<&RunnerType>) -> FleetFingerprint {
         .collect();
     instances.sort_by(|left, right| left.instance_key.cmp(&right.instance_key));
     FleetFingerprint {
-        has_live_instances: runner_type.is_some(),
+        lifecycle: runner_type.map(|known| known.lifecycle().as_str()),
         instances,
     }
 }

@@ -57,6 +57,12 @@ spec:
             - name: TRUSTED_NETWORK_HOSTS
               value: {{ join "," . | quote }}
             {{- end }}
+            - name: JOBS_RETIREMENT_QUIET_PERIOD_SECONDS
+              value: {{ .Values.runnerTypes.retirementQuietPeriodSeconds | quote }}
+            - name: JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS
+              value: {{ .Values.runnerTypes.impactSweepIntervalSeconds | quote }}
+            - name: JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS
+              value: {{ .Values.runnerTypes.catalogReconcileIntervalSeconds | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

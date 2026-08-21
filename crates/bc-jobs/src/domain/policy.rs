@@ -34,6 +34,7 @@ pub struct ServiceLimits {
     default_max_attempts: MaxAttempts,
     max_run_duration: TimeDelta,
     inactivity_timeout: TimeDelta,
+    retirement_quiet_period: TimeDelta,
 }
 
 impl Default for ServiceLimits {
@@ -43,6 +44,7 @@ impl Default for ServiceLimits {
             default_max_attempts: MaxAttempts::new(3).expect("three is a positive attempt budget"),
             max_run_duration: TimeDelta::hours(72),
             inactivity_timeout: TimeDelta::hours(24),
+            retirement_quiet_period: TimeDelta::hours(24),
         }
     }
 }
@@ -53,6 +55,7 @@ impl ServiceLimits {
         default_max_attempts: MaxAttempts,
         max_run_duration: TimeDelta,
         inactivity_timeout: TimeDelta,
+        retirement_quiet_period: TimeDelta,
     ) -> Result<Self, JobsError> {
         default_max_attempts.guard_under_ceiling(max_attempts_ceiling)?;
         Ok(Self {
@@ -60,6 +63,7 @@ impl ServiceLimits {
             default_max_attempts,
             max_run_duration: positive("max_run_duration", max_run_duration)?,
             inactivity_timeout: positive("inactivity_timeout", inactivity_timeout)?,
+            retirement_quiet_period: positive("retirement_quiet_period", retirement_quiet_period)?,
         })
     }
 
@@ -77,6 +81,10 @@ impl ServiceLimits {
 
     pub fn inactivity_timeout(&self) -> TimeDelta {
         self.inactivity_timeout
+    }
+
+    pub fn retirement_quiet_period(&self) -> TimeDelta {
+        self.retirement_quiet_period
     }
 
     pub fn budget(&self, declared: Option<MaxAttempts>) -> Result<MaxAttempts, JobsError> {
