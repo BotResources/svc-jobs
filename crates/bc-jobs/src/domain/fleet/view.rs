@@ -88,22 +88,6 @@ pub fn fleet_view(runner_type: &RunnerType, jobs: &[Job]) -> FleetView {
     }
 }
 
-pub fn unregistered_fleet_view(
-    runner_type: &crate::domain::keys::RunnerTypeKey,
-    jobs: &[Job],
-) -> FleetView {
-    let of_this_type: Vec<&Job> = jobs
-        .iter()
-        .filter(|job| job.runner_type() == runner_type)
-        .collect();
-    FleetView {
-        instances: vec![],
-        total_capacity: 0,
-        waiting_job_count: count(of_this_type.iter().filter(|job| job.is_waiting()).count()),
-        executing_job_count: count(of_this_type.iter().filter(|job| job.is_executing()).count()),
-    }
-}
-
 pub fn instance_load(
     instance: &RunnerInstanceReference,
     capacity: Capacity,

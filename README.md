@@ -84,14 +84,18 @@ are redelivered.
 
 Every active or deprecated runner type is published in the shared
 `PUBLISHED_LANGUAGE` KV bucket under `jobs.runner_type.{runner_type}` as a
-`contract_jobs::catalog::PublishedRunnerType`. The entry carries the type key
-and its `ACTIVE` or `DEPRECATED` lifecycle. Retirement retracts the key;
-reactivation recreates it. Every projection and reconciliation takes the same
-distributed PostgreSQL lock before reloading canonical state, so concurrent
-pods cannot publish an older lifecycle last. Boot and the periodic reconciler
-repair the full prefix. An unavailable bucket cannot turn a committed mutation
-into a false error; it removes the pod from readiness until full reconciliation
-succeeds.
+`contract_jobs::catalog::RunnerType`. The entry carries the type key, its
+`ACTIVE` or `DEPRECATED` lifecycle and the wire `version` (v1, defaulting to 1
+when absent). Retirement retracts the key;
+reactivation recreates it. A lifecycle change reads the committed aggregate and
+writes to the bucket after the transaction has closed — never with a
+transaction open across the network call — and only a lifecycle fact projects:
+presence traffic never reaches the bucket. Two pods writing the same key are
+not ordered against each other: convergence is by reconciliation, and boot plus
+the periodic reconciler repair the full prefix, which is also what repairs a
+write a crash lost. An unavailable bucket cannot turn a committed mutation into
+a false error; it removes the pod from readiness, and only a full
+reconciliation puts it back.
 
 **Who the owner is.** A resolution command is accepted only when its envelope
 declares the same actor that declared the job (inherited along a manual-retry
@@ -111,7 +115,7 @@ of scope by design.
 | Status stream | `JOBS_STATUS` / `jobs.status.{runner_type}.{started,plan_declared,step_started,completed,failed}` | runners → jobs | Persistent, acknowledged, at-least-once; carries start, plan, step and terminal run facts. |
 | Log stream | `JOBS_LOG` / `jobs.log.{runner_type}` | runners → jobs | Size-bounded, discard-old; a lost log line is tolerated, a lost lifecycle fact is not — which is why logs never share the status stream. |
 | Cancel bucket | `JOBS_CANCEL` KV, key `{run_id}` | jobs → runners | One desired-state entry per cancelled run, replayed on watch (re)connection; removed after the terminal fact, bucket TTL is the cleanup backstop. |
-| Presence bucket | `JOBS_PRESENCE` KV, key `{runner_type}.{instance_key}` | runners → jobs | Expiring live state, heartbeat-rewritten; TTL eviction signals loss, graceful shutdown deletes immediately. The first entry of an unknown type registers the RunnerType. |
+| Presence bucket | `JOBS_PRESENCE` KV, key `{runner_type}.{instance_key}` | runners → jobs | Expiring live state, heartbeat-rewritten; TTL eviction signals loss, graceful shutdown deletes immediately. The first entry of an unknown type registers the RunnerType. Watched with history, so establishing the watch replays the last entry per key before live updates. |
 
 Runner-type and instance-key segments are validated by one shared alphabet
 (`contract-jobs::segment::SubjectSegment`), so no input can widen a rendered
@@ -205,9 +209,10 @@ recorded is always the passport's own id.
   Every runner-type view and fleet delta likewise carries the complete
   `deprecate`, `reactivate`, and `retire` decisions. Retirement is available
   only for a deprecated type with no non-terminal job and no terminal run in
-  the preceding 24 hours; reactivating a retired type requires live presence.
-  If that 24-hour boundary is the only changing fact, the durable timer emits a
-  typed `RUNNER_TYPE_AFFORDANCES_CHANGED` delta at the boundary.
+  the configured quiet period (default 24 h); reactivating a retired type
+  requires live presence. If that boundary is the only changing fact, the
+  durable timer emits a typed `RUNNER_TYPE_BECAME_RETIRABLE` delta at the
+  boundary.
 
 The full SDL is served at `GET /sdl` and printed by `svc-jobs schema` — one
 document, two readers.
@@ -237,6 +242,9 @@ failing job by job.
 | `JOBS_MAX_ATTEMPTS_CEILING` | `10` | Service ceiling; a job's own `max_attempts` may lower, never exceed it (default per-job budget: 3). |
 | `JOBS_BACKSTOP_INTERVAL_SECONDS` | `30` | Sweep interval for the run-duration, inactivity and cancel-entry backstops. |
 | `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS` | `250` | Floor between dispatch passes. |
+| `JOBS_RETIREMENT_QUIET_PERIOD_SECONDS` | `86400` (24 h) | A deprecated runner type may only be retired this long after its latest terminal run. |
+| `JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS` | `60` | Sweep interval of the durable timer that emits `RunnerTypeBecameRetirable` once the quiet period elapses. |
+| `JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS` | `30` | Interval of the reconciliation that repairs the whole published runner-type prefix and restores catalog readiness. |
 | `JOBS_CONSUMER_ACK_WAIT_SECONDS` | `30` | Runner-transport consumer redelivery grace. |
 | `JOBS_CONSUMER_MAX_ACK_PENDING` | `256` | Runner-transport consumer in-flight window. |
 | `JOBS_CONSUMER_MAX_DELIVER` | `-1` (unlimited) | Runner-transport delivery budget; poison frames are terminated explicitly, never dropped on a budget. |
@@ -251,7 +259,7 @@ failing job by job.
 | Endpoint | Meaning |
 |---|---|
 | `GET /livez` | Liveness. |
-| `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, and whenever a supervised background task is dead; the reason names the culprit. |
+| `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, until every supervised background task has bound its own source of work, and whenever one of them is dead; the reason names the culprit. |
 | `GET /metrics` | Prometheus metrics. |
 | `GET /sdl` | The GraphQL SDL the running binary serves. |
 | `GET /graphql` | GraphiQL playground (passport-gated like the rest). |
@@ -263,10 +271,12 @@ dispatch and backstop loops, the fact listener) is supervised: a death takes
 readiness DOWN and restarts it with bounded backoff; exhausting the budget
 leaves the pod NOT READY.
 
-The known functional limitations of 0.1 (the lost-trigger gap, the narrow
+The known functional limitations (the lost-trigger gap, the narrow
 presence-loss window, a job waiting forever on a runner type that never
-appears, the partition horizon) are recorded in [CHANGELOG.md](CHANGELOG.md) —
-the changelog is honest, read it before integrating.
+appears — now with nothing in `jobsFleet` to show for it, since a type no
+instance ever announced is not a registered aggregate — the partition horizon)
+are recorded in [CHANGELOG.md](CHANGELOG.md) — the changelog is honest, read it
+before integrating.
 
 ## Why it is the way it is
 
@@ -279,7 +289,15 @@ the changelog is honest, read it before integrating.
 | Logs ride their own size-bounded, discard-old stream | A log flood can neither delay a status fact nor evict one; losing an old log line is acceptable, losing a lifecycle fact is not. |
 | A reclaim only takes runs started inside the closed presence session's window | An instance key outlives its sessions: reclaiming by key alone would fail a run the replacement session is executing. The session that carried the run owns the reclaim. |
 | The service clock truncates every instant it mints to microseconds | `timestamptz` keeps microseconds, a Linux clock reads nanoseconds. An instant minted at nanosecond precision is carried one way by the event a subscriber folds and another way by the column a later read returns — the same moment, two values. Truncating where the instant is minted is the only place that keeps the two identical; every timestamp the service authors comes from that clock, never from an ambient `Utc::now()`. |
+| A supervised task is down until it says it is bound, not from the moment it is spawned | A subscription is lossy exactly while it is being established: a KV put or a `NOTIFY` landing in that window is missed forever, and nothing reconciles that direction. Counting a task as up on spawn let the pod accept traffic — and a client accept a snapshot — before the deltas behind it could arrive. The task itself is the only place that knows when its source of work is bound, so the task signals it. |
+| The presence watch replays the last entry per key instead of taking live updates only | Reconciliation only closes a session whose KV entry vanished, never the reverse, so a put missed during establishment stays invisible until the runner's next heartbeat. A replay costs nothing — an entry for a session already known produces no event. |
+| Boot probes whether `jobs_app` already accepts its password before provisioning it | `ensure_app_role` guards its CREATE but runs `ALTER ROLE … PASSWORD` unconditionally, and PostgreSQL 16 denies that ALTER from the second boot on: CNPG's roles reconciler revokes the membership `jobs_owner` gained by creating `jobs_app`, and CREATEROLE alone confers no authority over a role held without ADMIN OPTION. Asking the catalog first is what keeps the pod out of CrashLoopBackOff (see 0.1.1 in the changelog). The probe treats only SQLSTATE 28P01/28000/3D000 as "not provisioned yet" — anything else surfaces loud rather than falling through to the denied ALTER — and it covers restart, not rotation: once the password changes, rotating it belongs to the CNPG roles reconciler that owns the role, never to a booting service. |
 | Mutations return `{ success }` only | State arrives through the subscriptions' snapshot-then-delta stream; a mutation that returned a DTO would race its own event. |
+| `runner_types` is a routing dictionary, `registered_runner_types` is the aggregate | A key referenced by a job is only a route; the business registration happens when presence is observed. Splitting the two is what lets a job name a type that has never run without inventing a lifecycle for it. |
+| The retirement quiet period is stored as the terminal instant, never as a materialized `eligible_at` | The period is a deployment knob; a row that baked the old value in would keep answering with it after the knob moved. The sweeper ages the stored terminal instant against the configured period at read time. |
+| A run terminal takes no runner-type lock | Retirement re-reads its facts under that lock, and it also refuses any type with a non-terminal job — a run whose terminal is committing belongs to a job that is unresolved in the same transaction, so the count clause already covers the race. Locking every terminal would serialize all run completions of a type for a decision taken a few times in a service's life. |
+| The durable fact listener restarts instead of reconnecting silently | `PgListener::recv` reconnects on its own and drops every `NOTIFY` raised in the gap, leaving subscribers on a live but lossy stream. `try_recv` surfaces the loss, the supervisor restarts the task, its teardown cuts every subscription, and the clients come back onto fresh snapshots. |
+| The Published Language catalog write happens after the transaction commits, and nothing orders two pods writing the same key | A KV round-trip inside a transaction holds its snapshot and locks for the whole network call, and a lock taken to order the write would die at commit — before the write it was meant to order. Nothing in the bucket API compares revisions, so the honest guarantee is convergence by reconciliation: a raced or lost write is repaired by the periodic reconciler, and readiness only returns after a full reconciliation. |
 | `scripts/setup-branch-protection.sh` + `.github/required-checks.json` | Declarative source of truth for required checks; each entry must match a `ci.yml` job `name:` verbatim or PRs block forever waiting for a check that never reports. |
 | Changelog headings are plain `## x.y.z` | The release pipeline greps that exact form (root for the image, per-crate for tags); a bracketed keepachangelog heading ships nothing. |
 

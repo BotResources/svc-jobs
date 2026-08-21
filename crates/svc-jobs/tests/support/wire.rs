@@ -74,7 +74,7 @@ pub const KIND_TYPE_REGISTERED: &str = "RUNNER_TYPE_REGISTERED";
 pub const KIND_TYPE_DEPRECATED: &str = "RUNNER_TYPE_DEPRECATED";
 pub const KIND_TYPE_REACTIVATED: &str = "RUNNER_TYPE_REACTIVATED";
 pub const KIND_TYPE_RETIRED: &str = "RUNNER_TYPE_RETIRED";
-pub const KIND_TYPE_AFFORDANCES_CHANGED: &str = "RUNNER_TYPE_AFFORDANCES_CHANGED";
+pub const KIND_TYPE_BECAME_RETIRABLE: &str = "RUNNER_TYPE_BECAME_RETIRABLE";
 pub const KIND_INSTANCE_CONNECTED: &str = "INSTANCE_CONNECTED";
 pub const KIND_INSTANCE_DISCONNECTED: &str = "INSTANCE_DISCONNECTED";
 pub const KIND_INSTANCE_STATUS_REPORTED: &str = "INSTANCE_STATUS_REPORTED";
@@ -86,6 +86,13 @@ pub const KIND_JOB_STOPPED_EXECUTING: &str = "JOB_STOPPED_EXECUTING";
 pub const REASON_INSTANCE_LOST: &str = "instance_lost";
 pub const REASON_RUNNER_TYPE_UNAVAILABLE: &str = "runner_type_unavailable";
 pub const REASON_ID_REUSE: &str = "id_reuse";
+
+pub const FIELD_CANCEL_JOB: &str = "jobsCancelJob";
+pub const FIELD_MANUAL_RETRY_JOB: &str = "jobsManualRetryJob";
+pub const FIELD_DELETE_JOB: &str = "jobsDeleteJob";
+pub const FIELD_DEPRECATE_RUNNER_TYPE: &str = "jobsDeprecateRunnerType";
+pub const FIELD_REACTIVATE_RUNNER_TYPE: &str = "jobsReactivateRunnerType";
+pub const FIELD_RETIRE_RUNNER_TYPE: &str = "jobsRetireRunnerType";
 
 pub const RUNNER_TYPE_CATALOG_PREFIX: &str = "jobs.runner_type.";
 

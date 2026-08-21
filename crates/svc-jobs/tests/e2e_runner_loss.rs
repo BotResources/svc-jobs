@@ -52,12 +52,12 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         job_id,
         "PENDING",
     ));
-    fleet_watch
-        .expect_silence(
-            "queued work cannot materialize an unregistered runner type",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "queued work cannot materialize an unregistered runner type",
+        QUIET,
+    )
+    .await;
     assert!(
         gql::fleet_of(&client, admin, &runner_type).await.is_empty(),
         "the fleet omits the routing key until first presence registers it",
@@ -83,7 +83,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_RETIRE),

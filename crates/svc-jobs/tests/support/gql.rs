@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use br_core_auth::Passport;
-use br_test_harness::{GraphqlClient, wait_until};
+use br_test_harness::{GraphqlClient, verdict, wait_until};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -314,6 +314,18 @@ pub fn assert_lists_none_of(connection: &Value, excluded: &[Uuid], what: &str) {
             "{what}: job {id} does not match this filter and must not be listed: {connection}"
         );
     }
+}
+
+pub fn expect_success(response: &Value, field: &str, what: &str) {
+    verdict::expect_ack(response, what);
+    assert_eq!(
+        response["data"][field],
+        json!({ "success": true }),
+        "{what}: an accepted mutation answers exactly {{ success: true }} and nothing else. A \
+         payload carrying success: false with no error is a refusal wearing an ack's clothes — the \
+         client renders a success it never got, and no reason code ever reaches the operator: \
+         {response}"
+    );
 }
 
 pub fn data_of(response: &Value, field: &str) -> Value {

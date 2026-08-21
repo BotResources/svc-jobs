@@ -26,6 +26,9 @@ const DEFAULT_TASK_RESTART_MAX_BACKOFF_SECONDS: u64 = 30;
 const DEFAULT_TASK_RESTART_BUDGET: u32 = 10;
 const DEFAULT_TASK_STABILITY_SECONDS: u64 = 60;
 const DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS: i64 = 180;
+const DEFAULT_RETIREMENT_QUIET_PERIOD_SECONDS: i64 = 86_400;
+const DEFAULT_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS: u64 = 60;
+const DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS: u64 = 30;
 
 pub struct Settings {
     pub port: u16,
@@ -37,6 +40,8 @@ pub struct Settings {
     pub retry_policy: RetryPolicy,
     pub backstop_interval: Duration,
     pub dispatch_minimum_wake: Duration,
+    pub runner_type_impact_interval: Duration,
+    pub catalog_reconcile_interval: Duration,
     pub consumer_tuning: ConsumerTuning,
     pub restart_policy: RestartPolicy,
     pub log_partition_horizon_warning: TimeDelta,
@@ -115,6 +120,18 @@ impl Settings {
             "JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS",
             DEFAULT_DISPATCH_MINIMUM_WAKE_MILLISECONDS,
         )?;
+        let retirement_quiet_period_seconds: i64 = read(
+            "JOBS_RETIREMENT_QUIET_PERIOD_SECONDS",
+            DEFAULT_RETIREMENT_QUIET_PERIOD_SECONDS,
+        )?;
+        let runner_type_impact_interval_seconds: u64 = read(
+            "JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS",
+            DEFAULT_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS,
+        )?;
+        let catalog_reconcile_interval_seconds: u64 = read(
+            "JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS",
+            DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS,
+        )?;
 
         let ceiling = MaxAttempts::new(max_attempts_ceiling)?;
         let limits = ServiceLimits::new(
@@ -122,6 +139,7 @@ impl Settings {
             MaxAttempts::new(DEFAULT_MAX_ATTEMPTS.min(max_attempts_ceiling))?,
             TimeDelta::seconds(run_max_duration_seconds),
             TimeDelta::seconds(inactivity_timeout_seconds),
+            TimeDelta::seconds(retirement_quiet_period_seconds),
         )?;
         let retry_policy = RetryPolicy::new(
             TimeDelta::seconds(retry_base_delay_seconds),
@@ -140,6 +158,12 @@ impl Settings {
             retry_policy,
             backstop_interval: Duration::from_secs(backstop_interval_seconds.max(1)),
             dispatch_minimum_wake: Duration::from_millis(dispatch_minimum_wake_milliseconds.max(1)),
+            runner_type_impact_interval: Duration::from_secs(
+                runner_type_impact_interval_seconds.max(1),
+            ),
+            catalog_reconcile_interval: Duration::from_secs(
+                catalog_reconcile_interval_seconds.max(1),
+            ),
             consumer_tuning: consumer_tuning()?,
             restart_policy: restart_policy()?,
             log_partition_horizon_warning: TimeDelta::days(read(

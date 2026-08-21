@@ -5,11 +5,12 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
-## 0.2.0 - 2026-08-20
+## 0.2.0 - 2026-08-21
 
 - Added the `jobs.runner_type.{runner_type}` Published Language key builder and
-  `PublishedRunnerType` DTO. Entries carry `ACTIVE` or `DEPRECATED`; retirement
-  is represented by retracting the key.
+  the `catalog::RunnerType` DTO, versioned like every other wire value: a
+  `version` field (wire v1) that defaults to 1 when absent. Entries carry
+  `ACTIVE` or `DEPRECATED`; retirement is represented by retracting the key.
 
 ## 0.1.0 - 2026-08-17
 

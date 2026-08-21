@@ -6,7 +6,6 @@ pub mod edge;
 pub mod error;
 mod pg;
 pub mod runner_transport;
-pub mod runner_type_catalog;
 pub mod runtime;
 pub mod stream;
 pub mod supervision;
@@ -25,12 +24,12 @@ use br_util_postgres::{ensure_app_role, grant_app_access, init_migration_pool, i
 
 use app::Jobs;
 use app::environment::{NanosecondJitter, SystemClock, UuidV7Factory};
+use bus::runner_type_catalog::PublishedRunnerTypeCatalog;
 use config::Settings;
 use db::PgStore;
 use edge::HttpState;
 pub use error::ServiceError;
 use runner_transport::RunnerChannels;
-use runner_type_catalog::PublishedRunnerTypeCatalog;
 use stream::Hub;
 use supervision::Supervisor;
 
@@ -100,10 +99,7 @@ async fn boot(
     bus::verify_durables(&fabric).await?;
 
     let supervisor = Supervisor::new(readiness.clone(), settings.restart_policy);
-    let catalog = Arc::new(
-        PublishedRunnerTypeCatalog::open(&fabric, store.clone(), supervisor.clone()).await?,
-    );
-    bc_jobs::ports::fleet::RunnerTypeCatalogWriter::reconcile(catalog.as_ref()).await?;
+    let catalog = Arc::new(PublishedRunnerTypeCatalog::open(&fabric, supervisor.clone()).await?);
 
     let hub = Hub::new();
     let jobs = Arc::new(Jobs {
@@ -116,6 +112,7 @@ async fn boot(
         retry: settings.retry_policy,
         catalog,
     });
+    app::runner_type_catalog::reconcile(&jobs).await?;
 
     tasks::spawn_supervised(
         &supervisor,
@@ -136,29 +133,6 @@ async fn boot(
     Ok(())
 }
 
-/// Two PostgreSQL roles, one boot, in this exact order.
-///
-/// `jobs_owner` is the GitOps-declared migration role reached through
-/// `init_migration_pool` (`DATABASE_URL_OWNER`). It owns the schema, it is by
-/// definition an RLS-bypassing DB-management agent, and its pool is closed
-/// before anything serves a request. `jobs_app` (`DATABASE_URL`) is the
-/// least-privilege role every query afterwards runs as.
-///
-/// Provisioning happens here rather than split between a migration and the
-/// cluster: `ensure_app_role` completes before the migrations, `grant_app_access`
-/// after them, so the role exists at the moment it is granted. Two asynchronous
-/// actors have no such ordering, and the failure mode is a silently skipped
-/// grant that never re-runs.
-///
-/// Provisioning is guarded by an observation rather than assumed idempotent.
-/// `ensure_app_role` guards its CREATE with `IF NOT EXISTS` but then runs
-/// `ALTER ROLE … PASSWORD` unconditionally, and under PostgreSQL 16 that ALTER
-/// is denied on the second boot: the implicit membership `jobs_owner` acquired
-/// by creating `jobs_app` is revoked by the CNPG roles reconciler (the owner
-/// declares no `inRoles`), and CREATEROLE alone no longer confers authority
-/// over a role the grantee holds no ADMIN OPTION on. So we ask the catalog the
-/// only question that matters — does the role already accept the configured
-/// password? — and touch nothing when the answer is yes.
 async fn migrate(settings: &Settings) -> Result<(), ServiceError> {
     let migration_pool = init_migration_pool().await.map_err(infra)?;
     if let Some(password) = settings.app_password.as_deref() {

@@ -46,12 +46,12 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
         .await;
     let queued = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, LONG).await;
     delta::assert_active_affordances(&delta::assert_upserted_summary(&queued, job_id, "PENDING"));
-    fleet_watch
-        .expect_silence(
-            "redelivered work cannot materialize an unregistered runner type",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "redelivered work cannot materialize an unregistered runner type",
+        QUIET,
+    )
+    .await;
     assert!(
         gql::fleet_of(&client, admin, &runner_type).await.is_empty(),
         "the fleet omits the routing key until first presence registers it",
@@ -61,9 +61,12 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
     let post_declaration = stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
     assert_eq!(post_declaration["runnerTypes"], json!([]));
-    listing
-        .expect_silence("an absorbed redelivery upserts the window once", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut listing,
+        "an absorbed redelivery upserts the window once",
+        QUIET,
+    )
+    .await;
 
     let mut watch = SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
     stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
@@ -93,15 +96,24 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
         wire::REASON_ID_REUSE,
         "conflicting reuse is rejected under the literal the offer names",
     );
-    watch
-        .expect_silence("a rejected reuse changes nothing on the job", QUIET)
-        .await;
-    listing
-        .expect_silence("a rejected reuse reaches no list subscriber", QUIET)
-        .await;
-    fleet_watch
-        .expect_silence("a rejected reuse moves no fleet count", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut watch,
+        "a rejected reuse changes nothing on the job",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut listing,
+        "a rejected reuse reaches no list subscriber",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a rejected reuse moves no fleet count",
+        QUIET,
+    )
+    .await;
     instance.expect_no_trigger(QUIET).await;
     assert_eq!(
         gql::job(&client, admin, job_id).await["config"],
@@ -118,7 +130,7 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_RETIRE),
@@ -249,7 +261,8 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
         "a reconnecting log tail returns each of the two logical lines exactly once, the \
          redelivered one included: {tailed}",
     );
-    tail.expect_silence(
+    stream::expect_total_silence(
+        &mut tail,
         "a redelivered log line never appends a second time behind the snapshot",
         QUIET,
     )
@@ -287,9 +300,7 @@ async fn delivery_retries_and_administrator_reconnection_do_not_duplicate_a_jobs
         run,
         Some(1),
     );
-    watch
-        .expect_silence("a log fact produces no job delta", QUIET)
-        .await;
+    stream::expect_total_silence(&mut watch, "a log fact produces no job delta", QUIET).await;
 
     instance.complete_run(&trigger).await;
     instance.complete_run(&trigger).await;

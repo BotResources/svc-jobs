@@ -34,7 +34,7 @@ pub async fn write(
         FleetEvent::RunnerTypeRetired(fact) => {
             set_lifecycle(tx, fact.runner_type_id, "RETIRED").await?;
         }
-        FleetEvent::RunnerTypeAffordancesChanged(_) => {}
+        FleetEvent::RunnerTypeBecameRetirable(_) => {}
         FleetEvent::InstanceConnected(fact) => {
             let instance =
                 refs::runner_instance_id(tx, fact.runner_type_id.as_uuid(), &fact.instance_key)

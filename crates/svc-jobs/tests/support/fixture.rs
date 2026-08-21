@@ -21,6 +21,8 @@ pub struct Knobs {
     pub retry_base_delay_seconds: u64,
     pub max_attempts_ceiling: u32,
     pub backstop_interval_seconds: u64,
+    pub retirement_quiet_period_seconds: u64,
+    pub runner_type_impact_interval_seconds: u64,
 }
 
 impl Default for Knobs {
@@ -31,6 +33,8 @@ impl Default for Knobs {
             retry_base_delay_seconds: 1,
             max_attempts_ceiling: 3,
             backstop_interval_seconds: 1,
+            retirement_quiet_period_seconds: 86_400,
+            runner_type_impact_interval_seconds: 60,
         }
     }
 }
@@ -54,6 +58,10 @@ impl JobsFixture {
         Self::start_cluster(1, knobs).await
     }
 
+    pub async fn start_on(db: E2eDatabase, knobs: Knobs) -> Self {
+        Self::start_cluster_on(db, 1, knobs).await
+    }
+
     pub async fn start_cluster(instance_count: usize, knobs: Knobs) -> Self {
         require_provisioned_infrastructure();
 
@@ -61,6 +69,12 @@ impl JobsFixture {
             .await
             .with_app_role(APP_ROLE, APP_PASSWORD)
             .await;
+
+        Self::start_cluster_on(db, instance_count, knobs).await
+    }
+
+    async fn start_cluster_on(db: E2eDatabase, instance_count: usize, knobs: Knobs) -> Self {
+        require_provisioned_infrastructure();
 
         let fabric = FabricTestNats::start()
             .await
@@ -233,6 +247,8 @@ async fn spawn_instance(
     let retry_base = knobs.retry_base_delay_seconds.to_string();
     let ceiling = knobs.max_attempts_ceiling.to_string();
     let interval = knobs.backstop_interval_seconds.to_string();
+    let quiet_period = knobs.retirement_quiet_period_seconds.to_string();
+    let impact_interval = knobs.runner_type_impact_interval_seconds.to_string();
 
     let env: Vec<(&str, &str)> = vec![
         ("DATABASE_URL", app_url.as_str()),
@@ -247,6 +263,14 @@ async fn spawn_instance(
         ("JOBS_RETRY_BASE_DELAY_SECONDS", retry_base.as_str()),
         ("JOBS_MAX_ATTEMPTS_CEILING", ceiling.as_str()),
         ("JOBS_BACKSTOP_INTERVAL_SECONDS", interval.as_str()),
+        (
+            "JOBS_RETIREMENT_QUIET_PERIOD_SECONDS",
+            quiet_period.as_str(),
+        ),
+        (
+            "JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS",
+            impact_interval.as_str(),
+        ),
     ];
 
     let mut service = SpawnedProcess::spawn(BIN, &[], &env);

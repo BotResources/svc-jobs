@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use br_core_events::EventMetadata;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
-use crate::domain::actions::fleet::RunnerTypeDecisionFacts;
+use crate::domain::actions::fleet::{RetirementWindow, RunnerTypeDecisionFacts};
 use crate::domain::fleet::RunnerType;
 use crate::domain::ids::PresenceSessionId;
 use crate::domain::job::Job;
@@ -24,10 +23,14 @@ pub struct ClosedPresenceSession {
     pub disconnected_at: DateTime<Utc>,
 }
 
+pub struct DecidableRunnerType {
+    pub runner_type: RunnerType,
+    pub decision_facts: RunnerTypeDecisionFacts,
+}
+
 pub struct FleetProjectionSource {
-    pub runner_types: Vec<RunnerType>,
+    pub runner_types: Vec<DecidableRunnerType>,
     pub active_jobs: Vec<Job>,
-    pub decision_facts: HashMap<String, RunnerTypeDecisionFacts>,
 }
 
 #[async_trait]
@@ -46,19 +49,13 @@ pub trait FleetReader: Send + Sync {
     async fn decision_facts(
         &self,
         key: &RunnerTypeKey,
-        evaluated_at: DateTime<Utc>,
+        window: RetirementWindow,
     ) -> Result<RunnerTypeDecisionFacts, PortError>;
-
-    async fn decision_facts_for(
-        &self,
-        keys: &[RunnerTypeKey],
-        evaluated_at: DateTime<Utc>,
-    ) -> Result<HashMap<String, RunnerTypeDecisionFacts>, PortError>;
 
     async fn projection_source(
         &self,
         key: Option<&RunnerTypeKey>,
-        evaluated_at: DateTime<Utc>,
+        window: RetirementWindow,
     ) -> Result<FleetProjectionSource, PortError>;
 }
 
@@ -74,7 +71,7 @@ pub trait FleetWriter: Send + Sync {
 
 #[async_trait]
 pub trait RunnerTypeCatalogWriter: Send + Sync {
-    async fn project_current(&self, key: &RunnerTypeKey) -> Result<(), PortError>;
+    async fn project_current(&self, runner_type: &RunnerType) -> Result<(), PortError>;
 
-    async fn reconcile(&self) -> Result<(), PortError>;
+    async fn reconcile(&self, runner_types: &[RunnerType]) -> Result<(), PortError>;
 }

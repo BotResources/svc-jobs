@@ -58,12 +58,12 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     let queued_row = delta::assert_upserted_summary(&queued, job_id, "PENDING");
     delta::assert_active_affordances(&queued_row);
 
-    fleet_watch
-        .expect_silence(
-            "queued work cannot materialize an unregistered runner type",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "queued work cannot materialize an unregistered runner type",
+        QUIET,
+    )
+    .await;
 
     let mut watch = SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
     let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
@@ -137,7 +137,7 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_RETIRE),
@@ -273,9 +273,12 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     instance.log_line(&trigger, None, "INFO", "fetching").await;
     let run_level = stream::drain_appended(&mut tail, LOG_TAIL, 1, LONG).await;
     delta::log_line(&run_level[0], run, None);
-    watch
-        .expect_silence("a log never pushes job state — it is informational", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut watch,
+        "a log never pushes job state — it is informational",
+        QUIET,
+    )
+    .await;
 
     instance
         .log_line(&trigger, Some(1), "WARNING", "slow provider")
@@ -425,8 +428,9 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     stream::snapshot(&mut deleted_window, JOBS_CHANGED, SHORT).await;
 
     let deletion = gql::delete_job(&client, admin, job_id).await;
-    verdict::expect_ack(
+    gql::expect_success(
         &deletion,
+        wire::FIELD_DELETE_JOB,
         "an administrator deletes an eligible terminal job",
     );
     assert_eq!(
@@ -682,8 +686,9 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     let pending_opening = stream::snapshot(&mut pending_window, JOBS_CHANGED, SHORT).await;
     assert_eq!(gql::edges_of(&pending_opening["jobs"]).len(), 3);
 
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::cancel_job(&client, admin, Uuid::now_v7(), waiting_ids[0]).await,
+        wire::FIELD_CANCEL_JOB,
         "an administrator cancels one of the waiting jobs",
     );
     let left_the_window = stream::await_delta(

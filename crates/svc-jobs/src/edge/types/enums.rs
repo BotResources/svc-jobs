@@ -177,7 +177,7 @@ pub enum GqlFleetEventKind {
     RunnerTypeDeprecated,
     RunnerTypeReactivated,
     RunnerTypeRetired,
-    RunnerTypeAffordancesChanged,
+    RunnerTypeBecameRetirable,
     InstanceConnected,
     InstanceStatusReported,
     InstanceDisconnected,

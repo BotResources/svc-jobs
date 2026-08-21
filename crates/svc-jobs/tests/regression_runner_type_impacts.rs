@@ -16,6 +16,9 @@ use svc_jobs::app::runner_type_impacts;
 use svc_jobs::app::write::{self, FleetChange, JobChange};
 use uuid::Uuid;
 
+use bc_jobs::domain::actions::fleet::RetirementWindow;
+use chrono::TimeDelta;
+
 use support::clock;
 use support::contention::{
     Fixture, a_job_with_one_dispatched_run, a_registered_instance, commit, ids, metadata,
@@ -110,24 +113,24 @@ async fn an_elapsed_quiet_period_emits_one_durable_affordance_only_fact() {
     .await
     .expect("the adapter regression advances the historical quiet-period fact");
     sqlx::query(
-        "UPDATE runner_type_affordance_impacts SET eligible_at = now() - interval '1 second' \
+        "UPDATE runner_type_affordance_impacts SET terminal_run_at = now() - interval '25 hours' \
          WHERE runner_type_id = $1",
     )
     .bind(fleet.id().as_uuid())
     .execute(&fixture.pool)
     .await
-    .expect("the durable impact becomes due");
+    .expect("the durable impact carries the terminal instant the sweeper ages itself");
 
     let left_ids = ids();
     let right_ids = ids();
     let clock = svc_jobs::app::environment::SystemClock;
     let (left, right) = tokio::join!(
-        runner_type_impacts::sweep(&fixture.store, &left_ids, &clock),
-        runner_type_impacts::sweep(&fixture.store, &right_ids, &clock),
+        runner_type_impacts::sweep(&fixture.store, &left_ids, &clock, QUIET_PERIOD),
+        runner_type_impacts::sweep(&fixture.store, &right_ids, &clock, QUIET_PERIOD),
     );
     left.expect("the first pod completes its impact sweep");
     right.expect("the second pod completes its impact sweep");
-    runner_type_impacts::sweep(&fixture.store, &ids(), &clock)
+    runner_type_impacts::sweep(&fixture.store, &ids(), &clock, QUIET_PERIOD)
         .await
         .expect("redelivery is absorbed");
 
@@ -135,7 +138,7 @@ async fn an_elapsed_quiet_period_emits_one_durable_affordance_only_fact() {
         fixture
             .count(
                 "SELECT count(*) AS count FROM domain_events WHERE event_type = $1",
-                "RunnerTypeAffordancesChanged",
+                "RunnerTypeBecameRetirable",
             )
             .await,
         1,
@@ -147,16 +150,19 @@ async fn an_elapsed_quiet_period_emits_one_durable_affordance_only_fact() {
         .unwrap();
     assert!(
         current
-            .guard_retire(
-                fixture
-                    .store
-                    .decision_facts(&key, clock::now())
-                    .await
-                    .unwrap(),
-            )
+            .guard_retire(fixture.store.decision_facts(&key, window()).await.unwrap(),)
             .is_ok(),
         "the typed delta is emitted only when the shared retirement decision actually opens",
     );
 
     fixture.shutdown().await;
+}
+
+const QUIET_PERIOD: TimeDelta = TimeDelta::hours(24);
+
+fn window() -> RetirementWindow {
+    RetirementWindow {
+        evaluated_at: clock::now(),
+        quiet_period: QUIET_PERIOD,
+    }
 }

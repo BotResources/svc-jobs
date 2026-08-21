@@ -48,12 +48,12 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         accepted_id,
         "PENDING",
     ));
-    fleet_watch
-        .expect_silence(
-            "accepted work cannot materialize an unregistered runner type",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "accepted work cannot materialize an unregistered runner type",
+        QUIET,
+    )
+    .await;
     assert!(
         gql::fleet_of(&client, admin, &runner_type).await.is_empty(),
         "the fleet omits a routing key until first presence registers the entity",
@@ -192,15 +192,24 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         before,
         "a refused creation leaves the valid job's projection and affordances identical",
     );
-    listing
-        .expect_silence("a refused creation reaches no list subscriber", QUIET)
-        .await;
-    valid_watch
-        .expect_silence("a refused creation touches no other job", QUIET)
-        .await;
-    fleet_watch
-        .expect_silence("a refused creation moves no fleet count", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut listing,
+        "a refused creation reaches no list subscriber",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut valid_watch,
+        "a refused creation touches no other job",
+        QUIET,
+    )
+    .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a refused creation moves no fleet count",
+        QUIET,
+    )
+    .await;
     instance.expect_no_trigger(QUIET).await;
 
     for rejected in [
@@ -270,7 +279,7 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_RETIRE),

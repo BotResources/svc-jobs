@@ -113,6 +113,7 @@ pub fn limits() -> ServiceLimits {
         MaxAttempts::new(3).expect("a positive default"),
         TimeDelta::seconds(600),
         TimeDelta::seconds(600),
+        TimeDelta::seconds(600),
     )
     .expect("coherent limits")
 }

@@ -84,6 +84,10 @@ impl RunnerType {
     pub fn is_available(&self) -> bool {
         self.lifecycle.accepts_jobs() && self.instances.iter().any(|live| live.accepts_new_work())
     }
+
+    pub fn published_lifecycle(&self) -> Option<RunnerTypeLifecycle> {
+        self.lifecycle.accepts_jobs().then_some(self.lifecycle)
+    }
 }
 
 #[cfg(test)]
@@ -161,6 +165,31 @@ mod tests {
         .unwrap();
         // Then: a single taker is enough — availability is not unanimity
         assert!(mixed.is_available());
+    }
+
+    fn with_lifecycle(lifecycle: RunnerTypeLifecycle) -> RunnerType {
+        let mut state = state(vec![]);
+        state.lifecycle = lifecycle;
+        RunnerType::hydrate(state).unwrap()
+    }
+
+    #[test]
+    fn a_type_is_published_exactly_while_it_accepts_jobs() {
+        // Given: the three lifecycles a runner type can be stored in
+        // When: each is asked what the catalog should announce
+        // Then: a retired type has no entry, and the others announce their own lifecycle
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Active).published_lifecycle(),
+            Some(RunnerTypeLifecycle::Active)
+        );
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Deprecated).published_lifecycle(),
+            Some(RunnerTypeLifecycle::Deprecated)
+        );
+        assert_eq!(
+            with_lifecycle(RunnerTypeLifecycle::Retired).published_lifecycle(),
+            None
+        );
     }
 
     #[test]

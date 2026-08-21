@@ -74,6 +74,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunnerTypeRetired { .. }
         | JobsError::RunnerTypeNotActive { .. }
         | JobsError::RunnerTypeNotDeprecated { .. }
+        | JobsError::RunnerTypeAlreadyActive
         | JobsError::RunnerTypeHasNonTerminalJobs { .. }
         | JobsError::RunnerTypeHasRecentTerminalRuns { .. }
         | JobsError::RunnerTypeHasNoLiveInstances

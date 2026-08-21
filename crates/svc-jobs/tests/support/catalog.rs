@@ -2,7 +2,12 @@ use std::time::Duration;
 
 use br_test_harness::{FabricTestNats, wait_until};
 use br_util_nats_fabric::KvKey;
-use contract_jobs::catalog::{PublishedRunnerType, RunnerTypeLifecycle, runner_type_key};
+use contract_jobs::catalog::{
+    RunnerType as PublishedRunnerType, RunnerTypeLifecycle, runner_type_key,
+};
+use contract_jobs::runner::WIRE_VERSION;
+
+use super::wire;
 
 pub async fn entry(fabric: &FabricTestNats, runner_type: &str) -> Option<PublishedRunnerType> {
     let reader = fabric.pl_reader::<PublishedRunnerType>().await;
@@ -62,6 +67,7 @@ pub async fn put(fabric: &FabricTestNats, runner_type: &str, lifecycle: RunnerTy
             &PublishedRunnerType {
                 runner_type: runner_type.to_owned(),
                 lifecycle,
+                version: WIRE_VERSION,
             },
         )
         .await
@@ -91,5 +97,15 @@ pub async fn restore_empty_bucket(fabric: &FabricTestNats) {
 }
 
 fn key(runner_type: &str) -> KvKey {
-    KvKey::new(runner_type_key(runner_type)).expect("the contract renders a valid KV key")
+    let published = runner_type_key(runner_type);
+    assert_eq!(
+        published,
+        wire::runner_type_catalog_key(runner_type),
+        "the Published Language key is a frozen offer, not an implementation detail: every \
+         consumer hand-builds '{}{{runner_type}}' to read this catalog, so a renamed prefix \
+         orphans all of them at once and no test that asks the contract for its own key would \
+         ever notice",
+        wire::RUNNER_TYPE_CATALOG_PREFIX,
+    );
+    KvKey::new(published).expect("the contract renders a valid KV key")
 }

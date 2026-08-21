@@ -108,14 +108,6 @@ fn a_type_declares_the_capacity_of_its_live_instances_that_still_take_work() {
 }
 
 #[test]
-fn an_unregistered_type_declares_no_capacity_at_all() {
-    // Given: a runner type key no instance ever announced
-    let view = unregistered_fleet_view(&RunnerTypeKey::new("archivist").unwrap(), &[]);
-    // Then: nothing is declared — an absent fleet never reads as room for work
-    assert_eq!(view.total_capacity(), 0);
-}
-
-#[test]
 fn an_instance_reporting_draining_while_carrying_no_run_is_idle() {
     // Given: an instance winding down by its own report, with no run of its own
     let view = fleet_view(

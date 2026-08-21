@@ -6,7 +6,7 @@ use bc_jobs::event::job::JobEvent;
 use tokio::time::{Instant, sleep_until};
 
 use crate::app::dispatch::DispatchPass;
-use crate::app::{Jobs, backstop, dispatch, runner_type_impacts};
+use crate::app::{Jobs, backstop, dispatch, runner_type_catalog, runner_type_impacts};
 use crate::error::ServiceError;
 use crate::runner_transport::{RunnerChannels, cancel};
 use crate::stream::{Fact, Hub};
@@ -100,8 +100,13 @@ pub async fn backstop_loop(jobs: Arc<Jobs>, channels: RunnerChannels, interval: 
 
 pub async fn runner_type_impact_loop(jobs: Arc<Jobs>, interval: Duration) {
     loop {
-        if let Err(error) =
-            runner_type_impacts::sweep(&jobs.store, jobs.ids.as_ref(), jobs.clock.as_ref()).await
+        if let Err(error) = runner_type_impacts::sweep(
+            &jobs.store,
+            jobs.ids.as_ref(),
+            jobs.clock.as_ref(),
+            jobs.limits.retirement_quiet_period(),
+        )
+        .await
         {
             tracing::error!(error = %error, "the runner-type affordance impact sweep failed");
         }
@@ -112,7 +117,7 @@ pub async fn runner_type_impact_loop(jobs: Arc<Jobs>, interval: Duration) {
 pub async fn runner_type_catalog_reconciliation_loop(jobs: Arc<Jobs>, interval: Duration) {
     loop {
         tokio::time::sleep(interval).await;
-        if let Err(error) = jobs.catalog.reconcile().await {
+        if let Err(error) = runner_type_catalog::reconcile(&jobs).await {
             tracing::error!(error = %error, "the runner-type catalog reconciliation failed");
         }
     }

@@ -10,7 +10,7 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
-## 0.2.0 - 2026-08-20
+## 0.2.0 - 2026-08-21
 
 - Added the runner-type lifecycle migration and canonical Postgres adapter,
   including set-based decision-fact reads for snapshots and a locked retirement
@@ -23,7 +23,8 @@ to `## Unreleased`).
   full prefix. A post-commit KV failure is logged and healed later rather than
   turning a committed mutation into a false error verdict.
 - Separated Job routing keys from presence-registered RunnerType aggregates;
-  added cross-pod ordered catalog reconciliation with readiness health and a
+  added per-pod periodic catalog reconciliation with readiness health —
+  convergence is by reconciliation, with no cross-pod write ordering — and a
   durable, idempotent quiet-period affordance impact.
 
 ## 0.1.1 - 2026-08-19

@@ -147,17 +147,6 @@ impl PgStore {
         self.load_batch(&ids).await
     }
 
-    pub async fn active_jobs(&self) -> Result<Vec<Job>, PortError> {
-        let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             WHERE NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id)",
-        )
-        .fetch_all(self.pool())
-        .await
-        .map_err(unavailable)?;
-        self.load_batch(&ids).await
-    }
-
     async fn ids(&self, sql: &str, at: DateTime<Utc>) -> Result<Vec<Uuid>, PortError> {
         let rows = sqlx::query(sql)
             .bind(at)

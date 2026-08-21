@@ -8,7 +8,7 @@ use bc_jobs::ports::environment::{Clock, IdFactory};
 use bc_jobs::ports::fleet::{FleetReader, OpenPresenceSession};
 use contract_jobs::runner as wire;
 
-use super::{Jobs, reclaim, service_metadata, write};
+use super::{Jobs, reclaim, runner_type_catalog, service_metadata, write};
 use crate::db::PgStore;
 use crate::error::ServiceError;
 
@@ -66,7 +66,7 @@ async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceE
         .await
         {
             Ok(()) => {
-                jobs.project_runner_type_best_effort(&key).await;
+                runner_type_catalog::project_committed(jobs, &key, &result.events).await;
                 return Ok(());
             }
             Err(ServiceError::Contended) => continue,
@@ -142,7 +142,7 @@ pub async fn drained(
         .await
         {
             Ok(()) => {
-                jobs.project_runner_type_best_effort(&key).await;
+                runner_type_catalog::project_committed(jobs, &key, &result.events).await;
                 return Ok(());
             }
             Err(ServiceError::Contended) => continue,

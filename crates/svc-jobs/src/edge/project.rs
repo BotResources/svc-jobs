@@ -11,6 +11,7 @@ use br_util_graphql::Affordance;
 use uuid::Uuid;
 
 use super::error::edge_error;
+use super::state::EdgeState;
 use super::tree::JobTree;
 use super::types::fleet::{GqlRunnerTypeView, view_of};
 use super::types::job::{GqlJobSummaryView, GqlJobView};
@@ -107,15 +108,19 @@ pub async fn parents_of(store: &PgStore, jobs: &[Job]) -> Result<HashMap<Uuid, A
 }
 
 pub async fn fleet_views(
-    store: &PgStore,
+    state: &EdgeState,
     runner_type: Option<&str>,
 ) -> Result<Vec<GqlRunnerTypeView>> {
     let watched = runner_type
         .map(RunnerTypeKey::new)
         .transpose()
         .map_err(edge_error)?;
-    crate::app::fleet::views(store, watched.as_ref(), chrono::Utc::now())
-        .await
-        .map_err(edge_error)
-        .map(|views| views.into_iter().map(view_of).collect())
+    crate::app::fleet::views(
+        &state.store,
+        watched.as_ref(),
+        state.jobs.retirement_window(),
+    )
+    .await
+    .map_err(edge_error)
+    .map(|views| views.into_iter().map(view_of).collect())
 }

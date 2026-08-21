@@ -6,7 +6,8 @@ use super::state::{EdgeState, administrator};
 use super::types::input::{
     GqlCancelJobInput, GqlDeleteJobInput, GqlManualRetryJobInput, GqlRunnerTypeInput,
 };
-use crate::app::admin::{self, ManualRetryInput, RunnerTypeAction};
+use crate::app::admin::{self, ManualRetryInput};
+use crate::app::runner_type_lifecycle::{self, RunnerTypeAction};
 
 pub struct MutationRoot;
 
@@ -92,7 +93,7 @@ async fn change_runner_type(
 ) -> Result<MutationResult> {
     let actor = administrator(ctx)?;
     let state = ctx.data::<EdgeState>()?;
-    admin::change_runner_type(&state.jobs, actor, input.runner_type, action)
+    runner_type_lifecycle::change(&state.jobs, actor, input.runner_type, action)
         .await
         .map_err(|error| async_graphql::Error::from(of_service(error)))?;
     Ok(MutationResult::ok())

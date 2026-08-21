@@ -224,8 +224,7 @@ async fn safety_backstops_reclaim_abandoned_work() {
         );
     }
     instance.expect_no_trigger(QUIET).await;
-    tail.expect_silence("a reclaimed run appends no log line", QUIET)
-        .await;
+    stream::expect_total_silence(&mut tail, "a reclaimed run appends no log line", QUIET).await;
 
     // Then: the durable record holds exactly the timeout facts and one terminal resolution each
     for job_id in [runner_job_id, owner_job_id] {

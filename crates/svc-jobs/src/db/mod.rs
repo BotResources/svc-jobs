@@ -1,6 +1,7 @@
 pub mod apply;
 pub mod fleet;
 pub mod hydrate;
+pub mod impacts;
 pub mod jobs;
 pub mod list;
 pub mod logs;

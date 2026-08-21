@@ -2,14 +2,19 @@ mod support;
 
 use br_core_auth::PassportHeader;
 use br_test_harness::{SseSubscription, verdict, wait_until};
+use chrono::Utc;
 use contract_jobs::catalog::RunnerTypeLifecycle as PublishedLifecycle;
 use serde_json::{Value, json};
+use support::adversary::{self, RunnerTypeLifecycleAttack};
 use support::events::EventLog;
-use support::fixture::{JobsFixture, Knobs};
+use support::fixture::{self, JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::FakeRunner;
 use support::{FLEET_CHANGED, LONG, QUIET, SHORT, catalog, delta, docs, gql, stream, subs, wire};
 use uuid::Uuid;
+
+const RETIREMENT_WINDOW_SECONDS: u64 = 20;
+const RETIREMENT_REOPENING: std::time::Duration = std::time::Duration::from_secs(45);
 
 #[tokio::test]
 async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() {
@@ -39,13 +44,16 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
     );
 
     // When: one instance of the previously unknown type announces presence
+    let mut cursors: Vec<Value> = Vec::new();
     instance.connect().await;
     let registered =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
+    cursors.push(registered["cursor"].clone());
     assert_lifecycle(&registered, "ACTIVE");
     assert_active_actions(&registered, true);
     let connected =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    cursors.push(connected["cursor"].clone());
     assert_lifecycle(&connected, "ACTIVE");
     assert_active_actions(&connected, true);
 
@@ -63,20 +71,30 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
     .await;
     assert_eq!(published_active.runner_type, runner_type);
 
-    // When: the ordinary member tries to observe the known runner type through both read
-    // transports
-    let member_read = client
-        .query(member, docs::FLEET, json!({ "runnerType": &runner_type }))
-        .await;
-    let member_read_code = verdict::expect_code_shaped(
-        &member_read,
-        "an ordinary member reading the runner-type fleet",
-    );
-    assert_eq!(member_read_code, "FORBIDDEN");
-    assert!(
-        !member_read.to_string().contains(&runner_type),
-        "a refused read leaks neither the runner-type identity nor its affordances: {member_read}",
-    );
+    // When: every caller who is not a platform administrator tries to observe the known runner
+    // type through both read transports
+    let mut member_read_code = String::new();
+    for (caller, who) in [
+        (member.clone(), "an ordinary member"),
+        (
+            fixture::impersonating_member(admin),
+            "a member impersonating an administrator",
+        ),
+        (fixture::machine_caller(), "a machine passport"),
+    ] {
+        let refused = client
+            .query(&caller, docs::FLEET, json!({ "runnerType": &runner_type }))
+            .await;
+        let code =
+            verdict::expect_code_shaped(&refused, &format!("{who} reading the runner-type fleet"));
+        assert_eq!(code, "FORBIDDEN");
+        assert!(
+            !refused.to_string().contains(&runner_type),
+            "a refused read leaks neither the runner-type identity nor its affordances to {who}: \
+             {refused}",
+        );
+        member_read_code = code;
+    }
     let member_header = member.to_header();
     let (subscription_status, subscription_body) = client
         .post_raw(
@@ -120,9 +138,12 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
         "authorization runs before lookup, so the refusal leaks no runner-type existence",
     );
     assert_eq!(known_code, "FORBIDDEN");
-    fleet_watch
-        .expect_silence("a refused member changes no fleet view", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a refused member changes no fleet view",
+        QUIET,
+    )
+    .await;
     assert_eq!(fleet_view(&fixture, &runner_type).await, active_view);
     assert_eq!(
         catalog::entry(fixture.fabric(), &runner_type).await,
@@ -132,12 +153,17 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
 
     // When: the platform administrator deprecates the active type
     let deprecated_ack = gql::deprecate_runner_type(&client, admin, &runner_type).await;
-    verdict::expect_ack(&deprecated_ack, "deprecating an active runner type");
+    gql::expect_success(
+        &deprecated_ack,
+        wire::FIELD_DEPRECATE_RUNNER_TYPE,
+        "deprecating an active runner type",
+    );
 
     // Then: one typed delta carries DEPRECATED plus the new backend-owned decisions, and the KV
     // entry is updated in place
     let deprecated =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_DEPRECATED, LONG).await;
+    cursors.push(deprecated["cursor"].clone());
     assert_lifecycle(&deprecated, "DEPRECATED");
     assert_deprecated_actions(&deprecated, true, None);
     let deprecated_view = fleet_view(&fixture, &runner_type).await;
@@ -164,15 +190,33 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
         gql::retire_runner_type(&client, member, &unknown).await,
         "retiring",
     );
-    fleet_watch
-        .expect_silence("refused member actions push no lifecycle delta", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "refused member actions push no lifecycle delta",
+        QUIET,
+    )
+    .await;
     assert_eq!(fleet_view(&fixture, &runner_type).await, deprecated_view);
     assert_eq!(
         catalog::entry(fixture.fabric(), &runner_type).await,
         Some(published_deprecated.clone()),
         "refused member actions change no Published Language state",
     );
+
+    // When: every other caller who is not a platform administrator attacks the three lifecycle
+    // mutations — an impersonated member, a machine passport, no passport, an undecodable one
+    adversary::assert_no_hostile_caller_governs_a_runner_type(
+        &RunnerTypeLifecycleAttack {
+            client: &client,
+            admin,
+            member,
+            fabric: fixture.fabric(),
+            runner_type: &runner_type,
+            unknown_runner_type: &unknown,
+        },
+        &mut fleet_watch,
+    )
+    .await;
 
     // When: deprecation is repeated in a lifecycle that already blocks it
     let before_repeat = fleet_view(&fixture, &runner_type).await;
@@ -184,9 +228,12 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
         gql::assert_blocked(&before_repeat, wire::ACTION_DEPRECATE),
         "the mutation guard and its affordance are the same decision",
     );
-    fleet_watch
-        .expect_silence("a refused lifecycle transition pushes no delta", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a refused lifecycle transition pushes no delta",
+        QUIET,
+    )
+    .await;
     assert_eq!(fleet_view(&fixture, &runner_type).await, before_repeat);
     assert_eq!(
         catalog::entry(fixture.fabric(), &runner_type).await,
@@ -209,6 +256,7 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
     // retirement affordance without a client-side inference
     let waiting =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_BEGAN_WAITING, LONG).await;
+    cursors.push(waiting["cursor"].clone());
     assert_lifecycle(&waiting, "DEPRECATED");
     assert_eq!(
         gql::assert_blocked(&waiting, wire::ACTION_DISPATCH),
@@ -243,9 +291,12 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
         gql::affordance(&before_refusal, wire::ACTION_RETIRE)["params"]["count"],
         "mutation and affordance carry the same structured blocking fact",
     );
-    fleet_watch
-        .expect_silence("a refused retirement pushes no fleet delta", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a refused retirement pushes no fleet delta",
+        QUIET,
+    )
+    .await;
     assert_eq!(fleet_view(&fixture, &runner_type).await, before_refusal);
     assert_eq!(
         catalog::entry(fixture.fabric(), &runner_type).await,
@@ -256,8 +307,9 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
     // When: the administrator cancels the queued job, leaving no terminal Run inside the 24-hour
     // retirement quiet period, then retires the now-eligible type
     let cancelled = gql::cancel_job(&client, admin, Uuid::now_v7(), waiting_job).await;
-    verdict::expect_ack(
+    gql::expect_success(
         &cancelled,
+        wire::FIELD_CANCEL_JOB,
         "cancelling the queued job that blocked retirement",
     );
     events
@@ -265,11 +317,17 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
         .await;
     let stopped_waiting =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_JOB_STOPPED_WAITING, LONG).await;
+    cursors.push(stopped_waiting["cursor"].clone());
     assert_deprecated_actions(&stopped_waiting, false, None);
 
     let retired_ack = gql::retire_runner_type(&client, admin, &runner_type).await;
-    verdict::expect_ack(&retired_ack, "retiring an eligible deprecated runner type");
+    gql::expect_success(
+        &retired_ack,
+        wire::FIELD_RETIRE_RUNNER_TYPE,
+        "retiring an eligible deprecated runner type",
+    );
     let retired = stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_RETIRED, LONG).await;
+    cursors.push(retired["cursor"].clone());
     assert_lifecycle(&retired, "RETIRED");
     assert_retired_actions(&retired, false);
     let retired_view = fleet_view(&fixture, &runner_type).await;
@@ -297,14 +355,18 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
             .all(|view| view["job"]["id"] != json!(rejected_id.to_string())),
         "a rejected declaration leaves no orphaned Job",
     );
-    fleet_watch
-        .expect_silence("a rejected creation moves no fleet projection", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "a rejected creation moves no fleet projection",
+        QUIET,
+    )
+    .await;
 
     // When: presence returns for the retired type
     instance.connect().await;
     let present_but_retired =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
+    cursors.push(present_but_retired["cursor"].clone());
 
     // Then: the instance is recorded, but presence cannot reactivate policy state
     let retired_projection = delta::fleet_projection(&present_but_retired, &runner_type);
@@ -335,14 +397,19 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
 
     // When: the administrator explicitly reactivates the retired type
     let reactivated_ack = gql::reactivate_runner_type(&client, admin, &runner_type).await;
-    verdict::expect_ack(
+    gql::expect_success(
         &reactivated_ack,
+        wire::FIELD_REACTIVATE_RUNNER_TYPE,
         "reactivating a retired type with live presence",
     );
     let reactivated =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REACTIVATED, LONG).await;
+    cursors.push(reactivated["cursor"].clone());
     assert_lifecycle(&reactivated, "ACTIVE");
     assert_active_actions(&reactivated, true);
+
+    // Then: the cursors the subscriber received advance strictly, one position per transition
+    assert_cursors_advance_strictly(&cursors);
 
     // Then: the KV projection failure cannot turn the already-committed lifecycle mutation into
     // an error or roll its canonical query/subscription state back
@@ -364,12 +431,12 @@ async fn an_administrator_governs_a_runner_type_through_its_durable_lifecycle() 
     let reset_view = reset["runnerTypes"][0].clone();
     assert_lifecycle(&reset_view, "ACTIVE");
     assert_active_actions(&reset_view, true);
-    reconnected
-        .expect_silence(
-            "the reset is current and not followed by duplicate history",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut reconnected,
+        "the reset is current and not followed by duplicate history",
+        QUIET,
+    )
+    .await;
 
     // Given: the declared bucket is restored empty while the authoritative ACTIVE aggregate
     // remains stored
@@ -417,8 +484,9 @@ async fn assert_recent_terminal_run_blocks_retirement() {
     instance.connect().await;
     stream::await_fleet_event(&mut setup_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
     stream::await_fleet_event(&mut setup_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::deprecate_runner_type(&client, admin, &runner_type).await,
+        wire::FIELD_DEPRECATE_RUNNER_TYPE,
         "deprecating the type before its run",
     );
     stream::await_fleet_event(&mut setup_watch, wire::KIND_TYPE_DEPRECATED, LONG).await;
@@ -488,9 +556,12 @@ async fn assert_recent_terminal_run_blocks_retirement() {
         gql::mutation_error_params(&refused, "recent-terminal retirement")["eligibleAt"],
         blocked["params"]["eligibleAt"],
     );
-    watch
-        .expect_silence("a quiet-period refusal pushes no lifecycle delta", QUIET)
-        .await;
+    stream::expect_total_silence(
+        &mut watch,
+        "a quiet-period refusal pushes no lifecycle delta",
+        QUIET,
+    )
+    .await;
     assert_eq!(fleet_view(&fixture, &runner_type).await, before);
     assert_eq!(
         catalog::entry(fixture.fabric(), &runner_type)
@@ -526,12 +597,14 @@ async fn assert_startup_heals_deprecated_and_retired_catalog_drift() {
         "presence must durably register both healing fixtures"
     );
 
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::deprecate_runner_type(&client, admin, &deprecated_type).await,
+        wire::FIELD_DEPRECATE_RUNNER_TYPE,
         "deprecating the projection-missing type",
     );
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::deprecate_runner_type(&client, admin, &retired_type).await,
+        wire::FIELD_DEPRECATE_RUNNER_TYPE,
         "deprecating the projection-stale type",
     );
     catalog::wait_for_lifecycle(
@@ -549,8 +622,9 @@ async fn assert_startup_heals_deprecated_and_retired_catalog_drift() {
     )
     .await;
 
-    verdict::expect_ack(
+    gql::expect_success(
         &gql::retire_runner_type(&client, admin, &retired_type).await,
+        wire::FIELD_RETIRE_RUNNER_TYPE,
         "retiring the type whose catalog entry will be made stale",
     );
     catalog::wait_until_absent(fixture.fabric(), &retired_type, LONG).await;
@@ -586,6 +660,135 @@ async fn assert_startup_heals_deprecated_and_retired_catalog_drift() {
     assert_lifecycle(&fleet_view(&fixture, &retired_type).await, "RETIRED");
 
     fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_configured_quiet_period_reopens_retirement_without_a_client_timer() {
+    // Given: a service whose retirement quiet period is a handful of seconds instead of a day,
+    // and a deprecated runner type with one live instance
+    let fixture = JobsFixture::start_with(Knobs {
+        retirement_quiet_period_seconds: RETIREMENT_WINDOW_SECONDS,
+        runner_type_impact_interval_seconds: 1,
+        ..Knobs::default()
+    })
+    .await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("quiet-period");
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    let producer = Producer::new(fixture.fabric(), "projects");
+
+    let mut watch =
+        SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
+    stream::snapshot(&mut watch, FLEET_CHANGED, SHORT).await;
+    instance.connect().await;
+    stream::await_fleet_event(&mut watch, wire::KIND_TYPE_REGISTERED, LONG).await;
+    gql::expect_success(
+        &gql::deprecate_runner_type(&client, admin, &runner_type).await,
+        wire::FIELD_DEPRECATE_RUNNER_TYPE,
+        "deprecating the type before its last run",
+    );
+    stream::await_fleet_event(&mut watch, wire::KIND_TYPE_DEPRECATED, LONG).await;
+    catalog::wait_for_lifecycle(
+        fixture.fabric(),
+        &runner_type,
+        PublishedLifecycle::Deprecated,
+        LONG,
+    )
+    .await;
+
+    // When: one real Run executes to completion on the real runner transport and its owner settles
+    // the Job, leaving the configured quiet period as the only thing blocking retirement
+    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(1);
+    let job_id = declaration.job_id;
+    producer.declare(&declaration).await;
+    let trigger = instance.next_trigger(LONG).await;
+    instance.start_run(&trigger).await;
+    instance.complete_run(&trigger).await;
+    producer.finish(job_id).await;
+    gql::wait_for_status(&client, admin, job_id, "COMPLETED", LONG).await;
+
+    // Then: retirement is blocked by the window alone, and the backend names the instant it opens
+    let settled = fleet_view(&fixture, &runner_type).await;
+    let blocked = gql::affordance(&settled, wire::ACTION_RETIRE);
+    assert_eq!(
+        blocked["reasonCode"],
+        json!("runner_type_has_recent_terminal_runs"),
+        "with its Job settled, the only thing left blocking retirement is the configured quiet \
+         period: {settled}",
+    );
+    let eligible_at = delta::instant(&blocked["params"]["eligibleAt"]);
+
+    // Then: nothing reopens retirement before that instant — the window is a real lower bound, not
+    // a delta the service happens to emit as soon as a run ends
+    stream::expect_no_fleet_event(&mut watch, wire::KIND_TYPE_BECAME_RETIRABLE, QUIET).await;
+    assert!(
+        Utc::now() < eligible_at,
+        "this scenario only proves a lower bound while the window is still open: the {QUIET:?} \
+         silence must fall inside the configured {RETIREMENT_WINDOW_SECONDS}s period",
+    );
+
+    // Then: the service reopens retirement on its own, as a typed delta carrying the decision —
+    // no client ever computes the end of the window from a run timestamp
+    let retirable = stream::await_fleet_event(
+        &mut watch,
+        wire::KIND_TYPE_BECAME_RETIRABLE,
+        RETIREMENT_REOPENING,
+    )
+    .await;
+    assert!(
+        Utc::now() >= eligible_at,
+        "the reopening delta must never arrive before the eligible-at instant the backend itself \
+         published, or the quiet period is decoration: {retirable}",
+    );
+    assert_lifecycle(&retirable, "DEPRECATED");
+    gql::assert_allowed(&retirable, wire::ACTION_RETIRE);
+
+    // Then: the canonical read carries exactly the same reopened decision
+    let reopened = fleet_view(&fixture, &runner_type).await;
+    assert_lifecycle(&reopened, "DEPRECATED");
+    gql::assert_allowed(&reopened, wire::ACTION_RETIRE);
+    assert_same_action_surface(&retirable, &reopened);
+
+    // Then: the reopened affordance is the real guard — the administrator retires the type and the
+    // catalog entry is retracted for every downstream consumer
+    gql::expect_success(
+        &gql::retire_runner_type(&client, admin, &runner_type).await,
+        wire::FIELD_RETIRE_RUNNER_TYPE,
+        "retiring once the configured quiet period elapsed",
+    );
+    let retired = stream::await_fleet_event(&mut watch, wire::KIND_TYPE_RETIRED, LONG).await;
+    assert_lifecycle(&retired, "RETIRED");
+    assert_retired_actions(&retired, true);
+    catalog::wait_until_absent(fixture.fabric(), &runner_type, LONG).await;
+
+    fixture.shutdown().await;
+}
+
+fn assert_cursors_advance_strictly(cursors: &[Value]) {
+    assert!(
+        cursors.len() > 1,
+        "the cursor check must run over the transitions the subscriber actually received, not one \
+         delta: {cursors:?}"
+    );
+    let mut previous: Option<Uuid> = None;
+    for cursor in cursors {
+        let raw = cursor
+            .as_str()
+            .unwrap_or_else(|| panic!("every fleet delta carries its own cursor: {cursor}"));
+        let current = Uuid::parse_str(raw).unwrap_or_else(|error| {
+            panic!("a cursor is a resumable position, never prose: {raw} ({error})")
+        });
+        if let Some(previous) = previous {
+            assert!(
+                previous.as_u128() < current.as_u128(),
+                "fleet cursors must advance strictly in delivery order — a client that resumes \
+                 from the last cursor it saw would otherwise replay a transition it already \
+                 applied, or skip one it never did: {previous} then {current}",
+            );
+        }
+        previous = Some(current);
+    }
 }
 
 async fn fleet_view(fixture: &JobsFixture, runner_type: &str) -> Value {
@@ -624,7 +827,7 @@ fn assert_active_actions(view: &Value, dispatch_allowed: bool) {
     gql::assert_allowed(view, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(view, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(view, wire::ACTION_RETIRE),

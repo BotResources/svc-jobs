@@ -13,11 +13,14 @@ pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
 pub mod run_facts;
+pub mod runner_type_catalog;
 pub mod runner_type_impacts;
+pub mod runner_type_lifecycle;
 pub mod write;
 
 use std::sync::Arc;
 
+use bc_jobs::domain::actions::fleet::RetirementWindow;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
@@ -85,36 +88,13 @@ impl Jobs {
             return Ok(());
         };
         self.transport_effects(&job, events).await;
-        if let Err(error) = self.catalog.project_current(job.runner_type()).await {
-            tracing::error!(
-                runner_type = job.runner_type().as_str(),
-                error = %error,
-                "the durable runner-type catalog projection failed after the job commit; \
-                 startup healing will repair it"
-            );
-        }
         Ok(())
     }
 
-    pub async fn project_runner_type(
-        &self,
-        key: &bc_jobs::domain::keys::RunnerTypeKey,
-    ) -> Result<(), ServiceError> {
-        self.catalog.project_current(key).await?;
-        Ok(())
-    }
-
-    pub async fn project_runner_type_best_effort(
-        &self,
-        key: &bc_jobs::domain::keys::RunnerTypeKey,
-    ) {
-        if let Err(error) = self.project_runner_type(key).await {
-            tracing::error!(
-                runner_type = key.as_str(),
-                error = %error,
-                "the durable runner-type catalog projection failed after commit; startup healing \
-                 will repair it and the committed mutation remains acknowledged"
-            );
+    pub fn retirement_window(&self) -> RetirementWindow {
+        RetirementWindow {
+            evaluated_at: self.clock.now(),
+            quiet_period: self.limits.retirement_quiet_period(),
         }
     }
 

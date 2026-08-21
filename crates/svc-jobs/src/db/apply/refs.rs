@@ -1,5 +1,3 @@
-use bc_jobs::domain::actions::fleet::guard_accept_job;
-use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::keys::{DisplayName, InstanceKey, ProducerKey, RunnerTypeKey};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::PortError;
@@ -7,25 +5,14 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
+use crate::db::fleet::load;
 use crate::db::hydrate::unavailable;
 
 pub async fn runner_type_id(tx: &mut PgConnection, key: &RunnerTypeKey) -> Result<Uuid, PortError> {
-    let row = sqlx::query(
-        "INSERT INTO runner_types (id, type_key) VALUES ($1, $2) \
-         ON CONFLICT (type_key) DO UPDATE SET type_key = EXCLUDED.type_key \
-         RETURNING id::uuid AS id, (SELECT lifecycle::text FROM registered_runner_types \
-             WHERE runner_type_id = runner_types.id) AS lifecycle",
-    )
-    .bind(Uuid::now_v7())
-    .bind(key.as_str())
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    if let Some(stored) = row.get::<Option<String>, _>("lifecycle") {
-        let lifecycle = RunnerTypeLifecycle::from_db_str(&stored)?;
-        guard_accept_job(lifecycle, key)?;
+    match load::route_id(&mut *tx, key).await? {
+        Some(id) => Ok(id),
+        None => load::upsert_route(tx, Uuid::now_v7(), key).await,
     }
-    Ok(row.get("id"))
 }
 
 pub async fn producer_id(tx: &mut PgConnection, key: &ProducerKey) -> Result<Uuid, PortError> {

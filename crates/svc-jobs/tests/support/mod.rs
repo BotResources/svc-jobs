@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod adversary;
 pub mod catalog;
 pub mod clock;
 pub mod codes;

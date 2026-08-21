@@ -1,14 +1,11 @@
-use bc_jobs::commands::fleet::{deprecate, reactivate, retire};
 use bc_jobs::commands::job::deletion::DeleteJob;
 use bc_jobs::commands::job::manual_retry::{
     ManualRetryJob, ManualRetryOutcome, manual_retry as decide_manual_retry,
 };
 use bc_jobs::domain::ids::{JobId, ManualRetryId, ResolutionId, RunId};
 use bc_jobs::domain::job::parenting::ParentContext;
-use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::ownership::CancelRequester;
 use bc_jobs::domain::references::KnownUser;
-use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{Actor, EventMetadata};
 use uuid::Uuid;
@@ -100,44 +97,4 @@ pub async fn manual_retry(
             .await
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum RunnerTypeAction {
-    Deprecate,
-    Reactivate,
-    Retire,
-}
-
-pub async fn change_runner_type(
-    jobs: &Jobs,
-    actor: KnownUser,
-    runner_type: String,
-    action: RunnerTypeAction,
-) -> Result<(), ServiceError> {
-    let key = RunnerTypeKey::new(runner_type)?;
-    let known = FleetReader::load(&jobs.store, &key)
-        .await?
-        .ok_or(ServiceError::RunnerTypeNotFound)?;
-    let facts = jobs.store.decision_facts(&key, jobs.clock.now()).await?;
-    let result = match action {
-        RunnerTypeAction::Deprecate => deprecate(&known)?,
-        RunnerTypeAction::Reactivate => reactivate(&known)?,
-        RunnerTypeAction::Retire => retire(&known, facts)?,
-    };
-    super::write::commit_fleet_events(
-        &jobs.store,
-        jobs.ids.as_ref(),
-        super::write::FleetChange {
-            runner_type_id: known.id(),
-            runner_type: &key,
-            decided_on: Some(&known),
-            events: &result.events,
-        },
-        &administrator_metadata(&actor),
-        jobs.clock.now(),
-    )
-    .await?;
-    jobs.project_runner_type_best_effort(&key).await;
-    Ok(())
 }

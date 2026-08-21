@@ -9,7 +9,8 @@ use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion}
 use crate::error::JobsError;
 use crate::event::fleet::{
     FleetEvent, InstanceConnected, InstanceDisconnected, InstanceStatusReported,
-    RunnerTypeDeprecated, RunnerTypeReactivated, RunnerTypeRegistered, RunnerTypeRetired,
+    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeReactivated, RunnerTypeRegistered,
+    RunnerTypeRetired,
 };
 
 pub const PRESENCE_EXPIRED: &str = "presence_expired";
@@ -137,6 +138,21 @@ pub fn retire(
             runner_type: runner_type.key().clone(),
         },
     )))
+}
+
+pub fn became_retirable(
+    runner_type: &RunnerType,
+    facts: RunnerTypeDecisionFacts,
+) -> FleetCommandResult {
+    if runner_type.guard_retire(facts).is_err() {
+        return CommandResult::new(vec![]);
+    }
+    CommandResult::from_event(FleetEvent::RunnerTypeBecameRetirable(
+        RunnerTypeBecameRetirable {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        },
+    ))
 }
 
 fn connected(

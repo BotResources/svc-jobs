@@ -43,7 +43,10 @@ fn fleet_in(lifecycle: RunnerTypeLifecycle, instances: Vec<RunnerInstance>) -> R
 }
 
 fn unused() -> RunnerTypeDecisionFacts {
-    RunnerTypeDecisionFacts::unused(ts(200_000))
+    RunnerTypeDecisionFacts::unused(crate::domain::actions::fleet::RetirementWindow {
+        evaluated_at: ts(200_000),
+        quiet_period: chrono::TimeDelta::hours(24),
+    })
 }
 
 fn live(status: ReportedStatus, changes: u32) -> RunnerInstance {
@@ -302,6 +305,29 @@ fn each_lifecycle_command_emits_one_granular_fact_when_its_decision_allows_it() 
         retire(&deprecated, unused()).unwrap().events.as_slice(),
         [FleetEvent::RunnerTypeRetired(_)]
     ));
+}
+
+#[test]
+fn the_retirable_fact_is_emitted_only_when_the_retirement_decision_itself_opens() {
+    // Given: a deprecated type whose quiet period has elapsed, and one whose has not
+    let deprecated = fleet_in(RunnerTypeLifecycle::Deprecated, vec![]);
+    let still_quiet = RunnerTypeDecisionFacts {
+        non_terminal_job_count: 0,
+        latest_terminal_run_at: Some(ts(199_000)),
+        ..unused()
+    };
+    // When: the durable timer asks whether the type has become retirable
+    // Then: the fact follows the same decision the command enforces, never a second reading
+    assert!(matches!(
+        became_retirable(&deprecated, unused()).events.as_slice(),
+        [FleetEvent::RunnerTypeBecameRetirable(_)]
+    ));
+    assert!(became_retirable(&deprecated, still_quiet).events.is_empty());
+    assert!(
+        became_retirable(&fleet_in(RunnerTypeLifecycle::Active, vec![]), unused())
+            .events
+            .is_empty()
+    );
 }
 
 #[test]

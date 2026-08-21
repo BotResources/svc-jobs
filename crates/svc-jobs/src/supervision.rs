@@ -33,6 +33,17 @@ pub struct Supervisor {
     down: Arc<Mutex<BTreeSet<&'static str>>>,
 }
 
+pub struct Established {
+    supervisor: Supervisor,
+    name: &'static str,
+}
+
+impl Established {
+    pub fn signal(self) {
+        self.supervisor.mark_up(self.name);
+    }
+}
+
 impl Supervisor {
     pub fn new(readiness: ReadinessHandle, policy: RestartPolicy) -> Self {
         Self {
@@ -50,7 +61,7 @@ impl Supervisor {
 
     pub fn spawn<F, Fut>(&self, name: &'static str, attempt: F)
     where
-        F: Fn() -> Fut + Send + 'static,
+        F: Fn(Established) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), ServiceError>> + Send + 'static,
     {
         self.spawn_with_teardown(name, attempt, || {});
@@ -58,24 +69,29 @@ impl Supervisor {
 
     pub fn spawn_with_teardown<F, Fut, T>(&self, name: &'static str, attempt: F, teardown: T)
     where
-        F: Fn() -> Fut + Send + 'static,
+        F: Fn(Established) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), ServiceError>> + Send + 'static,
         T: Fn() + Send + 'static,
     {
+        self.mark_down(name);
         let supervisor = self.clone();
         tokio::spawn(async move { supervisor.supervise(name, attempt, teardown).await });
     }
 
     async fn supervise<F, Fut, T>(&self, name: &'static str, attempt: F, teardown: T)
     where
-        F: Fn() -> Fut + Send + 'static,
+        F: Fn(Established) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), ServiceError>> + Send + 'static,
         T: Fn() + Send + 'static,
     {
         let mut consecutive_restarts = 0u32;
         loop {
             let started = Instant::now();
-            report_death(name, tokio::spawn(attempt()).await);
+            let established = Established {
+                supervisor: self.clone(),
+                name,
+            };
+            report_death(name, tokio::spawn(attempt(established)).await);
             teardown();
             self.mark_down(name);
             if started.elapsed() >= self.policy.stability {
@@ -92,26 +108,17 @@ impl Supervisor {
             }
             tokio::time::sleep(self.policy.backoff(consecutive_restarts)).await;
             consecutive_restarts += 1;
-            self.mark_up(name);
         }
     }
 
-    fn mark_down(&self, name: &'static str) {
+    pub fn mark_down(&self, name: &'static str) {
         self.down_names().insert(name);
         self.publish_readiness();
     }
 
-    pub fn dependency_down(&self, name: &'static str) {
-        self.mark_down(name);
-    }
-
-    fn mark_up(&self, name: &'static str) {
+    pub fn mark_up(&self, name: &'static str) {
         self.down_names().remove(name);
         self.publish_readiness();
-    }
-
-    pub fn dependency_up(&self, name: &'static str) {
-        self.mark_up(name);
     }
 
     fn down_names(&self) -> std::sync::MutexGuard<'_, BTreeSet<&'static str>> {

@@ -1,4 +1,3 @@
-use bc_jobs::domain::actions::fleet::RETIREMENT_QUIET_PERIOD;
 use bc_jobs::event::job_facts::{
     RetryScheduled, RunCancellationRequested, RunCancelled, RunCompleted, RunDispatched, RunFailed,
     RunPlanDeclared, RunStarted, RunStepStarted,
@@ -127,19 +126,6 @@ async fn terminal(
     at: DateTime<Utc>,
     report: Option<&bc_jobs::domain::run::failure::RunFailureReport>,
 ) -> Result<(), PortError> {
-    // Retirement holds this same canonical row while it re-evaluates its quiet-period facts.
-    // Taking it before adding a terminal makes that decision and this fact linearizable: a
-    // retirement can never pass on a snapshot that races a just-recorded terminal run.
-    sqlx::query(
-        "SELECT rt.id FROM runner_types rt \
-         JOIN jobs j ON j.runner_type_id = rt.id \
-         JOIN runs r ON r.job_id = j.id \
-         WHERE r.id = $1 FOR UPDATE OF rt",
-    )
-    .bind(run_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(unavailable)?;
     sqlx::query(
         "INSERT INTO run_terminals \
          (run_id, kind, occurred_at, failure_kind, reason_code, params, diagnostic, \
@@ -164,17 +150,7 @@ async fn terminal(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    sqlx::query(
-        "INSERT INTO runner_type_affordance_impacts (runner_type_id, eligible_at) \
-         SELECT j.runner_type_id, $2 FROM runs r JOIN jobs j ON j.id = r.job_id \
-         WHERE r.id = $1 ON CONFLICT (runner_type_id, eligible_at) DO NOTHING",
-    )
-    .bind(run_id)
-    .bind(at + RETIREMENT_QUIET_PERIOD)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    Ok(())
+    crate::db::impacts::record_terminal(tx, run_id, at).await
 }
 
 pub async fn cancellation_requested(

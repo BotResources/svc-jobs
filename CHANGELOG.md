@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
-## 0.2.0 - 2026-08-20
+## 0.2.0 - 2026-08-21
 
 ### Added
 
@@ -20,18 +20,76 @@ form to decide whether a version ships.
 - PostgreSQL migration `0002_runner_type_catalog.sql` separates historical Job
   routing keys from registered aggregates and backfills only types proven by
   historical presence.
-- A durable timer emits `RunnerTypeAffordancesChanged` when the retirement
-  quiet period elapses without another state transition.
+- A durable timer emits `RunnerTypeBecameRetirable` when the retirement quiet
+  period elapses without another state transition. Its interval is
+  `JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS` (default 60 s). The decision is
+  per runner type: a sweep that comes back after an outage consumes every
+  overdue impact of a type together and emits the fact once.
+- `JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS` (default 30 s) configures the
+  reconciliation that repairs the whole published runner-type prefix. The Helm
+  chart surfaces it alongside the other runner-type knobs.
+- `JOBS_RETIREMENT_QUIET_PERIOD_SECONDS` (default 86400) configures the quiet
+  period a deprecated runner type must observe before it may retire. The
+  Helm chart surfaces it, and the sweeper ages the stored terminal instant
+  against the configured value at read time — nothing is materialized.
 
 ### Changed
 
 - Retired types refuse new jobs and dispatch while still recording presence.
   Reactivation from retired requires a live instance; retirement requires a
-  deprecated type, no non-terminal jobs, and a 24-hour quiet period after the
-  latest terminal run.
-- Published Language writes and reconciliation are ordered across pods by a
-  distributed PostgreSQL lock; outages remove the pod from readiness until a
-  complete reconciliation succeeds.
+  deprecated type, no non-terminal jobs, and the configured quiet period after
+  the latest terminal run.
+- **A runner type no instance has ever announced no longer appears in
+  `jobsFleet` or `jobsFleetChanged`.** A key referenced only by a job is a
+  routing entry, not a registered aggregate: it has no lifecycle, no fleet and
+  no affordances to answer with. A job may still be created against it and
+  waits, as before — there is simply no fleet row standing for it until the
+  first instance announces itself.
+- Reactivation refused on an already-active runner type answers
+  `runner_type_already_active` instead of `runner_type_not_deprecated`, which
+  was misleading: a retired type is reactivatable too.
+- Published Language writes happen after their transaction commits — never with
+  a transaction held open across the KV round-trip — and only for a fact that
+  moves a lifecycle: a job commit, a heartbeat or a status flip cannot change a
+  runner type's lifecycle and no longer touches the bucket. Two pods writing the
+  same key are not ordered against each other; convergence is by reconciliation,
+  which also repairs a write lost to a crash. A bucket outage removes the pod
+  from readiness, and only a complete reconciliation puts it back — a single-key
+  projection can lower readiness, never restore it.
+- **Readiness now means every background task has bound its source of work.**
+  A supervised task used to count as up from the moment it was spawned, so the
+  pod could report READY while a task was still opening its subscription, and a
+  restart restored readiness before the retry had re-established anything. Each
+  task now starts out down and signals establishment itself — the presence watch
+  after its KV watch exists, the durable fact listener after `LISTEN` is bound,
+  the JetStream consumers after their durable is bound, the timer loops at
+  entry. `GET /readyz` stays DOWN, naming the task, until all of them report in.
+
+### Fixed
+
+- **One unreadable stored runner type no longer takes the whole fleet down.**
+  A presence session whose status row was unreadable failed `jobsFleet` and
+  every fleet delta for every runner type. An unfiltered listing now leaves
+  that one type out and logs the corruption with its code, while asking for
+  that type by name — and every command path — still fails explicitly: the
+  state that cannot be loaded is still refused, it just no longer takes its
+  neighbours with it.
+- **A runner announcing itself during a gap in the presence watch is no longer
+  invisible until its next heartbeat.** The watch replayed nothing: a presence
+  entry written while the watch was being established — at boot under load, or
+  across a supervised restart — was missed for good, because reconciliation only
+  closes sessions whose KV entry vanished, never the reverse. The watch now
+  replays the last entry per key (deletes included) before live updates;
+  processing was already idempotent, so a replayed entry for a known session
+  produces no event. Combined with the readiness change above, a subscriber
+  connected to a READY pod can no longer sit on a snapshot that never moves.
+- **A dropped `LISTEN` connection no longer leaves subscribers on a live but
+  silent stream.** The durable fact listener used `PgListener::recv`, which
+  reconnects on its own and loses every `NOTIFY` raised while it was away —
+  the connection came back, the subscriptions stayed open, and the deltas for
+  that window were simply gone. The listener now surfaces the loss, so the
+  supervisor restarts it, its teardown ends every subscription, and clients
+  reconnect onto a fresh snapshot while readiness is DOWN in between.
 
 ## 0.1.1 - 2026-08-19
 

@@ -51,12 +51,12 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     delta::assert_active_affordances(&delta::assert_upserted_summary(
         &queued, parent_id, "PENDING",
     ));
-    fleet_watch
-        .expect_silence(
-            "queued work cannot materialize an unregistered runner type",
-            QUIET,
-        )
-        .await;
+    stream::expect_total_silence(
+        &mut fleet_watch,
+        "queued work cannot materialize an unregistered runner type",
+        QUIET,
+    )
+    .await;
     assert!(
         gql::fleet_of(&client, admin, &parent_type).await.is_empty(),
         "fleet reads omit a routing key until its first presence registers the entity",
@@ -82,7 +82,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_REACTIVATE),
-        "runner_type_not_deprecated",
+        "runner_type_already_active",
     );
     assert_eq!(
         gql::assert_blocked(&registered, wire::ACTION_RETIRE),

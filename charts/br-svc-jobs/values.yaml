@@ -61,6 +61,11 @@ nats:
     user: "NATS_USER"
     password: "NATS_PASSWORD"
 
+runnerTypes:
+  retirementQuietPeriodSeconds: 86400
+  impactSweepIntervalSeconds: 60
+  catalogReconcileIntervalSeconds: 30
+
 # Generic escape hatch: extra environment entries rendered verbatim into the
 # container (list of {name, value} or any valid Kubernetes EnvVar). Use it for
 # the optional JOBS_* tuning knobs (retry, backstop, consumer and supervision

@@ -8,7 +8,7 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
-## 0.2.0 - 2026-08-20
+## 0.2.0 - 2026-08-21
 
 - RunnerType now owns a total `ACTIVE`/`DEPRECATED`/`RETIRED` lifecycle and
   granular lifecycle facts.
