@@ -300,6 +300,15 @@ before integrating.
 | The Published Language catalog write happens after the transaction commits, and nothing orders two pods writing the same key | A KV round-trip inside a transaction holds its snapshot and locks for the whole network call, and a lock taken to order the write would die at commit — before the write it was meant to order. Nothing in the bucket API compares revisions, so the honest guarantee is convergence by reconciliation: a raced or lost write is repaired by the periodic reconciler, and readiness only returns after a full reconciliation. |
 | `scripts/setup-branch-protection.sh` + `.github/required-checks.json` | Declarative source of truth for required checks; each entry must match a `ci.yml` job `name:` verbatim or PRs block forever waiting for a check that never reports. |
 | Changelog headings are plain `## x.y.z` | The release pipeline greps that exact form (root for the image, per-crate for tags); a bracketed keepachangelog heading ships nothing. |
+| The registry gate has no pass-by-default path | A missing `BR_REGISTRY_KEY`, a network failure, an unknown query field — every way of not getting an ELIGIBLE verdict fails the caller. A release law a missing secret can switch off is not a law. |
+| Registry transport is curl-only, payloads through files | Cloudflare 403s other user agents, and an SDL can exceed the 128 KiB per-argument kernel limit — so the JSON body always goes through a file and the key never reaches argv or the log. |
+| The service is addressed by its committed UUID (`crates/svc-jobs/registry.toml`), never by name | A rename would silently retarget the release, and the by-name entry point is closed to machine keys. `scripts/service-meta.sh` carries the same id and `registry_ids()` refuses when the two disagree, so a copy/pasted `registry.toml` cannot reach another service's patch. |
+| SDL is extracted with `env -i <binary> schema` | CD's environment carries the registry key; the document must be a photo of the binary, not of the environment it happened to run in. `main` answers `schema` before any logging init so no log line corrupts stdout. |
+| The SDL + DB documents are posed BEFORE the image push | They are photos of the exact artifacts about to ship; a failure blocks the push, leaving GHCR and the registry consistent. An empty document is legitimate only for a service that declares no such surface in `service-meta.sh`. |
+| DB schema recomposes on a pinned `postgres:17` via `sqlx migrate run` + `pg_dump --schema-only --no-owner` | Two recomposes of the same migrations must produce the same bytes: pg_dump output changes across majors, and sqlx is the migrator the service itself uses, so `_sqlx_migrations` lands in the dump exactly as in production. |
+| The CD sqlx-cli install pins the exact sqlx version in `Cargo.lock` (0.8.6) | sqlx owns the `_sqlx_migrations` DDL that lands in the posed document; the pin moves with `Cargo.lock` in the same commit or the document drifts with nothing in the repo moving. |
+| The PR-time registry gate passes no image-ref; the CD legs do | The image-ref argument declares "I am the CD run about to publish this ref", which turns an already-implemented target into an accepted idempotent re-run. At PR time that exact case must FAIL — a bump onto a published version is version reuse, and a published version is immutable. |
+| `registry-implement`'s flip probe is inverted and advisory | A machine key cannot read the patch back, so the probe re-asks the eligibility question: a `patch_already_implemented` refusal IS the success signal. It only warns — the image is already on GHCR, and a red job would report a failed release that succeeded. The image-record write itself stays a hard failure. |
 
 ## Versioning & release
 
@@ -316,6 +325,19 @@ before integrating.
   `cargo-semver-checks` against its latest release tag.
 - `scripts/publish.sh` drives the build (`--dry-run`, `--local-image`,
   `--check-only` for local use; CD runs `--skip-checks` after CI has passed).
+- Releases are governed by the production Services registry
+  (`https://botresources.ai/graphql`): an image may only be built and published
+  for a version the registry holds as a SEALED, NOT-IMPLEMENTED PatchVersion.
+  `scripts/registry-gate.sh` enforces it at PR time (bumped versions only, via
+  the `registry gate` CI job), before the build, and again immediately before
+  the push; `scripts/registry-docs.sh` photographs the SDL (from the built
+  binary) and the DB schema (recomposed from this commit's migrations) and
+  poses both on the patch before the image push; `scripts/registry-implement.sh`
+  records the published image ref afterwards, which completes the registry's
+  automatic implemented flip. All three address the patch by coordinates —
+  the committed service UUID plus (major, minor, patch) — and need
+  `BR_REGISTRY_KEY`. Only `svc-jobs` is registry-tracked; `contract-jobs` is a
+  wire-contract crate, not a registry service, and is never gated nor recorded.
 
 ## License
 

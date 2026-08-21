@@ -28,6 +28,7 @@
     "supply chain (audit + deny + machete)",
     "cargo semver-checks (contract)",
     "changelog entry present (per crate)",
+    "registry gate (bumped versions sealed in the registry)",
     "shellcheck",
     "trufflehog (secret scan)",
     "e2e path filter",
