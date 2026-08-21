@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## Unreleased
+
+### Added
+
+- Release pipeline integration with the production Services registry:
+  `scripts/registry-gate.sh` (sealed-and-not-implemented gate at PR time,
+  pre-build, and pre-push), `scripts/registry-docs.sh` (procedural SDL + DB
+  schema posed from the built artifacts before the image push), and
+  `scripts/registry-implement.sh` (image record + advisory implemented-flip
+  probe after the push). CI/CD only — no service behavior changes.
+
 ## 0.2.0 - 2026-08-21
 
 ### Added
