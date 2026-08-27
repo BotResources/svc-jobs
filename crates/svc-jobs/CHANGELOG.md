@@ -18,8 +18,13 @@ to `## Unreleased`).
 - Version 2 commands enter the lifecycle-only domain path and retain the
   envelope actor as declarant attribution. Version 1 continues through the
   legacy owner-coherence path.
-- Added a real Postgres/NATS oracle covering both versions, terminal events,
-  subscriptions, query state, affordances, and actor attribution.
+- Added a real Postgres/NATS oracle covering both versions, stable-command-id
+  redelivery, lifecycle refusal after terminal resolution and soft deletion,
+  exact failure cause and resolution identities, subscriptions, query state,
+  affordances, and actor attribution.
+- The v2 cancellation oracle exercises the complete tree semantics: descendant
+  cascade, in-flight desired-state cancel entries, undelivered-trigger
+  withdrawal, late runner completion, and one durable resolution per job.
 
 ## 0.2.0 - 2026-08-21
 

@@ -83,6 +83,15 @@ pub enum CancelRequester {
     Cascade { originating_job_id: JobId },
 }
 
+impl CancelRequester {
+    pub fn guard_may_cancel(&self) -> Result<(), JobsError> {
+        match self {
+            Self::Owner(claim) => claim.guard_owns_the_job(),
+            Self::Administrator(_) | Self::Declarant | Self::Cascade { .. } => Ok(()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +144,21 @@ mod tests {
         let requester = ResolutionRequester::Declarant;
         // When/Then: ownership metadata is attribution, not a domain authorization gate
         assert_eq!(requester.guard_may_resolve(), Ok(()));
+    }
+
+    #[test]
+    fn a_legacy_cancellation_still_requires_the_declaring_actor() {
+        // Given: a legacy cancellation command attributed to another actor
+        let requester = CancelRequester::Owner(DeclarationClaim::new(Some(actor()), actor()));
+        // When/Then: the v1 compatibility rule remains enforced
+        assert_eq!(requester.guard_may_cancel(), Err(JobsError::NotOwner));
+    }
+
+    #[test]
+    fn a_declarant_admitted_by_the_fabric_may_request_cancellation() {
+        // Given: a v2 cancellation command admitted by the NATS fabric
+        let requester = CancelRequester::Declarant;
+        // When/Then: authorization is complete before the domain sees the command
+        assert_eq!(requester.guard_may_cancel(), Ok(()));
     }
 }

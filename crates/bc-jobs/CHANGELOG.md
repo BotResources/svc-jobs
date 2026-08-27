@@ -14,7 +14,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   declarant. Legacy claims retain the owner-coherence guard; declarants are
   checked only against the Job lifecycle invariants.
 - Cancellation accepts the same admitted-declarant origin while preserving
-  the administrator and legacy-owner paths.
+  the administrator and legacy-owner paths through one exhaustive requester
+  guard.
 
 ## 0.2.0 - 2026-08-21
 

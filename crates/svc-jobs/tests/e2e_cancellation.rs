@@ -385,8 +385,45 @@ async fn an_administrator_cancels_a_job_tree_without_leaving_work_running_or_que
     fixture.shutdown().await;
 }
 
+#[derive(Clone, Copy)]
+enum BusCancellationContract {
+    V1Owner,
+    V2Declarant,
+}
+
+impl BusCancellationContract {
+    async fn cancel(
+        self,
+        owner: &Producer<'_>,
+        declarant: &Producer<'_>,
+        command_id: Uuid,
+        job_id: Uuid,
+    ) {
+        match self {
+            Self::V1Owner => owner.cancel_as(command_id, job_id).await,
+            Self::V2Declarant => declarant.cancel_v2_as(command_id, job_id).await,
+        }
+    }
+
+    fn actor_id(self, owner: &Producer<'_>, declarant: &Producer<'_>) -> Uuid {
+        match self {
+            Self::V1Owner => owner.account_id,
+            Self::V2Declarant => declarant.account_id,
+        }
+    }
+}
+
 #[tokio::test]
-async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
+async fn an_owner_cancels_its_job_tree_over_the_v1_bus_contract() {
+    bus_cancellation_cancels_the_whole_tree(BusCancellationContract::V1Owner).await;
+}
+
+#[tokio::test]
+async fn an_admitted_declarant_cancels_the_whole_job_tree_over_the_v2_bus_contract() {
+    bus_cancellation_cancels_the_whole_tree(BusCancellationContract::V2Declarant).await;
+}
+
+async fn bus_cancellation_cancels_the_whole_tree(contract: BusCancellationContract) {
     // Given: a tree with one run in flight, one trigger in line and one job still waiting
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
@@ -397,6 +434,7 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
     let running_type = wire::unique_runner_type("bus_running");
     let unclaimed_type = wire::unique_runner_type("bus_unclaimed");
     let producer = Producer::new(fixture.fabric(), "projects");
+    let declarant = Producer::new(fixture.fabric(), "not-the-owner");
     let owner = Producer::new(fixture.fabric(), "jobs");
     let mut root = FakeRunner::new(fixture.nats(), &root_type, "root-a");
     let mut busy = FakeRunner::new(fixture.nats(), &running_type, "busy-a");
@@ -443,17 +481,40 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
         SseSubscription::open(fixture.url(), admin, &subs::jobs_changed(&running_type)).await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: the producer that owns the root cancels it over the bus, not through the edge
-    producer.cancel(parent_id).await;
+    // When: the applicable contract cancels the root over the bus, not through the edge
+    let cancel_command = Uuid::now_v7();
+    contract
+        .cancel(&producer, &declarant, cancel_command, parent_id)
+        .await;
+
+    // Then: the transport carries the stop request where a run is in flight, and nowhere else.
+    // Observe this time-sensitive channel before the slower settled-event assertions below.
+    root.await_cancel_entry(parent_run, LONG).await;
+    busy.await_cancel_entry(running_child_run, LONG).await;
+    idler.expect_no_cancel_entry(unclaimed_run, QUIET).await;
+    assert_eq!(
+        idler.trigger_count().await,
+        0,
+        "cancelling queued work withdraws its undelivered trigger, whoever asked for the \
+         cancellation",
+    );
 
     // Then: the same downward cancellation the administrator's mutation performs
     for job_id in [parent_id, running_child_id, unclaimed_child_id] {
-        let cancelled = events.expect_one(wire::FACT_CANCELLED, job_id, LONG).await;
+        let mut cancellations = events
+            .expect_exactly(wire::FACT_CANCELLED, job_id, 1, LONG)
+            .await;
+        let cancelled = cancellations.remove(0);
         assert_eq!(
             cancelled.payload()["job_id"],
             json!(job_id.to_string()),
             "cancellation travels downward, one event per cancelled job under its own id — a \
              producer watching its own descendant must hear it under that descendant's id",
+        );
+        assert_eq!(
+            cancelled.envelope["metadata"]["actor_id"],
+            json!(contract.actor_id(&producer, &declarant).to_string()),
+            "the root actor is retained as attribution throughout the cancellation cascade",
         );
         gql::wait_for_status(&client, admin, job_id, "CANCELLED", LONG).await;
     }
@@ -500,17 +561,6 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
     delta::assert_cancelled_affordances(&read_back);
     delta::assert_cancelled_affordances(&gql::child_of(&read_back["job"], running_child_id));
 
-    // Then: the transport carries the stop request where a run is in flight, and nowhere else
-    root.await_cancel_entry(parent_run, LONG).await;
-    busy.await_cancel_entry(running_child_run, LONG).await;
-    idler.expect_no_cancel_entry(unclaimed_run, QUIET).await;
-    assert_eq!(
-        idler.trigger_count().await,
-        0,
-        "cancelling queued work withdraws its undelivered trigger, whoever asked for the \
-         cancellation",
-    );
-
     // When: both instances answer with a success that raced the stop request
     root.complete_run(&parent_trigger).await;
     busy.complete_run(&running_trigger).await;
@@ -522,7 +572,9 @@ async fn a_producer_cancels_the_job_tree_it_owns_over_the_bus() {
             .await;
     }
 
-    producer.cancel(parent_id).await;
+    contract
+        .cancel(&producer, &declarant, cancel_command, parent_id)
+        .await;
     events
         .expect_exactly(wire::FACT_CANCELLED, parent_id, 1, QUIET)
         .await;

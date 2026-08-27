@@ -106,15 +106,18 @@ write a crash lost. An unavailable bucket cannot turn a committed mutation into
 a false error; it removes the pod from readiness, and only a full
 reconciliation puts it back.
 
-**Who the owner is.** A resolution command is accepted only when its envelope
-declares the same actor that declared the job (inherited along a manual-retry
-chain). In practice the parent's runner resolves its child, the producing
-bounded context resolves the root it declared, and platform administrators act
-through the GraphQL surface. This is a coherence rule between self-declared
-envelope identities, not an authentication: nothing on the bus verifies the
-actor a publisher writes. Trust here is rooted in NATS access — first-party
-publishers on a network-isolated segment — and impersonation on the bus is out
-of scope by design.
+**Who the owner is on the compatibility v1 contract.** A v1 resolution command
+is accepted only when its envelope declares the same actor that declared the
+job (inherited along a manual-retry chain). In practice the parent's runner
+resolves its child, the producing bounded context resolves the root it declared,
+and platform administrators act through the GraphQL surface. This is a legacy
+coherence rule between self-declared envelope identities, not an
+authentication: nothing on the bus verifies the actor a publisher writes. The
+v2 resolution subjects deliberately remove that coherence rule; their callers
+are admitted by NATS access and Jobs treats their actor as attribution. Trust
+on both versions is rooted in the fabric — first-party publishers on a
+network-isolated segment — and impersonation on the bus is out of scope by
+design.
 
 ### Runner transport
 

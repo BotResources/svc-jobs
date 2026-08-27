@@ -283,27 +283,100 @@ mod tests {
 
     #[test]
     fn a_fabric_admitted_declarant_may_finish_a_non_terminal_job() {
-        // Given: a non-terminal job and a v2 declaration admitted by the fabric
-        let job = JobBuilder::new().build();
+        // Given: a v2 declaration admitted for a job whose run is still executing
+        let run = RunBuilder::new(1).started(ts(5)).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        let resolution = resolution_id();
         // When: Jobs evaluates the lifecycle without interpreting actor metadata as authority
-        let result = job.finish(FinishJob {
-            resolution_id: resolution_id(),
-            requester: ResolutionRequester::Declarant,
-        });
-        // Then: the lifecycle transition is admitted
-        assert!(result.is_ok());
+        let result = job
+            .finish(FinishJob {
+                resolution_id: resolution,
+                requester: ResolutionRequester::Declarant,
+            })
+            .unwrap();
+        // Then: the exact withdrawal and resolution effects remain those of a v1 finish
+        match result.events.as_slice() {
+            [
+                JobEvent::RunCancellationRequested(requested),
+                JobEvent::RunCancelled(cancelled),
+                JobEvent::JobCompleted(fact),
+            ] => {
+                assert_eq!(requested.run_id, run_id);
+                assert_eq!(requested.reason_code.as_str(), "job_resolved");
+                assert_eq!(cancelled.run_id, run_id);
+                assert_eq!(fact.job_id, job.id());
+                assert_eq!(fact.resolution_id, resolution);
+            }
+            other => panic!("expected withdrawal followed by JobCompleted, got {other:?}"),
+        }
+        assert_eq!(
+            result.warnings,
+            vec![CommandWarning::CancellationIsBestEffort]
+        );
     }
 
     #[test]
     fn a_fabric_admitted_declarant_may_fail_a_non_terminal_job() {
-        // Given: a non-terminal job and a v2 declaration admitted by the fabric
-        let job = JobBuilder::new().build();
+        // Given: a v2 declaration admitted for a job whose trigger is still queued
+        let run = RunBuilder::new(1).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        let resolution = resolution_id();
         // When: the declarant reports that the job failed
+        let result = job
+            .declare_failed(FailJob {
+                resolution_id: resolution,
+                requester: ResolutionRequester::Declarant,
+            })
+            .unwrap();
+        // Then: the exact trigger withdrawal and owner-declared failure are recorded
+        match result.events.as_slice() {
+            [JobEvent::RunCancelled(cancelled), JobEvent::JobFailed(fact)] => {
+                assert_eq!(cancelled.run_id, run_id);
+                assert_eq!(fact.job_id, job.id());
+                assert_eq!(fact.resolution_id, resolution);
+                assert_eq!(fact.failure_cause, JobFailureCause::DeclaredByOwner);
+                assert_eq!(fact.caused_by_run_id, None);
+            }
+            other => panic!("expected trigger withdrawal followed by JobFailed, got {other:?}"),
+        }
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_cannot_replace_a_terminal_resolution() {
+        // Given: a job already completed
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .build();
+        // When: a fresh v2 failure declaration arrives
         let result = job.declare_failed(FailJob {
             resolution_id: resolution_id(),
             requester: ResolutionRequester::Declarant,
         });
-        // Then: the lifecycle transition is admitted
-        assert!(result.is_ok());
+        // Then: fabric admission never weakens lifecycle immutability
+        assert_eq!(
+            result,
+            Err(JobsError::JobAlreadyTerminal {
+                status: "COMPLETED"
+            })
+        );
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_cannot_resolve_a_deleted_job() {
+        // Given: a soft-deleted job retained for audit
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .deleted(ts(90))
+            .build();
+        // When: a fresh v2 completion declaration arrives
+        let result = job.finish(FinishJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Declarant,
+        });
+        // Then: deleted audit state remains immutable
+        assert_eq!(result, Err(JobsError::JobDeleted));
     }
 }
