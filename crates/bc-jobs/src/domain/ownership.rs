@@ -61,10 +61,35 @@ impl DeclarationClaim {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionRequester {
+    LegacyOwner(DeclarationClaim),
+    Declarant,
+}
+
+impl ResolutionRequester {
+    pub fn guard_may_resolve(&self) -> Result<(), JobsError> {
+        match self {
+            Self::LegacyOwner(claim) => claim.guard_owns_the_job(),
+            Self::Declarant => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelRequester {
     Administrator(KnownUser),
     Owner(DeclarationClaim),
+    Declarant,
     Cascade { originating_job_id: JobId },
+}
+
+impl CancelRequester {
+    pub fn guard_may_cancel(&self) -> Result<(), JobsError> {
+        match self {
+            Self::Owner(claim) => claim.guard_owns_the_job(),
+            Self::Administrator(_) | Self::Declarant | Self::Cascade { .. } => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -102,5 +127,38 @@ mod tests {
         let claim = DeclarationClaim::new(None, actor());
         // Then: an unattributable declaration confers ownership on no one
         assert_eq!(claim.guard_owns_the_job(), Err(JobsError::NotOwner));
+    }
+
+    #[test]
+    fn a_legacy_resolution_still_requires_the_declaring_actor() {
+        // Given: a legacy resolution command attributed to another actor
+        let requester =
+            ResolutionRequester::LegacyOwner(DeclarationClaim::new(Some(actor()), actor()));
+        // When/Then: the v1 compatibility rule remains enforced
+        assert_eq!(requester.guard_may_resolve(), Err(JobsError::NotOwner));
+    }
+
+    #[test]
+    fn a_declarant_admitted_by_the_fabric_is_checked_only_against_the_lifecycle() {
+        // Given: a v2 resolution command admitted by the NATS fabric
+        let requester = ResolutionRequester::Declarant;
+        // When/Then: ownership metadata is attribution, not a domain authorization gate
+        assert_eq!(requester.guard_may_resolve(), Ok(()));
+    }
+
+    #[test]
+    fn a_legacy_cancellation_still_requires_the_declaring_actor() {
+        // Given: a legacy cancellation command attributed to another actor
+        let requester = CancelRequester::Owner(DeclarationClaim::new(Some(actor()), actor()));
+        // When/Then: the v1 compatibility rule remains enforced
+        assert_eq!(requester.guard_may_cancel(), Err(JobsError::NotOwner));
+    }
+
+    #[test]
+    fn a_declarant_admitted_by_the_fabric_may_request_cancellation() {
+        // Given: a v2 cancellation command admitted by the NATS fabric
+        let requester = CancelRequester::Declarant;
+        // When/Then: authorization is complete before the domain sees the command
+        assert_eq!(requester.guard_may_cancel(), Ok(()));
     }
 }

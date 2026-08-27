@@ -9,6 +9,15 @@ pub fn cmd_job_cancel_v1_coords() -> Result<CommandCoords, CoordError> {
     })
 }
 
+pub fn cmd_job_cancel_v2_coords() -> Result<CommandCoords, CoordError> {
+    Ok(CommandCoords {
+        receiver: Bc::new("jobs")?,
+        aggregate: Aggregate::new("job")?,
+        verb: Verb::new("cancel")?,
+        version: 2,
+    })
+}
+
 pub fn cmd_job_create_v1_coords() -> Result<CommandCoords, CoordError> {
     Ok(CommandCoords {
         receiver: Bc::new("jobs")?,
@@ -27,12 +36,30 @@ pub fn cmd_job_fail_v1_coords() -> Result<CommandCoords, CoordError> {
     })
 }
 
+pub fn cmd_job_fail_v2_coords() -> Result<CommandCoords, CoordError> {
+    Ok(CommandCoords {
+        receiver: Bc::new("jobs")?,
+        aggregate: Aggregate::new("job")?,
+        verb: Verb::new("fail")?,
+        version: 2,
+    })
+}
+
 pub fn cmd_job_finish_v1_coords() -> Result<CommandCoords, CoordError> {
     Ok(CommandCoords {
         receiver: Bc::new("jobs")?,
         aggregate: Aggregate::new("job")?,
         verb: Verb::new("finish")?,
         version: 1,
+    })
+}
+
+pub fn cmd_job_finish_v2_coords() -> Result<CommandCoords, CoordError> {
+    Ok(CommandCoords {
+        receiver: Bc::new("jobs")?,
+        aggregate: Aggregate::new("job")?,
+        verb: Verb::new("finish")?,
+        version: 2,
     })
 }
 

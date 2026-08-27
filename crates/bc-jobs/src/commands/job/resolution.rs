@@ -2,7 +2,7 @@ use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::ResolutionId;
 use crate::domain::job::Job;
 use crate::domain::job::resolution::{JobFailureCause, JobResolutionKind};
-use crate::domain::ownership::DeclarationClaim;
+use crate::domain::ownership::ResolutionRequester;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::{JobCompleted, JobFailed};
@@ -10,13 +10,13 @@ use crate::event::job_facts::{JobCompleted, JobFailed};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinishJob {
     pub resolution_id: ResolutionId,
-    pub claim: DeclarationClaim,
+    pub requester: ResolutionRequester,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailJob {
     pub resolution_id: ResolutionId,
-    pub claim: DeclarationClaim,
+    pub requester: ResolutionRequester,
 }
 
 impl Job {
@@ -52,7 +52,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.claim.guard_owns_the_job()?;
+        command.requester.guard_may_resolve()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobCompleted(JobCompleted {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -67,7 +67,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.claim.guard_owns_the_job()?;
+        command.requester.guard_may_resolve()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -82,7 +82,7 @@ impl Job {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobResolution;
-    use crate::domain::ownership::ActorRef;
+    use crate::domain::ownership::{ActorRef, DeclarationClaim};
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
     use uuid::Uuid;
 
@@ -105,7 +105,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: exactly one completion fact is recorded, under the owner's resolution id
@@ -122,7 +122,10 @@ mod tests {
         // When: another actor claims it finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: DeclarationClaim::new(Some(declaring_actor()), ActorRef::new(Uuid::now_v7())),
+            requester: ResolutionRequester::LegacyOwner(DeclarationClaim::new(
+                Some(declaring_actor()),
+                ActorRef::new(Uuid::now_v7()),
+            )),
         });
         // Then: only the actor that declared the job resolves it
         assert_eq!(result, Err(JobsError::NotOwner));
@@ -136,7 +139,7 @@ mod tests {
         // When: that same actor declares the child finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: it is accepted
         assert!(result.is_ok());
@@ -150,7 +153,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the recorded cause is the owner's declaration, with no run to blame
@@ -173,7 +176,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the runner is told to stop and the run is closed before the job resolves
@@ -207,7 +210,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the queued run is closed outright, with nothing to stop
@@ -229,7 +232,7 @@ mod tests {
         // When: the owner sends a fresh failure declaration
         let result = job.declare_failed(FailJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: terminal resolutions are immutable
         assert_eq!(
@@ -251,7 +254,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: no second resolution and no duplicate history
@@ -272,9 +275,108 @@ mod tests {
         // When: a new resolution is attempted
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: the audit record stays as it was
+        assert_eq!(result, Err(JobsError::JobDeleted));
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_finish_a_non_terminal_job() {
+        // Given: a v2 declaration admitted for a job whose run is still executing
+        let run = RunBuilder::new(1).started(ts(5)).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        let resolution = resolution_id();
+        // When: Jobs evaluates the lifecycle without interpreting actor metadata as authority
+        let result = job
+            .finish(FinishJob {
+                resolution_id: resolution,
+                requester: ResolutionRequester::Declarant,
+            })
+            .unwrap();
+        // Then: the exact withdrawal and resolution effects remain those of a v1 finish
+        match result.events.as_slice() {
+            [
+                JobEvent::RunCancellationRequested(requested),
+                JobEvent::RunCancelled(cancelled),
+                JobEvent::JobCompleted(fact),
+            ] => {
+                assert_eq!(requested.run_id, run_id);
+                assert_eq!(requested.reason_code.as_str(), "job_resolved");
+                assert_eq!(cancelled.run_id, run_id);
+                assert_eq!(fact.job_id, job.id());
+                assert_eq!(fact.resolution_id, resolution);
+            }
+            other => panic!("expected withdrawal followed by JobCompleted, got {other:?}"),
+        }
+        assert_eq!(
+            result.warnings,
+            vec![CommandWarning::CancellationIsBestEffort]
+        );
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_fail_a_non_terminal_job() {
+        // Given: a v2 declaration admitted for a job whose trigger is still queued
+        let run = RunBuilder::new(1).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        let resolution = resolution_id();
+        // When: the declarant reports that the job failed
+        let result = job
+            .declare_failed(FailJob {
+                resolution_id: resolution,
+                requester: ResolutionRequester::Declarant,
+            })
+            .unwrap();
+        // Then: the exact trigger withdrawal and owner-declared failure are recorded
+        match result.events.as_slice() {
+            [JobEvent::RunCancelled(cancelled), JobEvent::JobFailed(fact)] => {
+                assert_eq!(cancelled.run_id, run_id);
+                assert_eq!(fact.job_id, job.id());
+                assert_eq!(fact.resolution_id, resolution);
+                assert_eq!(fact.failure_cause, JobFailureCause::DeclaredByOwner);
+                assert_eq!(fact.caused_by_run_id, None);
+            }
+            other => panic!("expected trigger withdrawal followed by JobFailed, got {other:?}"),
+        }
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_cannot_replace_a_terminal_resolution() {
+        // Given: a job already completed
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .build();
+        // When: a fresh v2 failure declaration arrives
+        let result = job.declare_failed(FailJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Declarant,
+        });
+        // Then: fabric admission never weakens lifecycle immutability
+        assert_eq!(
+            result,
+            Err(JobsError::JobAlreadyTerminal {
+                status: "COMPLETED"
+            })
+        );
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_cannot_resolve_a_deleted_job() {
+        // Given: a soft-deleted job retained for audit
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .deleted(ts(90))
+            .build();
+        // When: a fresh v2 completion declaration arrives
+        let result = job.finish(FinishJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Declarant,
+        });
+        // Then: deleted audit state remains immutable
         assert_eq!(result, Err(JobsError::JobDeleted));
     }
 }

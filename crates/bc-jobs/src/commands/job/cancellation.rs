@@ -21,14 +21,14 @@ impl CancelRequester {
     fn known_user(&self) -> Option<&KnownUser> {
         match self {
             Self::Administrator(user) => Some(user),
-            Self::Owner(_) | Self::Cascade { .. } => None,
+            Self::Owner(_) | Self::Declarant | Self::Cascade { .. } => None,
         }
     }
 
     fn originating_job_id(&self) -> Option<JobId> {
         match self {
             Self::Cascade { originating_job_id } => Some(*originating_job_id),
-            Self::Administrator(_) | Self::Owner(_) => None,
+            Self::Administrator(_) | Self::Owner(_) | Self::Declarant => None,
         }
     }
 }
@@ -43,9 +43,7 @@ impl Job {
             return Ok(absorbed);
         }
         self.guard_cancel()?;
-        if let CancelRequester::Owner(claim) = &command.requester {
-            claim.guard_owns_the_job()?;
-        }
+        command.requester.guard_may_cancel()?;
         let withdrawal = RunWithdrawal {
             reason_code: ReasonCode::new(CANCELLED_BY_JOB)?,
             requested_by: command.requester.known_user().cloned(),
@@ -263,5 +261,50 @@ mod tests {
         });
         // Then: the cancellation is honoured
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_cancel_a_non_terminal_job() {
+        // Given: a non-terminal job and a v2 declaration admitted by the fabric
+        let job = JobBuilder::new().build();
+        let resolution = resolution_id();
+        // When: Jobs evaluates only the lifecycle transition
+        let result = job
+            .cancel(CancelJob {
+                resolution_id: resolution,
+                requester: CancelRequester::Declarant,
+            })
+            .unwrap();
+        // Then: actor metadata remains attribution rather than an authorization gate,
+        // and the exact cancellation fact is emitted without transport warnings
+        match result.events.as_slice() {
+            [JobEvent::JobCancelled(fact)] => {
+                assert_eq!(fact.job_id, job.id());
+                assert_eq!(fact.resolution_id, resolution);
+                assert_eq!(fact.originating_job_id, None);
+            }
+            other => panic!("expected one JobCancelled fact, got {other:?}"),
+        }
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_cannot_cancel_a_terminal_job() {
+        // Given: a job that already completed
+        let job = JobBuilder::new()
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .build();
+        // When: a fresh v2 cancellation declaration arrives
+        let result = job.cancel(CancelJob {
+            resolution_id: resolution_id(),
+            requester: CancelRequester::Declarant,
+        });
+        // Then: the fabric admission never weakens lifecycle immutability
+        assert_eq!(
+            result,
+            Err(JobsError::JobAlreadyTerminal {
+                status: "COMPLETED"
+            })
+        );
     }
 }

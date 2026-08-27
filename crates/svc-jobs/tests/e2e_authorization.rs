@@ -272,7 +272,7 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         "an ordinary member deleting a terminal deletable job",
     ));
 
-    // When: a bounded context that owns nothing here issues the Owner's own commands
+    // When: a bounded context that owns nothing here issues the deprecated v1 Owner-only commands
     let intruder = Producer::new(fixture.fabric(), "chat");
     intruder.finish(running_id).await;
     intruder.fail(running_id, None).await;
@@ -328,8 +328,8 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
             db::RESOLUTIONS_OF_JOB,
             running_id,
             0,
-            "a context that is not the Owner resolves nothing — a terminal resolution is immutable, \
-             so one accepted here would take the decision away from the Owner for good",
+            "a context that is not the Owner resolves nothing through the deprecated v1 contract — \
+             one accepted here would violate that compatibility guarantee",
         )
         .await;
     instance.expect_no_cancel_entry(running_run, QUIET).await;

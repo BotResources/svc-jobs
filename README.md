@@ -59,8 +59,9 @@ own durable consumers.
 
 ### Integration bus (via `br-util-nats-fabric`)
 
-Commands consumed on the `INTEGRATION_CMD` stream (durables
-`svc_jobs_job_{create,cancel,finish,fail}`):
+Commands consumed on the `INTEGRATION_CMD` stream. Version 1 keeps the durables
+`svc_jobs_job_{create,cancel,finish,fail}`; version 2 resolutions use
+`svc_jobs_job_{cancel,finish,fail}_v2`:
 
 | Subject | Meaning |
 |---|---|
@@ -68,6 +69,14 @@ Commands consumed on the `INTEGRATION_CMD` stream (durables
 | `integration.cmd.jobs.job.cancel.v1` | Cancel a job; cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v1` | The owner declares the job succeeded — the only path to `COMPLETED`. |
 | `integration.cmd.jobs.job.fail.v1` | The owner declares the job failed (`DECLARED_BY_OWNER`). |
+| `integration.cmd.jobs.job.cancel.v2` | An admitted declarant cancels a job; Jobs validates lifecycle only and cancellation propagates down the tree. |
+| `integration.cmd.jobs.job.finish.v2` | An admitted declarant declares success; Jobs validates lifecycle only and records the actor as attribution. |
+| `integration.cmd.jobs.job.fail.v2` | An admitted declarant declares failure; Jobs validates lifecycle only and records the actor as attribution. |
+
+The version 1 resolution subjects are retained for compatibility and enforce
+their legacy envelope-actor/owner coherence rule. On version 2, admission is a
+fabric concern: actor metadata is attribution, not an ownership authorization
+input to Jobs. The command payload shapes are unchanged between the versions.
 
 Events published on the `INTEGRATION_EVT` stream through the transactional
 outbox: `integration.evt.jobs.job.{queued, creation_rejected, started,
@@ -97,15 +106,18 @@ write a crash lost. An unavailable bucket cannot turn a committed mutation into
 a false error; it removes the pod from readiness, and only a full
 reconciliation puts it back.
 
-**Who the owner is.** A resolution command is accepted only when its envelope
-declares the same actor that declared the job (inherited along a manual-retry
-chain). In practice the parent's runner resolves its child, the producing
-bounded context resolves the root it declared, and platform administrators act
-through the GraphQL surface. This is a coherence rule between self-declared
-envelope identities, not an authentication: nothing on the bus verifies the
-actor a publisher writes. Trust here is rooted in NATS access — first-party
-publishers on a network-isolated segment — and impersonation on the bus is out
-of scope by design.
+**Who the owner is on the compatibility v1 contract.** A v1 resolution command
+is accepted only when its envelope declares the same actor that declared the
+job (inherited along a manual-retry chain). In practice the parent's runner
+resolves its child, the producing bounded context resolves the root it declared,
+and platform administrators act through the GraphQL surface. This is a legacy
+coherence rule between self-declared envelope identities, not an
+authentication: nothing on the bus verifies the actor a publisher writes. The
+v2 resolution subjects deliberately remove that coherence rule; their callers
+are admitted by NATS access and Jobs treats their actor as attribution. Trust
+on both versions is rooted in the fabric — first-party publishers on a
+network-isolated segment — and impersonation on the bus is out of scope by
+design.
 
 ### Runner transport
 
