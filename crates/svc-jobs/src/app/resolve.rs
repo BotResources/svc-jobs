@@ -2,7 +2,9 @@ use bc_jobs::commands::job::cancellation::CancelJob;
 use bc_jobs::commands::job::resolution::{FailJob, FinishJob};
 use bc_jobs::domain::ids::{JobId, ResolutionId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::ownership::{ActorRef, CancelRequester, DeclarationClaim};
+use bc_jobs::domain::ownership::{
+    ActorRef, CancelRequester, DeclarationClaim, ResolutionRequester,
+};
 use bc_jobs::policies::cascade::cancellation_cascade;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::EventMetadata;
@@ -10,6 +12,12 @@ use br_core_events::EventMetadata;
 use super::Jobs;
 use super::write::JobChange;
 use crate::error::ServiceError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationAdmission {
+    LegacyOwner,
+    LifecycleOnly,
+}
 
 pub async fn owner_claim(
     jobs: &Jobs,
@@ -30,17 +38,32 @@ pub async fn owner_claim(
     ))
 }
 
+async fn resolution_requester(
+    jobs: &Jobs,
+    job: &Job,
+    metadata: &EventMetadata,
+    admission: IntegrationAdmission,
+) -> Result<ResolutionRequester, ServiceError> {
+    match admission {
+        IntegrationAdmission::LegacyOwner => Ok(ResolutionRequester::LegacyOwner(
+            owner_claim(jobs, job, metadata).await?,
+        )),
+        IntegrationAdmission::LifecycleOnly => Ok(ResolutionRequester::Declarant),
+    }
+}
+
 pub async fn finish(
     jobs: &Jobs,
     job_id: JobId,
     resolution_id: ResolutionId,
+    admission: IntegrationAdmission,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    let claim = owner_claim(jobs, &job, metadata).await?;
+    let requester = resolution_requester(jobs, &job, metadata, admission).await?;
     let result = job.finish(FinishJob {
         resolution_id,
-        claim,
+        requester,
     })?;
     jobs.commit(
         vec![JobChange::new(job_id, Some(job), result.events)],
@@ -54,19 +77,37 @@ pub async fn fail(
     job_id: JobId,
     resolution_id: ResolutionId,
     note: Option<String>,
+    admission: IntegrationAdmission,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
-    let claim = owner_claim(jobs, &job, metadata).await?;
+    let requester = resolution_requester(jobs, &job, metadata, admission).await?;
     let result = job.declare_failed(FailJob {
         resolution_id,
-        claim,
+        requester,
     })?;
     jobs.commit(
         vec![JobChange::new(job_id, Some(job), result.events).with_note(note)],
         metadata,
     )
     .await
+}
+
+pub async fn cancel_from_integration(
+    jobs: &Jobs,
+    job_id: JobId,
+    resolution_id: ResolutionId,
+    admission: IntegrationAdmission,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    let job = jobs.require(job_id).await?;
+    let requester = match admission {
+        IntegrationAdmission::LegacyOwner => {
+            CancelRequester::Owner(owner_claim(jobs, &job, metadata).await?)
+        }
+        IntegrationAdmission::LifecycleOnly => CancelRequester::Declarant,
+    };
+    cancel(jobs, job_id, resolution_id, requester, metadata).await
 }
 
 pub async fn cancel(

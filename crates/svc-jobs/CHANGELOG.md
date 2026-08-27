@@ -10,6 +10,17 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.3.0 - 2026-08-27
+
+- Added independent durable consumers for `job.cancel.v2`, `job.finish.v2`,
+  and `job.fail.v2`; the version 1 durable names are deliberately unchanged so
+  their JetStream cursors survive the upgrade.
+- Version 2 commands enter the lifecycle-only domain path and retain the
+  envelope actor as declarant attribution. Version 1 continues through the
+  legacy owner-coherence path.
+- Added a real Postgres/NATS oracle covering both versions, terminal events,
+  subscriptions, query state, affordances, and actor attribution.
+
 ## 0.2.0 - 2026-08-21
 
 - Added the runner-type lifecycle migration and canonical Postgres adapter,

@@ -5,6 +5,14 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.3.0 - 2026-08-27
+
+- Added version 2 coordinates and subject constants for `job.cancel`,
+  `job.finish`, and `job.fail`.
+- Kept the command payload DTOs wire-identical across versions: the version 2
+  change concerns admission semantics, not message shape. Version 1 constants
+  and coordinates remain available to compatibility consumers.
+
 ## 0.2.0 - 2026-08-21
 
 - Added the `jobs.runner_type.{runner_type}` Published Language key builder and

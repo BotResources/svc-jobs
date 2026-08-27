@@ -9,14 +9,29 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.3.0 - 2026-08-27
+
 ### Added
 
+- Version 2 of the `job.cancel`, `job.finish`, and `job.fail` integration
+  commands, each on its own durable consumer while the version 1 cursors and
+  behavior remain untouched.
+- Real-infrastructure coverage proving the version boundary: a non-owner is
+  refused by version 1 and may declare the same lifecycle transition through
+  version 2, with actor metadata preserved as attribution on the emitted fact.
 - Release pipeline integration with the production Services registry:
   `scripts/registry-gate.sh` (sealed-and-not-implemented gate at PR time,
   pre-build, and pre-push), `scripts/registry-docs.sh` (procedural SDL + DB
   schema posed from the built artifacts before the image push), and
   `scripts/registry-implement.sh` (image record + advisory implemented-flip
   probe after the push). CI/CD only — no service behavior changes.
+
+### Changed
+
+- Version 2 resolution commands authorize no producer ownership inside Jobs.
+  The integration fabric owns admission; Jobs validates only its lifecycle
+  invariants and records the envelope actor as the declarant. Version 1 keeps
+  its legacy envelope-actor/owner coherence guard for compatibility.
 
 ## 0.2.0 - 2026-08-21
 

@@ -13,9 +13,12 @@ pub use integration::*;
 pub const SERVICE_KEY: &str = "jobs";
 
 pub const CMD_JOB_CANCEL_V1: &str = "integration.cmd.jobs.job.cancel.v1";
+pub const CMD_JOB_CANCEL_V2: &str = "integration.cmd.jobs.job.cancel.v2";
 pub const CMD_JOB_CREATE_V1: &str = "integration.cmd.jobs.job.create.v1";
 pub const CMD_JOB_FAIL_V1: &str = "integration.cmd.jobs.job.fail.v1";
+pub const CMD_JOB_FAIL_V2: &str = "integration.cmd.jobs.job.fail.v2";
 pub const CMD_JOB_FINISH_V1: &str = "integration.cmd.jobs.job.finish.v1";
+pub const CMD_JOB_FINISH_V2: &str = "integration.cmd.jobs.job.finish.v2";
 pub const CMD_JOBS_TRIGGER_RUNNER_TYPE: &str = "jobs.trigger.{runner_type}";
 
 pub const EVT_JOB_CANCELLED_V1: &str = "integration.evt.jobs.job.cancelled.v1";

@@ -45,6 +45,8 @@ pub const VERB_CREATE: &str = "create";
 pub const VERB_CANCEL: &str = "cancel";
 pub const VERB_FINISH: &str = "finish";
 pub const VERB_FAIL: &str = "fail";
+pub const CONTRACT_V1: u8 = 1;
+pub const CONTRACT_V2: u8 = 2;
 
 pub const ACTION_CANCEL: &str = "cancel";
 pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
@@ -121,11 +123,15 @@ pub fn cancel_key(run_id: Uuid) -> String {
 }
 
 pub fn command_coords(verb: &str) -> CommandCoords {
+    command_coords_at(verb, CONTRACT_V1)
+}
+
+pub fn command_coords_at(verb: &str, version: u8) -> CommandCoords {
     CommandCoords {
         receiver: Bc::new("jobs").expect("jobs is a valid bc segment"),
         aggregate: Aggregate::new("job").expect("job is a valid aggregate segment"),
         verb: Verb::new(verb).expect("the verb is a valid coordinate segment"),
-        version: 1,
+        version,
     }
 }
 
@@ -157,10 +163,28 @@ pub fn command_envelope(
     issuer: Uuid,
     payload: Value,
 ) -> IntegrationCommand<Value> {
+    command_envelope_at(
+        command_id,
+        verb,
+        CONTRACT_V1,
+        correlation_id,
+        issuer,
+        payload,
+    )
+}
+
+pub fn command_envelope_at(
+    command_id: Uuid,
+    verb: &str,
+    version: u8,
+    correlation_id: Uuid,
+    issuer: Uuid,
+    payload: Value,
+) -> IntegrationCommand<Value> {
     IntegrationCommand::new(
         command_id,
         format!("jobs.job.{verb}"),
-        1,
+        version,
         clock::now(),
         EventMetadata::new(
             Actor::Service(ServiceAccountId::from(issuer)),

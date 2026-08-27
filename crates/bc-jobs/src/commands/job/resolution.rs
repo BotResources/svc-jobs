@@ -2,7 +2,7 @@ use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
 use crate::domain::ids::ResolutionId;
 use crate::domain::job::Job;
 use crate::domain::job::resolution::{JobFailureCause, JobResolutionKind};
-use crate::domain::ownership::DeclarationClaim;
+use crate::domain::ownership::ResolutionRequester;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::{JobCompleted, JobFailed};
@@ -10,13 +10,13 @@ use crate::event::job_facts::{JobCompleted, JobFailed};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinishJob {
     pub resolution_id: ResolutionId,
-    pub claim: DeclarationClaim,
+    pub requester: ResolutionRequester,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailJob {
     pub resolution_id: ResolutionId,
-    pub claim: DeclarationClaim,
+    pub requester: ResolutionRequester,
 }
 
 impl Job {
@@ -52,7 +52,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.claim.guard_owns_the_job()?;
+        command.requester.guard_may_resolve()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobCompleted(JobCompleted {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -67,7 +67,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.claim.guard_owns_the_job()?;
+        command.requester.guard_may_resolve()?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -82,7 +82,7 @@ impl Job {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobResolution;
-    use crate::domain::ownership::ActorRef;
+    use crate::domain::ownership::{ActorRef, DeclarationClaim};
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
     use uuid::Uuid;
 
@@ -105,7 +105,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: exactly one completion fact is recorded, under the owner's resolution id
@@ -122,7 +122,10 @@ mod tests {
         // When: another actor claims it finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: DeclarationClaim::new(Some(declaring_actor()), ActorRef::new(Uuid::now_v7())),
+            requester: ResolutionRequester::LegacyOwner(DeclarationClaim::new(
+                Some(declaring_actor()),
+                ActorRef::new(Uuid::now_v7()),
+            )),
         });
         // Then: only the actor that declared the job resolves it
         assert_eq!(result, Err(JobsError::NotOwner));
@@ -136,7 +139,7 @@ mod tests {
         // When: that same actor declares the child finished
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: it is accepted
         assert!(result.is_ok());
@@ -150,7 +153,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the recorded cause is the owner's declaration, with no run to blame
@@ -173,7 +176,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the runner is told to stop and the run is closed before the job resolves
@@ -207,7 +210,7 @@ mod tests {
         let result = job
             .declare_failed(FailJob {
                 resolution_id: resolution_id(),
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: the queued run is closed outright, with nothing to stop
@@ -229,7 +232,7 @@ mod tests {
         // When: the owner sends a fresh failure declaration
         let result = job.declare_failed(FailJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: terminal resolutions are immutable
         assert_eq!(
@@ -251,7 +254,7 @@ mod tests {
         let result = job
             .finish(FinishJob {
                 resolution_id: resolution,
-                claim: owner(),
+                requester: ResolutionRequester::LegacyOwner(owner()),
             })
             .unwrap();
         // Then: no second resolution and no duplicate history
@@ -272,9 +275,35 @@ mod tests {
         // When: a new resolution is attempted
         let result = job.finish(FinishJob {
             resolution_id: resolution_id(),
-            claim: owner(),
+            requester: ResolutionRequester::LegacyOwner(owner()),
         });
         // Then: the audit record stays as it was
         assert_eq!(result, Err(JobsError::JobDeleted));
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_finish_a_non_terminal_job() {
+        // Given: a non-terminal job and a v2 declaration admitted by the fabric
+        let job = JobBuilder::new().build();
+        // When: Jobs evaluates the lifecycle without interpreting actor metadata as authority
+        let result = job.finish(FinishJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Declarant,
+        });
+        // Then: the lifecycle transition is admitted
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_fail_a_non_terminal_job() {
+        // Given: a non-terminal job and a v2 declaration admitted by the fabric
+        let job = JobBuilder::new().build();
+        // When: the declarant reports that the job failed
+        let result = job.declare_failed(FailJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Declarant,
+        });
+        // Then: the lifecycle transition is admitted
+        assert!(result.is_ok());
     }
 }

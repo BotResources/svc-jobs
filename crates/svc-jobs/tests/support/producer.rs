@@ -137,11 +137,17 @@ impl<'a> Producer<'a> {
     }
 
     pub async fn send(&self, verb: &str, command: &IntegrationCommand<Value>) {
+        self.send_at(verb, wire::CONTRACT_V1, command).await;
+    }
+
+    pub async fn send_at(&self, verb: &str, version: u8, command: &IntegrationCommand<Value>) {
         self.fabric
             .fabric()
-            .publish_command(&wire::command_coords(verb), command)
+            .publish_command(&wire::command_coords_at(verb, version), command)
             .await
-            .unwrap_or_else(|error| panic!("publishing jobs.job.{verb} onto the fabric: {error}"));
+            .unwrap_or_else(|error| {
+                panic!("publishing jobs.job.{verb}.v{version} onto the fabric: {error}")
+            });
     }
 
     pub async fn declare(&self, declaration: &JobDeclaration) -> IntegrationCommand<Value> {
@@ -181,8 +187,26 @@ impl<'a> Producer<'a> {
             .await;
     }
 
+    pub async fn cancel_v2(&self, job_id: Uuid) {
+        self.send_resolution_at(
+            wire::VERB_CANCEL,
+            wire::CONTRACT_V2,
+            json!({ "job_id": job_id.to_string() }),
+        )
+        .await;
+    }
+
     pub async fn finish(&self, job_id: Uuid) {
         self.finish_as(Uuid::now_v7(), job_id).await;
+    }
+
+    pub async fn finish_v2(&self, job_id: Uuid) {
+        self.send_resolution_at(
+            wire::VERB_FINISH,
+            wire::CONTRACT_V2,
+            json!({ "job_id": job_id.to_string() }),
+        )
+        .await;
     }
 
     pub async fn finish_as(&self, command_id: Uuid, job_id: Uuid) {
@@ -204,8 +228,30 @@ impl<'a> Producer<'a> {
             .await;
     }
 
+    pub async fn fail_v2(&self, job_id: Uuid, note: Option<&str>) {
+        let mut payload = Map::new();
+        payload.insert("job_id".to_owned(), json!(job_id.to_string()));
+        if let Some(note) = note {
+            payload.insert("note".to_owned(), json!(note));
+        }
+        self.send_resolution_at(wire::VERB_FAIL, wire::CONTRACT_V2, Value::Object(payload))
+            .await;
+    }
+
     async fn send_resolution(&self, verb: &str, payload: Value) {
         self.send_resolution_as(Uuid::now_v7(), verb, payload).await;
+    }
+
+    async fn send_resolution_at(&self, verb: &str, version: u8, payload: Value) {
+        let command = wire::command_envelope_at(
+            Uuid::now_v7(),
+            verb,
+            version,
+            Uuid::now_v7(),
+            self.account_id,
+            payload,
+        );
+        self.send_at(verb, version, &command).await;
     }
 
     async fn send_resolution_as(&self, command_id: Uuid, verb: &str, payload: Value) {

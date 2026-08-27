@@ -59,8 +59,9 @@ own durable consumers.
 
 ### Integration bus (via `br-util-nats-fabric`)
 
-Commands consumed on the `INTEGRATION_CMD` stream (durables
-`svc_jobs_job_{create,cancel,finish,fail}`):
+Commands consumed on the `INTEGRATION_CMD` stream. Version 1 keeps the durables
+`svc_jobs_job_{create,cancel,finish,fail}`; version 2 resolutions use
+`svc_jobs_job_{cancel,finish,fail}_v2`:
 
 | Subject | Meaning |
 |---|---|
@@ -68,6 +69,14 @@ Commands consumed on the `INTEGRATION_CMD` stream (durables
 | `integration.cmd.jobs.job.cancel.v1` | Cancel a job; cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v1` | The owner declares the job succeeded — the only path to `COMPLETED`. |
 | `integration.cmd.jobs.job.fail.v1` | The owner declares the job failed (`DECLARED_BY_OWNER`). |
+| `integration.cmd.jobs.job.cancel.v2` | An admitted declarant cancels a job; Jobs validates lifecycle only and cancellation propagates down the tree. |
+| `integration.cmd.jobs.job.finish.v2` | An admitted declarant declares success; Jobs validates lifecycle only and records the actor as attribution. |
+| `integration.cmd.jobs.job.fail.v2` | An admitted declarant declares failure; Jobs validates lifecycle only and records the actor as attribution. |
+
+The version 1 resolution subjects are retained for compatibility and enforce
+their legacy envelope-actor/owner coherence rule. On version 2, admission is a
+fabric concern: actor metadata is attribution, not an ownership authorization
+input to Jobs. The command payload shapes are unchanged between the versions.
 
 Events published on the `INTEGRATION_EVT` stream through the transactional
 outbox: `integration.evt.jobs.job.{queued, creation_rejected, started,

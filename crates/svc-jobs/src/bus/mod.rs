@@ -3,7 +3,6 @@ pub mod runner_type_catalog;
 use std::sync::Arc;
 
 use bc_jobs::domain::ids::{JobId, ResolutionId};
-use bc_jobs::domain::ownership::CancelRequester;
 use br_core_integration::MessageOutcome;
 use br_util_nats_fabric::{CommandConsumer, Fabric};
 use contract_jobs::command as wire;
@@ -17,14 +16,34 @@ use crate::supervision::Established;
 
 const CREATE_DURABLE: &str = "svc_jobs_job_create";
 const CANCEL_DURABLE: &str = "svc_jobs_job_cancel";
+const CANCEL_V2_DURABLE: &str = "svc_jobs_job_cancel_v2";
 const FINISH_DURABLE: &str = "svc_jobs_job_finish";
+const FINISH_V2_DURABLE: &str = "svc_jobs_job_finish_v2";
 const FAIL_DURABLE: &str = "svc_jobs_job_fail";
+const FAIL_V2_DURABLE: &str = "svc_jobs_job_fail_v2";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractVersion {
+    V1,
+    V2,
+}
+
+impl ContractVersion {
+    fn admission(self) -> resolve::IntegrationAdmission {
+        match self {
+            Self::V1 => resolve::IntegrationAdmission::LegacyOwner,
+            Self::V2 => resolve::IntegrationAdmission::LifecycleOnly,
+        }
+    }
+}
 
 pub async fn verify_durables(fabric: &Fabric) -> Result<(), ServiceError> {
-    open::<Value>(fabric, Verb::Create).await?;
-    open::<wire::CancelJob>(fabric, Verb::Cancel).await?;
-    open::<wire::FinishJob>(fabric, Verb::Finish).await?;
-    open::<wire::FailJob>(fabric, Verb::Fail).await?;
+    open::<Value>(fabric, Verb::Create, ContractVersion::V1).await?;
+    for version in [ContractVersion::V1, ContractVersion::V2] {
+        open::<wire::CancelJob>(fabric, Verb::Cancel, version).await?;
+        open::<wire::FinishJob>(fabric, Verb::Finish, version).await?;
+        open::<wire::FailJob>(fabric, Verb::Fail, version).await?;
+    }
     Ok(())
 }
 
@@ -37,21 +56,38 @@ pub enum Verb {
 }
 
 impl Verb {
-    fn durable(self) -> &'static str {
-        match self {
-            Self::Create => CREATE_DURABLE,
-            Self::Cancel => CANCEL_DURABLE,
-            Self::Finish => FINISH_DURABLE,
-            Self::Fail => FAIL_DURABLE,
+    fn durable(self, version: ContractVersion) -> Result<&'static str, ServiceError> {
+        match (self, version) {
+            (Self::Create, ContractVersion::V1) => Ok(CREATE_DURABLE),
+            (Self::Cancel, ContractVersion::V1) => Ok(CANCEL_DURABLE),
+            (Self::Cancel, ContractVersion::V2) => Ok(CANCEL_V2_DURABLE),
+            (Self::Finish, ContractVersion::V1) => Ok(FINISH_DURABLE),
+            (Self::Finish, ContractVersion::V2) => Ok(FINISH_V2_DURABLE),
+            (Self::Fail, ContractVersion::V1) => Ok(FAIL_DURABLE),
+            (Self::Fail, ContractVersion::V2) => Ok(FAIL_V2_DURABLE),
+            (Self::Create, ContractVersion::V2) => Err(ServiceError::Infra(
+                "job.create.v2 is not declared".to_owned(),
+            )),
         }
     }
 
-    fn coords(self) -> Result<br_core_integration::CommandCoords, ServiceError> {
-        let coords = match self {
-            Self::Create => contract_jobs::cmd_job_create_v1_coords(),
-            Self::Cancel => contract_jobs::cmd_job_cancel_v1_coords(),
-            Self::Finish => contract_jobs::cmd_job_finish_v1_coords(),
-            Self::Fail => contract_jobs::cmd_job_fail_v1_coords(),
+    fn coords(
+        self,
+        version: ContractVersion,
+    ) -> Result<br_core_integration::CommandCoords, ServiceError> {
+        let coords = match (self, version) {
+            (Self::Create, ContractVersion::V1) => contract_jobs::cmd_job_create_v1_coords(),
+            (Self::Cancel, ContractVersion::V1) => contract_jobs::cmd_job_cancel_v1_coords(),
+            (Self::Cancel, ContractVersion::V2) => contract_jobs::cmd_job_cancel_v2_coords(),
+            (Self::Finish, ContractVersion::V1) => contract_jobs::cmd_job_finish_v1_coords(),
+            (Self::Finish, ContractVersion::V2) => contract_jobs::cmd_job_finish_v2_coords(),
+            (Self::Fail, ContractVersion::V1) => contract_jobs::cmd_job_fail_v1_coords(),
+            (Self::Fail, ContractVersion::V2) => contract_jobs::cmd_job_fail_v2_coords(),
+            (Self::Create, ContractVersion::V2) => {
+                return Err(ServiceError::Infra(
+                    "job.create.v2 is not declared".to_owned(),
+                ));
+            }
         };
         coords.map_err(|error| ServiceError::Infra(error.to_string()))
     }
@@ -60,9 +96,10 @@ impl Verb {
 async fn open<T: DeserializeOwned>(
     fabric: &Fabric,
     verb: Verb,
+    version: ContractVersion,
 ) -> Result<CommandConsumer<T>, ServiceError> {
     fabric
-        .ensure_command_consumer::<T>(&verb.coords()?, verb.durable())
+        .ensure_command_consumer::<T>(&verb.coords(version)?, verb.durable(version)?)
         .await
         .map_err(ServiceError::from)
 }
@@ -72,7 +109,7 @@ pub async fn consume_creations(
     jobs: Arc<Jobs>,
     established: Established,
 ) -> Result<(), ServiceError> {
-    let mut consumer = open::<Value>(&fabric, Verb::Create).await?;
+    let mut consumer = open::<Value>(&fabric, Verb::Create, ContractVersion::V1).await?;
     established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
@@ -123,9 +160,10 @@ fn declared_job_id(payload: &Value) -> Option<Uuid> {
 pub async fn consume_cancellations(
     fabric: Fabric,
     jobs: Arc<Jobs>,
+    version: ContractVersion,
     established: Established,
 ) -> Result<(), ServiceError> {
-    let mut consumer = open::<wire::CancelJob>(&fabric, Verb::Cancel).await?;
+    let mut consumer = open::<wire::CancelJob>(&fabric, Verb::Cancel, version).await?;
     established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
@@ -133,7 +171,7 @@ pub async fn consume_cancellations(
             Ok(command) => {
                 let payload = command.payload.clone();
                 let metadata = command.metadata.clone();
-                settle(cancel(&jobs, &payload, &metadata).await)
+                settle(cancel(&jobs, &payload, version, &metadata).await)
             }
         };
         acknowledge(delivery, outcome).await;
@@ -144,16 +182,15 @@ pub async fn consume_cancellations(
 async fn cancel(
     jobs: &Jobs,
     payload: &wire::CancelJob,
+    version: ContractVersion,
     metadata: &br_core_integration::EventMetadata,
 ) -> Result<(), ServiceError> {
     let job_id = JobId::new(payload.job_id)?;
-    let job = jobs.require(job_id).await?;
-    let claim = resolve::owner_claim(jobs, &job, metadata).await?;
-    resolve::cancel(
+    resolve::cancel_from_integration(
         jobs,
         job_id,
         ResolutionId::new(jobs.ids.next())?,
-        CancelRequester::Owner(claim),
+        version.admission(),
         metadata,
     )
     .await
@@ -162,9 +199,10 @@ async fn cancel(
 pub async fn consume_completions(
     fabric: Fabric,
     jobs: Arc<Jobs>,
+    version: ContractVersion,
     established: Established,
 ) -> Result<(), ServiceError> {
-    let mut consumer = open::<wire::FinishJob>(&fabric, Verb::Finish).await?;
+    let mut consumer = open::<wire::FinishJob>(&fabric, Verb::Finish, version).await?;
     established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
@@ -172,7 +210,7 @@ pub async fn consume_completions(
             Ok(command) => {
                 let payload = command.payload.clone();
                 let metadata = command.metadata.clone();
-                settle(finish(&jobs, &payload, &metadata).await)
+                settle(finish(&jobs, &payload, version, &metadata).await)
             }
         };
         acknowledge(delivery, outcome).await;
@@ -183,12 +221,14 @@ pub async fn consume_completions(
 async fn finish(
     jobs: &Jobs,
     payload: &wire::FinishJob,
+    version: ContractVersion,
     metadata: &br_core_integration::EventMetadata,
 ) -> Result<(), ServiceError> {
     resolve::finish(
         jobs,
         JobId::new(payload.job_id)?,
         ResolutionId::new(jobs.ids.next())?,
+        version.admission(),
         metadata,
     )
     .await
@@ -197,9 +237,10 @@ async fn finish(
 pub async fn consume_failures(
     fabric: Fabric,
     jobs: Arc<Jobs>,
+    version: ContractVersion,
     established: Established,
 ) -> Result<(), ServiceError> {
-    let mut consumer = open::<wire::FailJob>(&fabric, Verb::Fail).await?;
+    let mut consumer = open::<wire::FailJob>(&fabric, Verb::Fail, version).await?;
     established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
@@ -207,7 +248,7 @@ pub async fn consume_failures(
             Ok(command) => {
                 let payload = command.payload.clone();
                 let metadata = command.metadata.clone();
-                settle(fail(&jobs, &payload, &metadata).await)
+                settle(fail(&jobs, &payload, version, &metadata).await)
             }
         };
         acknowledge(delivery, outcome).await;
@@ -218,6 +259,7 @@ pub async fn consume_failures(
 async fn fail(
     jobs: &Jobs,
     payload: &wire::FailJob,
+    version: ContractVersion,
     metadata: &br_core_integration::EventMetadata,
 ) -> Result<(), ServiceError> {
     resolve::fail(
@@ -225,6 +267,7 @@ async fn fail(
         JobId::new(payload.job_id)?,
         ResolutionId::new(jobs.ids.next())?,
         payload.note.clone(),
+        version.admission(),
         metadata,
     )
     .await

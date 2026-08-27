@@ -10,6 +10,10 @@ fn every_coordinate_renders_its_declared_subject() {
         CMD_JOB_CANCEL_V1
     );
     assert_eq!(
+        rendered_command(&cmd_job_cancel_v2_coords().unwrap()),
+        CMD_JOB_CANCEL_V2
+    );
+    assert_eq!(
         rendered_command(&cmd_job_create_v1_coords().unwrap()),
         CMD_JOB_CREATE_V1
     );
@@ -18,8 +22,16 @@ fn every_coordinate_renders_its_declared_subject() {
         CMD_JOB_FAIL_V1
     );
     assert_eq!(
+        rendered_command(&cmd_job_fail_v2_coords().unwrap()),
+        CMD_JOB_FAIL_V2
+    );
+    assert_eq!(
         rendered_command(&cmd_job_finish_v1_coords().unwrap()),
         CMD_JOB_FINISH_V1
+    );
+    assert_eq!(
+        rendered_command(&cmd_job_finish_v2_coords().unwrap()),
+        CMD_JOB_FINISH_V2
     );
     assert_eq!(
         rendered_event(&evt_job_cancelled_v1_coords().unwrap()),

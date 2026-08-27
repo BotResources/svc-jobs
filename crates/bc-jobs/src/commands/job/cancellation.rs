@@ -21,14 +21,14 @@ impl CancelRequester {
     fn known_user(&self) -> Option<&KnownUser> {
         match self {
             Self::Administrator(user) => Some(user),
-            Self::Owner(_) | Self::Cascade { .. } => None,
+            Self::Owner(_) | Self::Declarant | Self::Cascade { .. } => None,
         }
     }
 
     fn originating_job_id(&self) -> Option<JobId> {
         match self {
             Self::Cascade { originating_job_id } => Some(*originating_job_id),
-            Self::Administrator(_) | Self::Owner(_) => None,
+            Self::Administrator(_) | Self::Owner(_) | Self::Declarant => None,
         }
     }
 }
@@ -262,6 +262,19 @@ mod tests {
             )),
         });
         // Then: the cancellation is honoured
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn a_fabric_admitted_declarant_may_cancel_a_non_terminal_job() {
+        // Given: a non-terminal job and a v2 declaration admitted by the fabric
+        let job = JobBuilder::new().build();
+        // When: Jobs evaluates only the lifecycle transition
+        let result = job.cancel(CancelJob {
+            resolution_id: resolution_id(),
+            requester: CancelRequester::Declarant,
+        });
+        // Then: actor metadata remains attribution rather than an authorization gate
         assert!(result.is_ok());
     }
 }

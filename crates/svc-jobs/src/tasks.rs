@@ -91,26 +91,64 @@ fn spawn_bus(supervisor: &Supervisor, fabric: Fabric, jobs: Arc<Jobs>) {
         async move { bus::consume_creations(fabric, jobs, established).await }
     });
 
-    let cancellations = fabric.clone();
-    let cancellation_jobs = Arc::clone(&jobs);
-    supervisor.spawn("job-cancellation consumer", move |established| {
-        let fabric = cancellations.clone();
-        let jobs = Arc::clone(&cancellation_jobs);
-        async move { bus::consume_cancellations(fabric, jobs, established).await }
+    let cancellations_v1 = fabric.clone();
+    let cancellation_v1_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-cancellation-v1 consumer", move |established| {
+        let fabric = cancellations_v1.clone();
+        let jobs = Arc::clone(&cancellation_v1_jobs);
+        async move {
+            bus::consume_cancellations(fabric, jobs, bus::ContractVersion::V1, established).await
+        }
     });
 
-    let completions = fabric.clone();
-    let completion_jobs = Arc::clone(&jobs);
-    supervisor.spawn("job-completion consumer", move |established| {
-        let fabric = completions.clone();
-        let jobs = Arc::clone(&completion_jobs);
-        async move { bus::consume_completions(fabric, jobs, established).await }
+    let cancellations_v2 = fabric.clone();
+    let cancellation_v2_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-cancellation-v2 consumer", move |established| {
+        let fabric = cancellations_v2.clone();
+        let jobs = Arc::clone(&cancellation_v2_jobs);
+        async move {
+            bus::consume_cancellations(fabric, jobs, bus::ContractVersion::V2, established).await
+        }
     });
 
-    supervisor.spawn("job-failure consumer", move |established| {
-        let fabric = fabric.clone();
-        let jobs = Arc::clone(&jobs);
-        async move { bus::consume_failures(fabric, jobs, established).await }
+    let completions_v1 = fabric.clone();
+    let completion_v1_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-completion-v1 consumer", move |established| {
+        let fabric = completions_v1.clone();
+        let jobs = Arc::clone(&completion_v1_jobs);
+        async move {
+            bus::consume_completions(fabric, jobs, bus::ContractVersion::V1, established).await
+        }
+    });
+
+    let completions_v2 = fabric.clone();
+    let completion_v2_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-completion-v2 consumer", move |established| {
+        let fabric = completions_v2.clone();
+        let jobs = Arc::clone(&completion_v2_jobs);
+        async move {
+            bus::consume_completions(fabric, jobs, bus::ContractVersion::V2, established).await
+        }
+    });
+
+    let failures_v1 = fabric.clone();
+    let failure_v1_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-failure-v1 consumer", move |established| {
+        let fabric = failures_v1.clone();
+        let jobs = Arc::clone(&failure_v1_jobs);
+        async move {
+            bus::consume_failures(fabric, jobs, bus::ContractVersion::V1, established).await
+        }
+    });
+
+    let failures_v2 = fabric.clone();
+    let failure_v2_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-failure-v2 consumer", move |established| {
+        let fabric = failures_v2.clone();
+        let jobs = Arc::clone(&failure_v2_jobs);
+        async move {
+            bus::consume_failures(fabric, jobs, bus::ContractVersion::V2, established).await
+        }
     });
 }
 
