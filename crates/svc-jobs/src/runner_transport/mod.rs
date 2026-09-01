@@ -1,5 +1,6 @@
 pub mod cancel;
 pub mod consume;
+pub mod observability;
 pub mod presence;
 pub mod trigger;
 

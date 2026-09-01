@@ -39,6 +39,11 @@ async-stream = "0.3"
 thiserror = "2"
 tracing = "0.1"
 dotenvy = "0.15"
+# The recorder itself is installed by br-util-observability; this is the facade
+# a service emits its own series through, and it must stay the same major as
+# the one that crate installs or the series would land in a second, unrendered
+# registry.
+metrics = "0.24"
 
 br-core-auth = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-auth", tag = "v1.2.0", version = "1.2.0" }
 br-core-events = { git = "https://github.com/BotResources/br-rust-common", package = "br-core-events", tag = "v1.2.0", version = "1.2.0" }

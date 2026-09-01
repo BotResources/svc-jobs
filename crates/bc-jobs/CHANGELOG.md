@@ -8,6 +8,17 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.4.0 - 2026-09-01
+
+- `RunFailureKind::from_declared` now takes `Option<RunFailureKind>` and is
+  infallible. The rule it carries — an unspecified failure kind is permanent —
+  is a domain rule and now runs on domain types alone; the wire vocabulary is
+  closed by the contract crate, so there is nothing left for it to parse.
+  `from_db_str` is unchanged and keeps guarding stored values.
+- Breaking for callers of `from_declared` (svc-jobs only): the caller maps the
+  wire kind to the domain kind with a total match, so a kind added to the
+  contract is a compile error rather than a value the domain rounds off.
+
 ## 0.3.0 - 2026-08-27
 
 - Resolution decisions now distinguish a legacy owner claim from an admitted

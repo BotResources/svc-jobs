@@ -118,6 +118,115 @@ fn json_code(code: &str) -> serde_json::Value {
     serde_json::Value::String(code.to_owned())
 }
 
+fn failed_fact(kind: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": uuid::Uuid::now_v7(),
+        "report": {
+            "kind": kind,
+            "reason_code": "provider_unavailable",
+            "params": {},
+            "diagnostic": {},
+        },
+    })
+}
+
+#[test]
+fn a_terminal_report_carries_one_of_exactly_two_retry_kinds() {
+    // Given: the two kinds a runner may declare on a failure
+    for (code, kind) in [
+        (
+            runner::FAILURE_KIND_TRANSIENT,
+            runner::FailureKind::Transient,
+        ),
+        (
+            runner::FAILURE_KIND_PERMANENT,
+            runner::FailureKind::Permanent,
+        ),
+    ] {
+        // When: the fact is read through the published contract
+        let failed: runner::RunFailed =
+            serde_json::from_value(failed_fact(json_code(code))).unwrap();
+        // Then: the retry vocabulary arrives typed, not as free text to be re-parsed later
+        assert_eq!(failed.report.kind, Some(kind));
+        assert_eq!(kind.as_str(), code);
+    }
+}
+
+#[test]
+fn a_terminal_report_naming_a_kind_outside_the_vocabulary_does_not_parse() {
+    // Given: reports whose kind is a word this contract does not define — the shape that
+    // reached production once, a runner announcing its own name as a failure kind
+    for outside in [
+        "scaffold",
+        "transient",
+        "Permanent",
+        "",
+        "RETRYABLE",
+        "FATAL",
+    ] {
+        // When/Then: the fact does not parse at all, so the producer's compiler is the only
+        // place that word can be caught — never a receiver deciding what to do with it
+        assert!(
+            serde_json::from_value::<runner::RunFailed>(failed_fact(json_code(outside))).is_err(),
+            "'{outside}' must not enter as a failure kind",
+        );
+    }
+    // Then: a kind that is not even a string is refused on the same footing
+    assert!(
+        serde_json::from_value::<runner::RunFailed>(failed_fact(serde_json::json!(1))).is_err()
+    );
+}
+
+#[test]
+fn a_terminal_report_that_declares_no_kind_is_read_as_permanent() {
+    // Given: a report from a runner that classifies nothing — legal, and unchanged by the
+    // vocabulary becoming closed
+    let fact = serde_json::json!({
+        "run_id": uuid::Uuid::now_v7(),
+        "report": { "reason_code": "provider_unavailable" },
+    });
+    // When: it is read through the published contract
+    let failed: runner::RunFailed = serde_json::from_value(fact).unwrap();
+    // Then: the absent kind is permanent — an unclassified failure never buys a retry
+    assert_eq!(failed.report.kind, None);
+    assert_eq!(
+        failed.report.kind.unwrap_or_default(),
+        runner::FailureKind::Permanent
+    );
+
+    // And: an explicit null is the same third legal form. A runner serializing its optional
+    // kind as `null` writes this, and it must keep reading as "declared nothing" — not fail,
+    // and not be turned into a value by a later `#[serde(default)]` on the field
+    let explicit_null: runner::RunFailed =
+        serde_json::from_value(failed_fact(serde_json::Value::Null)).unwrap();
+    assert_eq!(explicit_null.report.kind, None);
+}
+
+#[test]
+fn a_report_writes_the_kind_it_declares_and_writes_nothing_when_it_declares_none() {
+    // Given: a report with a kind, and the same report without one
+    let declared = runner::FailureReport {
+        kind: Some(runner::FailureKind::Transient),
+        reason_code: "provider_rate_limited".to_owned(),
+        params: serde_json::json!({}),
+        diagnostic: serde_json::json!({}),
+    };
+    let unclassified = runner::FailureReport {
+        kind: None,
+        ..declared.clone()
+    };
+    // When: each is written to the wire
+    let written = serde_json::to_value(&declared).unwrap();
+    let silent = serde_json::to_value(&unclassified).unwrap();
+    // Then: the code is the wire form, and an undeclared kind writes no field at all — the
+    // bytes a conforming runner sends today are the bytes it sends tomorrow
+    assert_eq!(written["kind"], json_code(runner::FAILURE_KIND_TRANSIENT));
+    assert!(
+        silent.get("kind").is_none(),
+        "an undeclared kind must stay absent on the wire: {silent}",
+    );
+}
+
 #[test]
 fn a_presence_entry_without_a_usable_capacity_is_refused_never_defaulted() {
     // Given: entries declaring no capacity, no room, or an impossible one

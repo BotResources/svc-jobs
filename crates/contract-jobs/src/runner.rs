@@ -66,10 +66,43 @@ pub struct RunCompleted {
     pub run_id: Uuid,
 }
 
+pub const FAILURE_KIND_TRANSIENT: &str = "TRANSIENT";
+pub const FAILURE_KIND_PERMANENT: &str = "PERMANENT";
+
+/// The closed retry vocabulary of a terminal failure report.
+///
+/// Jobs reads it as retry policy and nothing else: `TRANSIENT` may buy another
+/// attempt against the job's budget, `PERMANENT` ends automatic retry at once.
+/// There is no third word — a report naming one does not parse, so a runner
+/// declaring an unclassified failure fails to compile rather than fails to be
+/// understood in production.
+///
+/// [`Default`] is the contract's absent-kind rule: an unclassified failure is
+/// permanent, because a kind nobody chose must never burn a retry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FailureKind {
+    Transient,
+    #[default]
+    Permanent,
+}
+
+impl FailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Transient => FAILURE_KIND_TRANSIENT,
+            Self::Permanent => FAILURE_KIND_PERMANENT,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailureReport {
+    /// Absent means [`FailureKind::Permanent`]. The field stays optional so a
+    /// runner that never classifies its failures keeps writing the exact bytes
+    /// it writes today.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
+    pub kind: Option<FailureKind>,
     pub reason_code: String,
     #[serde(default)]
     pub params: Value,
