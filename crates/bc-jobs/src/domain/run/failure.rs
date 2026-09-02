@@ -35,11 +35,11 @@ impl RunFailureKind {
         }
     }
 
-    pub fn from_declared(value: Option<&str>) -> Result<Self, JobsError> {
-        match value {
-            None => Ok(Self::Permanent),
-            Some(declared) => Self::from_db_str(declared),
-        }
+    /// The kind a runner declared, or permanent when it declared none. The rule
+    /// lives here, on the domain's own type: an unclassified failure never
+    /// burns retry budget, whoever the caller is.
+    pub fn from_declared(declared: Option<Self>) -> Self {
+        declared.unwrap_or(Self::Permanent)
     }
 
     pub fn is_retryable(&self) -> bool {
@@ -136,9 +136,18 @@ mod tests {
         // When: the kind is read
         // Then: it is permanent — an unclassified failure never burns retry budget
         assert_eq!(
-            RunFailureKind::from_declared(None).unwrap(),
+            RunFailureKind::from_declared(None),
             RunFailureKind::Permanent
         );
+    }
+
+    #[test]
+    fn a_declared_failure_kind_is_taken_as_declared() {
+        // Given: a runner that did name its kind
+        // When/Then: the rule applies to the absent case alone — nothing else is rewritten
+        for kind in [RunFailureKind::Transient, RunFailureKind::Permanent] {
+            assert_eq!(RunFailureKind::from_declared(Some(kind)), kind);
+        }
     }
 
     #[test]

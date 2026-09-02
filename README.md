@@ -176,6 +176,41 @@ entry the domain accepts says otherwise — and an entry naming no live instance
 is ignored. Either way the refusal is logged with its code, and the fleet keeps
 the last report it accepted: a refused number never reaches the projection.
 
+### Terminal run facts — the retry vocabulary is closed
+
+A `failed` fact carries a report: a `kind`, a stable `reason_code`, structured
+`params` and a `diagnostic`. Jobs reads the `kind` as retry policy and nothing
+else:
+
+| Code | Meaning |
+|---|---|
+| `TRANSIENT` | Retryable. Another attempt is scheduled if the job's budget allows one. |
+| `PERMANENT` | Not retryable. Automatic retry ends immediately. |
+| *(absent)* | Permanent. An unclassified failure never burns retry budget. |
+
+There is no third word, and the contract type says so
+(`contract_jobs::runner::FailureKind`): a runner declaring anything else does
+not compile. Before that, the field was free text — `ru-scaffold` published
+`"kind": "scaffold"` in dev on 2026-08-25, compiled, shipped, and its job stayed
+`IN_PROGRESS` until a backstop reclaimed it, because the only thing the receiver
+can do with a report it cannot read is drop it.
+
+**A runner fact this service cannot read or accept is acknowledged and
+dropped** — holding it would park the stream behind a frame no redelivery can
+fix — **and the drop is counted**, on `/metrics`:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `jobs_runner_facts_discarded_total{fact}` | counter | facts this service could not read, or refused before they reached their job, by fact (`started`, `plan_declared`, `step_started`, `completed`, `failed`, `log`; `other` is reserved and currently unreachable — a status fact this service does not know, such as one minted by a newer runner vocabulary, is acknowledged and not counted, like the late fact above: understood, not lost). The label is the identity the consumer resolved when it dispatched the frame, drawn from the contract's own vocabulary — never a segment of the subject, so a publisher cannot mint series |
+
+A fact the **domain** examined and declined — a late fact on an already-terminal
+job, the ordinary case — is *not* counted: it was understood, not lost. What
+this counter records is the other kind: an increment on `fact="failed"` or
+`fact="completed"` is a terminal fact that never reached its job, and the run
+stays open until a backstop ends it. Both series are registered at zero when the
+transport starts, so the alert on them is armed before the first drop rather
+than after it.
+
 ## GraphQL surface — platform administrators only
 
 The entire user-facing surface is restricted to platform administrators: a

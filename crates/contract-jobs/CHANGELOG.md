@@ -5,6 +5,26 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.4.0 - 2026-09-01
+
+- `runner::FailureReport::kind` is now the closed `runner::FailureKind`
+  (`TRANSIENT` | `PERMANENT`) instead of `Option<String>`. The offer always
+  declared a two-word retry vocabulary; typing it as free text left the
+  enforcement to the receiver's runtime, where the only available answer is to
+  discard a terminal fact — which is exactly what happened in dev on
+  2026-08-25, a runner publishing `"kind": "scaffold"` and its job stalling.
+  The constraint now lives in the producer's compiler.
+- Source-breaking for producers by design, wire-identical for conforming ones:
+  the field keeps its name, its uppercase codes and its absence. An absent kind
+  still parses and still means `PERMANENT` (`FailureKind::default()`), and a
+  report that declares no kind still writes no `kind` field.
+- Runner-side adoption: recompile against this version. A runner that sent a
+  word outside the vocabulary now fails to build instead of shipping.
+- Added `RunnerStatusFact::as_str` / `parse` and `RunnerStatusFact::ALL`
+  (additive). The fact segment of a status subject is now readable from the
+  crate that renders it, so a receiver dispatches on the same vocabulary it
+  publishes instead of re-spelling the five words in its own consumer.
+
 ## 0.3.0 - 2026-08-27
 
 - Added version 2 coordinates and subject constants for `job.cancel`,

@@ -59,6 +59,13 @@ fn spawn_durable_fanout(supervisor: &Supervisor, pool: sqlx::PgPool, fabric: Fab
 }
 
 fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>) {
+    // Once, here: the series the transport publishes are described where the
+    // transport is composed, not inside a consumer. A supervised consumer
+    // restarts, and a describe that rides a restart says the metric depends on
+    // a task being alive — while the whole point of the discarded-fact series
+    // is to exist before anything has been discarded.
+    runner_transport::observability::describe();
+
     let presence_channels = channels.clone();
     let presence_jobs = Arc::clone(&jobs);
     supervisor.spawn("runner presence watch", move |established| {

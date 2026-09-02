@@ -22,6 +22,14 @@ pub enum RunnerStatusFact {
 }
 
 impl RunnerStatusFact {
+    pub const ALL: [Self; 5] = [
+        Self::Started,
+        Self::PlanDeclared,
+        Self::StepStarted,
+        Self::Completed,
+        Self::Failed,
+    ];
+
     pub fn template(self) -> &'static str {
         match self {
             Self::Started => EVT_JOBS_STATUS_RUNNER_TYPE_STARTED,
@@ -30,6 +38,24 @@ impl RunnerStatusFact {
             Self::Completed => EVT_JOBS_STATUS_RUNNER_TYPE_COMPLETED,
             Self::Failed => EVT_JOBS_STATUS_RUNNER_TYPE_FAILED,
         }
+    }
+
+    /// The fact segment of the subject — the word a receiver dispatches on.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::PlanDeclared => "plan_declared",
+            Self::StepStarted => "step_started",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Reads a fact segment back. A receiver that dispatches on this, and names
+    /// what it dropped with the same value, cannot end up disagreeing with
+    /// itself about which fact a frame carried.
+    pub fn parse(segment: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|fact| fact.as_str() == segment)
     }
 }
 
@@ -102,6 +128,35 @@ mod tests {
         assert_eq!(log_subject(&runner_type), "jobs.log.analyst");
         for (fact, expected) in FACTS {
             assert_eq!(&status_subject(&runner_type, *fact), expected);
+        }
+    }
+
+    #[test]
+    fn the_word_a_receiver_dispatches_on_is_the_word_the_subject_carries() {
+        // Given: every fact of the transport
+        for fact in RunnerStatusFact::ALL {
+            // When/Then: its segment is the one its own subject template ends with, and it reads
+            // back to itself — one vocabulary, not a builder's and a parser's
+            assert!(
+                fact.template().ends_with(&format!(".{}", fact.as_str())),
+                "{} does not end the subject {}",
+                fact.as_str(),
+                fact.template(),
+            );
+            assert_eq!(RunnerStatusFact::parse(fact.as_str()), Some(fact));
+        }
+    }
+
+    #[test]
+    fn a_segment_that_names_no_fact_reads_as_none_never_as_a_neighbour() {
+        // Given: segments a publisher could put where a fact belongs
+        for segment in ["", "analyst", "FAILED", "fail", "failed_v2", "v2"] {
+            // When/Then: none of them borrows the identity of a real fact
+            assert_eq!(
+                RunnerStatusFact::parse(segment),
+                None,
+                "'{segment}' must name no fact",
+            );
         }
     }
 

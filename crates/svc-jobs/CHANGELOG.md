@@ -10,6 +10,27 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.3.1 - 2026-09-01
+
+- Terminal run facts are read through the closed failure-kind vocabulary of
+  contract-jobs 0.4.0. A kind outside `TRANSIENT`/`PERMANENT` no longer reaches
+  the domain at all; the settling path is unchanged, so such a fact is still
+  acknowledged and discarded rather than redelivered forever.
+- The status consumer dispatches on `RunnerStatusFact` from contract-jobs
+  instead of its own string literals, and reads a status subject exactly once:
+  the identity it resolved is what settles the frame and what names the metric,
+  so the two can never disagree about which fact was dropped. One deliberate
+  side effect: a frame naming no known fact is now acknowledged before its
+  runner type is validated, so a subject invalid on both counts settles as an
+  ack instead of a term — both settle the message definitively, nothing is
+  redelivered either way.
+- A runner fact this service could not read, or refused before it reached its
+  job, now raises `jobs_runner_facts_discarded_total{fact}` on `/metrics`,
+  alongside the warning it already logged. The two terminal series are
+  registered at zero when the transport starts, so the alert is armed before the
+  first drop. A fact the domain examined and declined is not counted — it was
+  understood, not lost.
+
 ## 0.3.0 - 2026-08-27
 
 - Added independent durable consumers for `job.cancel.v2`, `job.finish.v2`,

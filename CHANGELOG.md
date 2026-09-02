@@ -9,6 +9,29 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.3.1 - 2026-09-01
+
+### Changed
+
+- The failure kind a runner declares on a terminal fact is now a closed
+  vocabulary in the published contract (`contract-jobs` 0.4.0): `TRANSIENT` or
+  `PERMANENT`, absent still meaning permanent. The offer always said so; the
+  type said `Option<String>`, so a runner could publish any word, compile, ship,
+  and have its terminal fact discarded by the receiver — a job left in progress
+  with nothing to end it, as happened in dev on 2026-08-25 with
+  `"kind": "scaffold"`. Wire-identical for a conforming runner; a
+  non-conforming one now fails to compile.
+
+### Added
+
+- `jobs_runner_facts_discarded_total{fact}` on `/metrics`: the count of runner
+  facts this service could not read or accept, acknowledged and dropped. A
+  discarded terminal fact leaves a run open until a backstop reclaims it, and a
+  warning line is not something an operator can alert on.
+- A regression scenario against real infrastructure: a terminal fact naming a
+  kind outside the vocabulary leaves the job untouched, raises the counter, and
+  does not park the status stream — the next conforming fact still lands.
+
 ## 0.3.0 - 2026-08-27
 
 ### Added

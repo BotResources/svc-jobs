@@ -323,7 +323,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bc-jobs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "br-core-events",
@@ -606,9 +606,9 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -694,7 +694,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "contract-jobs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "br-core-integration",
  "br-util-nats-fabric",
@@ -3232,7 +3232,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svc-jobs"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-graphql",
  "async-nats",
@@ -3253,6 +3253,7 @@ dependencies = [
  "contract-jobs",
  "dotenvy",
  "futures",
+ "metrics",
  "reqwest",
  "serde",
  "serde_json",

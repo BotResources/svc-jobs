@@ -78,7 +78,7 @@ pub async fn completed(jobs: &Jobs, fact: &wire::RunCompleted) -> Result<(), Ser
 
 pub async fn failed(jobs: &Jobs, fact: &wire::RunFailed) -> Result<(), ServiceError> {
     let report = RunFailureReport::new(
-        RunFailureKind::from_declared(fact.report.kind.as_deref())?,
+        RunFailureKind::from_declared(fact.report.kind.map(declared_kind)),
         ReasonCode::new(&fact.report.reason_code)?,
         object_or_empty(&fact.report.params),
         object_or_empty(&fact.report.diagnostic),
@@ -123,6 +123,17 @@ fn declaration_identity(
         }
     }
     Ok(PlanDeclarationId::new(jobs.ids.next())?)
+}
+
+/// The published vocabulary carried over to the domain's own. Total on purpose:
+/// a kind added to the contract stops this file compiling instead of being
+/// rounded to something the domain already knows. The absent case is not
+/// decided here — the domain owns that rule.
+fn declared_kind(declared: wire::FailureKind) -> RunFailureKind {
+    match declared {
+        wire::FailureKind::Transient => RunFailureKind::Transient,
+        wire::FailureKind::Permanent => RunFailureKind::Permanent,
+    }
 }
 
 fn object_or_empty(value: &serde_json::Value) -> serde_json::Value {
