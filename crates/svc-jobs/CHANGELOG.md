@@ -10,6 +10,23 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.3.2 - 2026-09-08
+
+Dependency-bump maintenance release. No wire, schema or behaviour change for
+consumers.
+
+- Rebuilt on `br-rust-common` v1.3.0 (from v1.2.0) and the `br-e2e-harness`
+  test harness v1.2.0 (from v1.1.3). Both are additive minor releases; the
+  service source is unchanged and every gate is green on the new pins.
+- `bc-jobs` and `contract-jobs` move to 0.5.0 (minor, not patch): their public
+  API surfaces `br-rust-common` types — the `bc-jobs` ports and domain
+  references expose `br_core_events` types, and the `contract-jobs`
+  `integration` feature returns `br_core_integration` coordinate types — so a
+  rebuild on a new `br-rust-common` is a contract-relevant change for their
+  consumers. The `contract-jobs` default (runner) footprint pulls no
+  BotResources library and stays byte-identical.
+- Helm chart realigned to 0.3.2 (`version` and `appVersion`) with the crate.
+
 ## 0.3.1 - 2026-09-01
 
 - Terminal run facts are read through the closed failure-kind vocabulary of

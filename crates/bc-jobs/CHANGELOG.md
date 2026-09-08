@@ -8,6 +8,14 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.5.0 - 2026-09-08
+
+- Rebuilt on `br-rust-common` v1.3.0 (from v1.2.0). No behaviour change.
+- Minor rather than patch because the public API exposes `br_core_events` types
+  (`UserId`, `EventMetadata`, `DomainEvent`, `Actor`) in its ports and domain
+  references, so the `br-rust-common` they resolve against is part of this
+  crate's contract. Consumed only inside this repository.
+
 ## 0.4.0 - 2026-09-01
 
 - `RunFailureKind::from_declared` now takes `Option<RunFailureKind>` and is
