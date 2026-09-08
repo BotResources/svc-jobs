@@ -5,6 +5,18 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.5.0 - 2026-09-08
+
+- Rebuilt on `br-rust-common` v1.3.0 (from v1.2.0). No change to the published
+  subjects, KV prefixes, payload shapes or the runner-transport wire — a
+  conforming producer or consumer is unaffected.
+- Minor rather than patch because the `integration` feature's public API
+  returns `br_core_integration` coordinate types (`CommandCoords`,
+  `EventCoords`, `CoordError`): the `br-rust-common` these resolve against is
+  part of this crate's contract, so a platform consumer enabling `integration`
+  must agree on `br-rust-common` v1.3.0. The default runner footprint pulls no
+  BotResources library and is byte-identical.
+
 ## 0.4.0 - 2026-09-01
 
 - `runner::FailureReport::kind` is now the closed `runner::FailureKind`

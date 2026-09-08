@@ -323,7 +323,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bc-jobs"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "br-core-events",
@@ -372,8 +372,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-auth"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "base64",
  "br-core-kernel",
@@ -387,8 +387,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-directory"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "serde",
  "serde_json",
@@ -398,8 +398,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-events"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "br-core-kernel",
  "chrono",
@@ -410,8 +410,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-integration"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "br-core-events",
  "chrono",
@@ -422,8 +422,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-kernel"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "serde",
  "uuid",
@@ -431,8 +431,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-scope"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "serde",
  "thiserror",
@@ -440,8 +440,8 @@ dependencies = [
 
 [[package]]
 name = "br-core-values"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "serde",
  "thiserror",
@@ -449,16 +449,16 @@ dependencies = [
 
 [[package]]
 name = "br-scope-declaration-contract"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "br-core-integration",
 ]
 
 [[package]]
 name = "br-test-harness"
-version = "1.1.3"
-source = "git+https://github.com/BotResources/br-e2e-harness?tag=v1.1.3#f1bcdb94b0cd610e27c14f2c975bd1f6202c366b"
+version = "1.2.0"
+source = "git+https://github.com/BotResources/br-e2e-harness?tag=v1.2.0#048bf229d4b40f9effb98472452bae928cc7c693"
 dependencies = [
  "async-nats",
  "axum",
@@ -486,8 +486,8 @@ dependencies = [
 
 [[package]]
 name = "br-util-axum-readiness"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "axum",
  "tracing",
@@ -495,8 +495,8 @@ dependencies = [
 
 [[package]]
 name = "br-util-graphql"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "async-graphql",
  "axum",
@@ -507,14 +507,15 @@ dependencies = [
 
 [[package]]
 name = "br-util-nats-fabric"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "async-nats",
  "async-trait",
  "br-core-events",
  "br-core-integration",
  "futures-util",
+ "metrics",
  "serde",
  "serde_json",
  "sqlx",
@@ -526,8 +527,8 @@ dependencies = [
 
 [[package]]
 name = "br-util-observability"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "axum",
  "chrono",
@@ -543,8 +544,8 @@ dependencies = [
 
 [[package]]
 name = "br-util-postgres"
-version = "1.2.0"
-source = "git+https://github.com/BotResources/br-rust-common?tag=v1.2.0#fe84d1f7ea7e950933332341c15e6e996b82503e"
+version = "1.3.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=v1.3.0#edac9c28e3cd0f5b2715710c2df4dfc610c3c680"
 dependencies = [
  "sqlx",
  "thiserror",
@@ -694,7 +695,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "contract-jobs"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "br-core-integration",
  "br-util-nats-fabric",
@@ -3232,7 +3233,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svc-jobs"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-graphql",
  "async-nats",
