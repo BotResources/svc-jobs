@@ -10,6 +10,26 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.3.3 - 2026-09-28
+
+Security release, lockfile bump only. No source, wire, schema, migration or
+configuration change for consumers.
+
+### Security
+
+- `cargo update -p rustls-webpki -p rustls`: rustls 0.23.43 → 0.23.45,
+  rustls-webpki 0.103.14 → 0.103.15 (RUSTSEC-2026-0285, CVSS 5.3: TLS 1.3
+  handshake messages accepted across encryption-level boundaries; client role
+  only). Affected paths: `sqlx-core (tls-rustls)` to Postgres and
+  `async-nats → rustls` to NATS.
+- chacha20 0.10.2, spin 0.9.9 and event-listener 5.4.2 are already clean. The
+  only advisory left in `cargo audit` is RUSTSEC-2023-0071 (rsa), ignored with
+  its reason in `deny.toml` and not linked into the binary.
+- The lockstep publish republishes chart `br-svc-jobs` at 0.3.3 with unchanged
+  templates and values. `charts/br-svc-jobs/Chart.yaml` is not edited:
+  `scripts/publish.sh` stamps `version` and `appVersion` from the crate version
+  when it packages the chart.
+
 ## 0.3.2 - 2026-09-08
 
 Dependency-bump maintenance release. No wire, schema or behaviour change for
