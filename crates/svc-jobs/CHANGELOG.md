@@ -19,12 +19,14 @@ configuration change for consumers.
 
 - `cargo update -p rustls-webpki -p rustls`: rustls 0.23.43 → 0.23.45,
   rustls-webpki 0.103.14 → 0.103.15 (RUSTSEC-2026-0285, CVSS 5.3: TLS 1.3
-  handshake messages accepted across encryption-level boundaries; client role
-  only). Affected paths: `sqlx-core (tls-rustls)` to Postgres and
-  `async-nats → rustls` to NATS.
+  handshake messages accepted across encryption-level boundaries). Every
+  rustls path in svc-jobs is a TLS client: `sqlx-core (tls-rustls)` to
+  Postgres and `async-nats → rustls` to NATS.
 - chacha20 0.10.2, spin 0.9.9 and event-listener 5.4.2 are already clean. The
-  only advisory left in `cargo audit` is RUSTSEC-2023-0071 (rsa), ignored with
-  its reason in `deny.toml` and not linked into the binary.
+  only advisory left in `cargo audit` is RUSTSEC-2023-0071 (rsa): it is listed
+  in `Cargo.lock` only and not compiled. Its ignore in `deny.toml` now records
+  the upstream status with the date it was checked (2026-09-28: no fixed rsa
+  version), as the file's own policy requires.
 - The lockstep publish republishes chart `br-svc-jobs` at 0.3.3 with unchanged
   templates and values. `charts/br-svc-jobs/Chart.yaml` is not edited:
   `scripts/publish.sh` stamps `version` and `appVersion` from the crate version
