@@ -30,17 +30,24 @@ ignore = [
     # RUSTSEC-2023-0071 — rsa (Marvin Attack: timing sidechannel in RSA key
     # operations).
     #
-    # Why: rsa is pulled transitively by sqlx-macros-core → sqlx-mysql, which
-    # sqlx's macro layer compiles for every backend it might generate code for.
-    # At runtime this workspace uses only sqlx-postgres (the workspace pin's
-    # features: runtime-tokio, tls-rustls, postgres — no mysql), so the rsa
-    # code path never executes; it lives in the proc-macro binary at compile
-    # time and is dropped from release artefacts. The backend monorepo carries
-    # the identical ignore for the identical reason.
+    # Why: rsa enters Cargo.lock through sqlx-macros-core → sqlx-mysql, an
+    # optional sqlx dependency. The workspace pin enables the postgres backend
+    # only (features: runtime-tokio, tls-rustls, postgres, uuid, chrono, json;
+    # no mysql), so cargo never resolves sqlx-mysql or rsa into the build
+    # graph: `cargo tree -i rsa --target all -e all` prints nothing, also with
+    # `--workspace --all-features` (checked 2026-09-28). rsa is not compiled
+    # and its code path never executes. The backend monorepo carries the
+    # identical ignore for the identical reason.
     #
-    # Upstream status: no fixed rsa version available; eliminating the
-    # transitive dep needs a sqlx major refactor. Retire this ignore when sqlx
-    # stops compiling the mysql backend into its macros, or rsa ships a fix.
+    # Upstream status (checked 2026-09-28): no fixed rsa version. The advisory
+    # still lists `patched = []`; the newest stable rsa is 0.9.10 and 0.10 has
+    # only release candidates (newest 0.10.0-rc.18). Retire this ignore when rsa
+    # ships a fix, or when sqlx-mysql no longer appears in Cargo.lock.
+    #
+    # Tools: cargo audit reads Cargo.lock, so it reports the advisory and needs
+    # this ignore. cargo deny reads the resolved graph, so it does not see rsa
+    # and warns `advisory-not-detected` for this entry; that warning is
+    # expected while rsa stays lockfile-only.
     #
     # Mirrored in .github/workflows/ci.yml (`cargo audit --ignore ...`).
     { id = "RUSTSEC-2023-0071" },

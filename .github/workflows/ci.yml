@@ -155,10 +155,10 @@ jobs:
           tool: cargo-audit,cargo-deny,cargo-machete
 
       # --ignore RUSTSEC-2023-0071 — rsa (Marvin Attack timing sidechannel),
-      # pulled transitively by sqlx-macros-core's sqlx-mysql backend, which is
-      # proc-macro compile-time only; runtime is sqlx-postgres, so the code
-      # path never executes and upstream has no fixed version. Mirrored, with
-      # the full Why block, in deny.toml [advisories].
+      # listed in Cargo.lock through sqlx-macros-core → sqlx-mysql but never
+      # resolved into the build graph (postgres-only sqlx features), so rsa is
+      # not compiled and upstream has no fixed version. Mirrored, with the full
+      # Why block and the dated upstream check, in deny.toml [advisories].
       - name: cargo audit (RustSec)
         run: cargo audit --ignore RUSTSEC-2023-0071
 
