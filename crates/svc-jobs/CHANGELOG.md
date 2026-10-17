@@ -10,6 +10,26 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.3.4 - 2026-10-17
+
+Dependency re-pin maintenance release. No wire, schema, migration or
+configuration change for consumers.
+
+- Every `br-rust-common` dependency moves from the legacy workspace tag
+  `v1.3.0` to the per-crate tags `{crate}/v{version}` (`br-util-postgres`
+  `0.1.1`, the others `0.1.0`). `br-test-harness` moves to
+  `br-test-harness/v0.1.1`. The workspace resolves one copy of each `br-*`
+  crate, matching `br-service-engine` 0.4.2.
+- `br-util-postgres` 0.1.1 validates the database URL from the authority only
+  and refuses a URL with no scheme, a foreign scheme or no explicit host.
+  `ensure_app_role` refuses an empty password (a `JOBS_APP_PASSWORD` set but
+  empty now fails the boot instead of clearing the `jobs_app` password), stores
+  a SCRAM-SHA-256 verifier, and role creation and grants run under advisory
+  locks. A deployed `DATABASE_URL` / `DATABASE_URL_OWNER` must name its host
+  explicitly.
+- `contract-jobs` and `bc-jobs` move to 0.5.1.
+- Lockfile: `rustls` 0.23.46 and `quinn-proto` 0.11.19 (security advisories).
+
 ## 0.3.3 - 2026-09-28
 
 Security release, lockfile bump only. No source, wire, schema, migration or
