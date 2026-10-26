@@ -55,6 +55,9 @@ async fn switching_a_runner_type_to_claim_moves_its_new_runs_off_the_trigger_str
     let executing = JobDeclaration::new(&switching).with_max_attempts(2);
     producer.declare_v2(&executing).await;
     let first_trigger = instance.next_trigger(LONG).await;
+    // Both instances compete on one trigger stream: the second reads on from the trigger already
+    // consumed, so only triggers published from here on can reach it
+    second.resume_after(&instance);
     assert_eq!(runner::job_id(&first_trigger), executing.job_id);
     instance.start_run(&first_trigger).await;
     events
