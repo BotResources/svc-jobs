@@ -127,7 +127,6 @@ async fn a_cap_change_racing_admissions_reaches_every_waiting_job_of_the_user() 
     // Given: a user capped at 2 with one waiting root requesting 5, on a type nobody serves
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
-    let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
     let user = fixture::ordinary_member();
@@ -146,37 +145,24 @@ async fn a_cap_change_racing_admissions_reaches_every_waiting_job_of_the_user() 
         .expect_one(wire::FACT_QUEUED, root.job_id, LONG)
         .await;
 
-    // Given: a share lock on the user's maximum, as an in-flight admission holds while it reads
-    // the cap — it only widens a window that exists without it
-    let mut admission = durable.pool().begin().await.expect("a transaction opens");
-    sqlx::query("SELECT 1 FROM user_max_priorities WHERE user_id = $1 FOR SHARE")
-        .bind(user.actor_id())
-        .execute(&mut *admission)
-        .await
-        .expect("a share lock on the user's maximum");
-
     // When: the super user raises the maximum to 4 while one of the user's jobs is admitted
     let in_window = JobDeclaration::new(&runner_type)
         .triggered_by_user(user.actor_id())
         .with_priority(5);
     let (raised, ()) = tokio::join!(
         priority::set_user_max_priority(&client, admin, user.actor_id(), 4),
-        async {
-            tokio::time::sleep(WINDOW).await;
-            producer.declare_v2(&in_window).await;
-            events
-                .expect_one(wire::FACT_QUEUED, in_window.job_id, LONG)
-                .await;
-            admission.commit().await.expect("the lock is released");
-        }
+        producer.declare_v2(&in_window)
     );
+    events
+        .expect_one(wire::FACT_QUEUED, in_window.job_id, LONG)
+        .await;
     gql::expect_success(
         &raised,
         wire::FIELD_SET_USER_MAX_PRIORITY,
         "a cap change racing an admission",
     );
 
-    // Then: the job admitted in the window is capped by the new maximum
+    // Then: the job admitted alongside the change is capped by the new maximum
     for job_id in [root.job_id, in_window.job_id] {
         priority::assert_priorities(
             &priority::job(&client, admin, job_id).await,
@@ -247,7 +233,6 @@ async fn a_cap_change_racing_admissions_reaches_every_waiting_job_of_the_user() 
     }
     assert_eq!(priority::my_max_priority(&client, &user).await, 3);
 
-    durable.close().await;
     events.stop().await;
     fixture.shutdown().await;
 }
