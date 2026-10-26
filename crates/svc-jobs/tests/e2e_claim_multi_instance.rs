@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 const INSTANCES: usize = 30;
 const JOBS: usize = 24;
+const LATE_JOBS: usize = 6;
 const CLAIM_WAIT: Duration = Duration::from_secs(3);
 
 #[tokio::test]
@@ -134,13 +135,61 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
         stream::expect_no_delta(listing, JOBS_CHANGED, wire::EVT_RUN_DISPATCHED, QUIET).await;
     }
 
-    // When: every instance claims again at the same moment
-    let repeats: Vec<ClaimAnswer> = join_all(
+    // Given: a few more jobs arrive
+    let mut late = BTreeSet::new();
+    for _ in 0..LATE_JOBS {
+        let declaration = JobDeclaration::new(&runner_type);
+        producer.declare_v2(&declaration).await;
+        events
+            .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+            .await;
+        late.insert(declaration.job_id);
+    }
+
+    // When: every instance claims another free slot at the same moment, under a new claim id
+    let second_round: Vec<ClaimAnswer> = join_all(
         instances
             .iter()
             .map(|instance| claim::claim(fixture.nats(), instance, CLAIM_WAIT)),
     )
     .await;
+
+    // Then: only the late jobs are served, each once — a new claim id never re-serves a job
+    // already reserved, even to an instance that holds it
+    let mut late_served = BTreeSet::new();
+    for answer in &second_round {
+        if answer.reply["run"].is_object() {
+            let run = answer.expect_run("a second-slot claim served");
+            assert!(
+                late_served.insert(runner::job_id(&run)),
+                "late job {} reserved to two claims",
+                runner::job_id(&run)
+            );
+        } else {
+            answer.expect_empty("a second-slot claim with no job left");
+        }
+    }
+    assert_eq!(
+        late_served, late,
+        "the second round serves exactly the late jobs, none of the first ones again",
+    );
+    for job_id in declared.iter().chain(&late) {
+        durable
+            .assert_count(
+                db::RUNS_OF_JOB,
+                *job_id,
+                1,
+                "one run per job across both rounds",
+            )
+            .await;
+    }
+
+    // When: every instance repeats its first-round claim id at the same moment
+    let repeats: Vec<ClaimAnswer> =
+        join_all(instances.iter().zip(&answers).map(|(instance, first)| {
+            claim::claim_again(fixture.nats(), instance, first.claim_id, CLAIM_WAIT)
+        }))
+        .await;
 
     // Then: holders get their own reservation back, the others nothing, on whichever pod
     for (instance, answer) in instances.iter().zip(&repeats) {
@@ -150,13 +199,13 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
                 assert_eq!(
                     (runner::job_id(&run), runner::run_id(&run)),
                     (*job_id, *run_id),
-                    "a repeated claim returns the run already reserved, whatever pod answers",
+                    "a repeated claim id returns the run already reserved, whatever pod answers",
                 );
             }
             None => answer.expect_empty("a repeated claim with nothing reserved"),
         }
     }
-    for job_id in &declared {
+    for job_id in declared.iter().chain(&late) {
         durable
             .assert_count(db::RUNS_OF_JOB, *job_id, 1, "repeats create no run")
             .await;

@@ -43,11 +43,13 @@ async fn switching_a_runner_type_to_claim_moves_its_new_runs_off_the_trigger_str
     dispatch::await_live_instances(&client, admin, &switching, 2, LONG).await;
     dispatch::await_live_instances(&client, admin, &untouched, 1, LONG).await;
     for runner_type in [&switching, &untouched] {
+        let view = dispatch::runner_type_view(&client, admin, runner_type).await;
         assert_eq!(
-            dispatch::runner_type_view(&client, admin, runner_type).await["runnerType"]["dispatchMode"],
+            view["runnerType"]["dispatchMode"],
             json!(wire::MODE_PUSH),
             "a new runner type is PUSH",
         );
+        assert_settings_offered(&view, "a new runner type read by a platform administrator");
     }
 
     let executing = JobDeclaration::new(&switching).with_max_attempts(2);
@@ -120,6 +122,7 @@ async fn switching_a_runner_type_to_claim_moves_its_new_runs_off_the_trigger_str
         "the dispatch mode is independent of the lifecycle",
     );
     gql::assert_allowed(&switched, wire::ACTION_DEPRECATE);
+    assert_settings_offered(&switched, "the fleet delta of a switched runner type");
     assert_eq!(
         dispatch::runner_type_view(&client, admin, &switching).await["runnerType"]["dispatchMode"],
         json!(wire::MODE_CLAIM),
@@ -221,11 +224,13 @@ async fn each_runner_type_bounds_its_runs_by_its_own_maximum_duration() {
     dispatch::await_live_instances(&client, admin, &long_type, 1, LONG).await;
     dispatch::await_live_instances(&client, admin, &default_type, 1, LONG).await;
     for runner_type in [&long_type, &default_type] {
+        let view = dispatch::runner_type_view(&client, admin, runner_type).await;
         assert_eq!(
-            dispatch::runner_type_view(&client, admin, runner_type).await["runnerType"]["maxRunDurationSeconds"],
+            view["runnerType"]["maxRunDurationSeconds"],
             json!(DEFAULT_MAX_RUN_SECONDS),
             "a new runner type carries the service's default maximum duration",
         );
+        assert_settings_offered(&view, "a new runner type read by a platform administrator");
     }
     let mut fleet_watch = SseSubscription::open(
         fixture.url(),
@@ -272,6 +277,7 @@ async fn each_runner_type_bounds_its_runs_by_its_own_maximum_duration() {
         delta::fleet_projection(&changed, &long_type)["maxRunDurationSeconds"],
         json!(NINETY_SIX_HOURS_SECONDS)
     );
+    assert_settings_offered(&changed, "the fleet delta of a re-bounded runner type");
     assert_eq!(
         dispatch::runner_type_view(&client, admin, &default_type).await["runnerType"]["maxRunDurationSeconds"],
         json!(DEFAULT_MAX_RUN_SECONDS),
@@ -338,4 +344,18 @@ async fn each_runner_type_bounds_its_runs_by_its_own_maximum_duration() {
 
     events.stop().await;
     fixture.shutdown().await;
+}
+
+fn assert_settings_offered(view: &serde_json::Value, what: &str) {
+    for action in [
+        wire::ACTION_SET_DISPATCH_MODE,
+        wire::ACTION_SET_MAX_RUN_DURATION,
+    ] {
+        let entry = gql::affordance(view, action);
+        assert_eq!(
+            entry["allowed"],
+            json!(true),
+            "{what}: a platform administrator may set '{action}' at any time: {entry}"
+        );
+    }
 }

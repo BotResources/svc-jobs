@@ -14,6 +14,7 @@ use support::{
     FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, gql, stream,
     subs, wire,
 };
+use uuid::Uuid;
 
 const LONG_POLL: Duration = Duration::from_secs(6);
 const SHORT_POLL: Duration = Duration::from_secs(3);
@@ -223,7 +224,14 @@ async fn a_claim_nobody_serves_is_answered_empty_when_its_wait_ends() {
     );
 
     // When: an instance with no live presence claims while the job waits
-    let ghost = claim::claim_as(fixture.nats(), &runner_type, "ghost", SHORT_POLL).await;
+    let ghost = claim::claim_as(
+        fixture.nats(),
+        &runner_type,
+        "ghost",
+        Uuid::now_v7(),
+        SHORT_POLL,
+    )
+    .await;
 
     // Then: it is refused as unknown and reserves nothing
     ghost.expect_refused(wire::REASON_INSTANCE_UNKNOWN, "a claim without presence");
@@ -272,16 +280,18 @@ async fn a_repeated_claim_receives_the_run_already_reserved_to_it() {
     let admin = fixture.admin();
     let runner_type = wire::unique_runner_type("repeated");
     let producer = Producer::new(fixture.fabric(), "projects");
-    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    let mut instance =
+        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(2);
     let mut neighbour = FakeRunner::new(fixture.nats(), &runner_type, "instance-b");
     instance.connect().await;
     neighbour.connect().await;
     dispatch::await_live_instances(&client, admin, &runner_type, 2, LONG).await;
     dispatch::switch_to_claim(&client, admin, &runner_type).await;
-    let declaration = JobDeclaration::new(&runner_type);
-    let job_id = declaration.job_id;
-    producer.declare_v2(&declaration).await;
-    events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
+    let first_job = JobDeclaration::new(&runner_type);
+    producer.declare_v2(&first_job).await;
+    events
+        .expect_one(wire::FACT_QUEUED, first_job.job_id, LONG)
+        .await;
     let mut listing = SseSubscription::open(
         fixture.url(),
         admin,
@@ -290,21 +300,22 @@ async fn a_repeated_claim_receives_the_run_already_reserved_to_it() {
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: the instance claims and the reply is lost on the way back
-    claim::claim_and_lose_the_reply(fixture.nats(), &instance, SHORT_POLL).await;
+    // When: the instance claims one slot and the reply is lost on the way back
+    let first_slot = Uuid::now_v7();
+    claim::claim_and_lose_the_reply(fixture.nats(), &instance, first_slot, SHORT_POLL).await;
     let dispatched =
         stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_RUN_DISPATCHED, LONG).await;
     let reserved_run = dispatched["event"]["runId"].clone();
-    gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
+    gql::wait_for_status(&client, admin, first_job.job_id, "IN_PROGRESS", LONG).await;
 
     // Then: another instance cannot take the job reserved to the first
     claim::claim(fixture.nats(), &neighbour, SHORT_POLL)
         .await
         .expect_empty("another instance claims a job already reserved");
 
-    // When: the instance repeats its claim, twice
+    // When: the instance repeats the same claim id, twice
     for repeat in 1..=2 {
-        let answer = claim::claim(fixture.nats(), &instance, SHORT_POLL).await;
+        let answer = claim::claim_again(fixture.nats(), &instance, first_slot, SHORT_POLL).await;
 
         // Then: it receives the very same reserved run, at once
         let run = answer.expect_run("a repeated claim");
@@ -312,40 +323,94 @@ async fn a_repeated_claim_receives_the_run_already_reserved_to_it() {
         assert_eq!(
             json!(runner::run_id(&run).to_string()),
             reserved_run,
-            "repeat {repeat}: the run already reserved to the instance, never a second one",
+            "repeat {repeat}: the same claim id returns the run already reserved, never a second \
+             one",
         );
         assert_eq!(runner::attempt_number(&run), 1);
     }
-
-    // Then: one run exists and one dispatch was ever announced
     durable
-        .assert_count(db::RUNS_OF_JOB, job_id, 1, "a repeat creates no run")
+        .assert_count(
+            db::RUNS_OF_JOB,
+            first_job.job_id,
+            1,
+            "a repeat creates no run",
+        )
         .await;
     stream::expect_no_delta(&mut listing, JOBS_CHANGED, wire::EVT_RUN_DISPATCHED, QUIET).await;
+
+    // When: the same instance claims its second slot under a new claim id, nothing else waiting
+    claim::claim(fixture.nats(), &instance, SHORT_POLL)
+        .await
+        .expect_empty("a new claim id is a new slot, never the run reserved to another one");
+
+    // When: a second job arrives and the instance claims its second slot under a new claim id
+    let second_job = JobDeclaration::new(&runner_type);
+    producer.declare_v2(&second_job).await;
+    events
+        .expect_one(wire::FACT_QUEUED, second_job.job_id, LONG)
+        .await;
+    let second_answer = claim::claim(fixture.nats(), &instance, SHORT_POLL).await;
+
+    // Then: one instance fills two slots with two jobs
+    let second_run = second_answer.expect_run("the second slot of the same instance");
+    second_answer.expect_answered_at_once(SHORT_POLL, "the second slot of the same instance");
+    assert_eq!(runner::job_id(&second_run), second_job.job_id);
+    assert_ne!(json!(runner::run_id(&second_run).to_string()), reserved_run);
+    let second_dispatch = stream::await_delta_of(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_RUN_DISPATCHED,
+        second_job.job_id,
+        LONG,
+    )
+    .await;
     assert_eq!(
-        gql::job(&client, admin, job_id).await["runs"]
-            .as_array()
-            .map(Vec::len),
-        Some(1)
+        second_dispatch["event"]["runId"],
+        json!(runner::run_id(&second_run).to_string())
     );
 
-    // When: the instance starts the run, then claims again
-    let run = claim::claim(fixture.nats(), &instance, SHORT_POLL)
+    // Then: each claim id keeps answering with its own run
+    for (claim_id, expected, what) in [
+        (first_slot, reserved_run.clone(), "the first slot"),
+        (
+            second_answer.claim_id,
+            json!(runner::run_id(&second_run).to_string()),
+            "the second slot",
+        ),
+    ] {
+        let repeated = claim::claim_again(fixture.nats(), &instance, claim_id, SHORT_POLL)
+            .await
+            .expect_run(what);
+        assert_eq!(
+            json!(runner::run_id(&repeated).to_string()),
+            expected,
+            "{what}"
+        );
+    }
+    for job_id in [first_job.job_id, second_job.job_id] {
+        durable
+            .assert_count(db::RUNS_OF_JOB, job_id, 1, "one run per slot")
+            .await;
+    }
+    stream::expect_no_delta(&mut listing, JOBS_CHANGED, wire::EVT_RUN_DISPATCHED, QUIET).await;
+
+    // When: the instance starts the first run, then repeats that slot's claim id
+    let run = claim::claim_again(fixture.nats(), &instance, first_slot, SHORT_POLL)
         .await
         .expect_run("the reserved run once more");
     instance.start_run(&run).await;
     let started =
         stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_RUN_STARTED, LONG).await;
     assert_eq!(started["event"]["runId"], reserved_run);
-    let after_start = claim::claim(fixture.nats(), &instance, SHORT_POLL).await;
+    let after_start = claim::claim_again(fixture.nats(), &instance, first_slot, SHORT_POLL).await;
 
     // Then: a started run is never handed out again
-    after_start.expect_empty("a claim after the reserved run started");
+    after_start.expect_empty("a claim repeated after its reserved run started");
     events
-        .expect_exactly(wire::FACT_STARTED, job_id, 1, QUIET)
+        .expect_exactly(wire::FACT_STARTED, first_job.job_id, 1, QUIET)
         .await;
     durable
-        .assert_count(db::RUNS_OF_JOB, job_id, 1, "still one run")
+        .assert_count(db::RUNS_OF_JOB, first_job.job_id, 1, "still one run")
         .await;
 
     durable.close().await;
@@ -405,7 +470,14 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
         json!(lost_run.to_string()),
     );
 
-    // Then: past the reservation delay the run fails as transient, reason claim_lost
+    // Then: past the reservation delay Jobs writes the lost run's cancel entry, so a late
+    // instance stops it, and fails the run as transient, reason claim_lost
+    let entry = instance.await_cancel_entry(lost_run, LONG).await;
+    assert_eq!(
+        entry["run_id"],
+        json!(lost_run.to_string()),
+        "the cancel entry of a lost reservation sits at the run's own key",
+    );
     let failed = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
     let event = delta::event_of(&failed, wire::EVT_RUN_FAILED, job_id);
     assert_eq!(event["runId"], json!(lost_run.to_string()));

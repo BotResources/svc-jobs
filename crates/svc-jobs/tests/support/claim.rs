@@ -31,6 +31,7 @@ const TRIGGER_FIELDS: [&str; 6] = [
 ];
 
 pub struct ClaimAnswer {
+    pub claim_id: Uuid,
     pub reply: Value,
     pub elapsed: Duration,
 }
@@ -113,24 +114,44 @@ pub fn subject(runner_type: &str) -> String {
     hand_built
 }
 
-pub fn request(instance_key: &str, wait: Duration) -> Vec<u8> {
+pub fn request(instance_key: &str, claim_id: Uuid, wait: Duration) -> Vec<u8> {
     let wait_ms = u64::try_from(wait.as_millis()).expect("a test-scale wait fits in milliseconds");
     serde_json::to_vec(&json!({
         "version": 1,
         "instance_key": instance_key,
+        "claim_id": claim_id.to_string(),
         "wait_ms": wait_ms,
     }))
     .expect("a claim request serializes")
 }
 
+/// One free slot asks for its next run: a fresh claim id per slot.
 pub async fn claim(nats: &TestNats, runner: &FakeRunner<'_>, wait: Duration) -> ClaimAnswer {
-    claim_as(nats, &runner.runner_type, &runner.instance_key, wait).await
+    claim_again(nats, runner, Uuid::now_v7(), wait).await
+}
+
+/// The same slot asks again under the claim id it already used.
+pub async fn claim_again(
+    nats: &TestNats,
+    runner: &FakeRunner<'_>,
+    claim_id: Uuid,
+    wait: Duration,
+) -> ClaimAnswer {
+    claim_as(
+        nats,
+        &runner.runner_type,
+        &runner.instance_key,
+        claim_id,
+        wait,
+    )
+    .await
 }
 
 pub async fn claim_as(
     nats: &TestNats,
     runner_type: &str,
     instance_key: &str,
+    claim_id: Uuid,
     wait: Duration,
 ) -> ClaimAnswer {
     let bound = wait + REPLY_MARGIN;
@@ -141,8 +162,10 @@ pub async fn claim_as(
     let started = Instant::now();
     let answered = tokio::time::timeout(
         bound,
-        nats.client()
-            .request(subject(runner_type), request(instance_key, wait).into()),
+        nats.client().request(
+            subject(runner_type),
+            request(instance_key, claim_id, wait).into(),
+        ),
     )
     .await;
     let elapsed = started.elapsed();
@@ -173,16 +196,25 @@ pub async fn claim_as(
         reply["run"]["run_id"].as_str().map(str::to_owned),
         "the typed contract and the wire agree on the run carried: {reply}"
     );
-    ClaimAnswer { reply, elapsed }
+    ClaimAnswer {
+        claim_id,
+        reply,
+        elapsed,
+    }
 }
 
-pub async fn claim_and_lose_the_reply(nats: &TestNats, runner: &FakeRunner<'_>, wait: Duration) {
+pub async fn claim_and_lose_the_reply(
+    nats: &TestNats,
+    runner: &FakeRunner<'_>,
+    claim_id: Uuid,
+    wait: Duration,
+) {
     let nobody_listens = format!("_INBOX.lost.{}", Uuid::now_v7().simple());
     nats.client()
         .publish_with_reply(
             subject(&runner.runner_type),
             nobody_listens,
-            request(&runner.instance_key, wait).into(),
+            request(&runner.instance_key, claim_id, wait).into(),
         )
         .await
         .expect("publishing a claim whose reply nobody reads");

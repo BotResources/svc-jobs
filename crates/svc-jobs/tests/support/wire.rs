@@ -97,6 +97,8 @@ pub const FIELD_REACTIVATE_RUNNER_TYPE: &str = "jobsReactivateRunnerType";
 pub const FIELD_RETIRE_RUNNER_TYPE: &str = "jobsRetireRunnerType";
 
 pub const ACTION_FORCE_PRIORITY: &str = "force_priority";
+pub const ACTION_SET_DISPATCH_MODE: &str = "set_dispatch_mode";
+pub const ACTION_SET_MAX_RUN_DURATION: &str = "set_max_run_duration";
 
 pub const EVT_PRIORITY_FORCED: &str = "JobsJobPriorityForcedEvent";
 pub const EVT_PRIORITY_RECALCULATED: &str = "JobsJobPriorityRecalculatedEvent";
@@ -108,6 +110,7 @@ pub const MODE_PUSH: &str = "PUSH";
 pub const MODE_CLAIM: &str = "CLAIM";
 
 pub const DEFAULT_REQUESTED_PRIORITY: i64 = 3;
+pub const SERVICE_DEFAULT_MAX_PRIORITY: i64 = 3;
 pub const LOWEST_PRIORITY: i64 = 1;
 pub const HIGHEST_PRIORITY: i64 = 5;
 
@@ -119,6 +122,7 @@ pub const REASON_JOB_ALREADY_TERMINAL: &str = "job_already_terminal";
 pub const REASON_JOB_NOT_FOUND: &str = "job_not_found";
 pub const REASON_RUNNER_TYPE_NOT_FOUND: &str = "runner_type_not_found";
 pub const REASON_INVALID_DURATION: &str = "invalid_duration";
+pub const REASON_USER_NOT_FOUND: &str = "user_not_found";
 
 pub const FIELD_SET_USER_MAX_PRIORITY: &str = "jobsSetUserMaxPriority";
 pub const FIELD_CLEAR_USER_MAX_PRIORITY: &str = "jobsClearUserMaxPriority";

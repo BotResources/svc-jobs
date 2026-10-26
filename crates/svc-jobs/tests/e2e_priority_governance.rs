@@ -8,7 +8,7 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use support::claim;
 use support::events::EventLog;
-use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_caller};
+use support::fixture::{self, JobsFixture, impersonating_member, machine_caller};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
@@ -23,12 +23,9 @@ const UNAUTHENTICATED: &str = "UNAUTHENTICATED";
 
 #[tokio::test]
 async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only() {
-    // Given: a CLAIM type, a user capped at 2 and another without a maximum (default 3)
-    let fixture = JobsFixture::start_with(Knobs {
-        default_max_priority: 3,
-        ..Knobs::default()
-    })
-    .await;
+    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (service default 3), a CLAIM type, a user Jobs
+    // knows capped at 2, and another user without a maximum
+    let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
@@ -41,6 +38,7 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
     dispatch::switch_to_claim(&client, admin, &runner_type).await;
 
+    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -51,7 +49,11 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     assert_eq!(priority::opening_max(&mut capped_own, SHORT).await, 2);
     let mut other_own =
         SseSubscription::open(fixture.url(), &other, &subs::my_max_priority_changed()).await;
-    assert_eq!(priority::opening_max(&mut other_own, SHORT).await, 3);
+    assert_eq!(
+        priority::opening_max(&mut other_own, SHORT).await,
+        wire::SERVICE_DEFAULT_MAX_PRIORITY,
+        "with JOBS_DEFAULT_MAX_PRIORITY unset, a user without a maximum has 3",
+    );
 
     // Given: one of the capped user's jobs already executing — it no longer waits
     let running = JobDeclaration::new(&runner_type)
@@ -92,6 +94,29 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         &priority::force_job_priority(&client, admin, forced.job_id, 5).await,
         wire::FIELD_FORCE_JOB_PRIORITY,
         "a super user forces one of the capped user's jobs to 5",
+    );
+
+    // Given: two waiting children of the job about to be recalculated — one inheriting its
+    // parent's level, one forced down to 1
+    let inheriting = JobDeclaration::new(&runner_type).with_parent(raised.job_id);
+    let forced_child = JobDeclaration::new(&runner_type).with_parent(raised.job_id);
+    for declaration in [&inheriting, &forced_child] {
+        producer.declare_v2(declaration).await;
+        events
+            .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+            .await;
+    }
+    gql::expect_success(
+        &priority::force_job_priority(&client, admin, forced_child.job_id, 1).await,
+        wire::FIELD_FORCE_JOB_PRIORITY,
+        "a super user forces one child down to 1",
+    );
+    priority::assert_priorities(
+        &priority::job(&client, admin, inheriting.job_id).await,
+        2,
+        2,
+        None,
+        "a child stores its parent's effective priority as requested and effective",
     );
 
     let mut listing = SseSubscription::open(
@@ -141,20 +166,27 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         None,
         "the pushed projection is already the recalculated job",
     );
-    let listed = stream::await_delta_of(
-        &mut listing,
-        JOBS_CHANGED,
-        wire::EVT_PRIORITY_RECALCULATED,
-        raised.job_id,
-        LONG,
-    )
-    .await;
+    let listed = await_recalculations(&mut listing, &[raised.job_id, inheriting.job_id]).await;
     priority::assert_priorities(
-        &delta::assert_upserted_summary(&listed, raised.job_id, "PENDING")["job"],
+        &delta::assert_upserted_summary(&listed[0], raised.job_id, "PENDING")["job"],
         4,
         4,
         None,
         "the list row",
+    );
+
+    // Then: the recalculation cascades to the waiting, unforced child that inherits from it
+    priority::assert_effective(
+        &delta::assert_upserted_summary(&listed[1], inheriting.job_id, "PENDING")["job"],
+        4,
+        None,
+        "a waiting, non-forced descendant follows its recalculated root",
+    );
+    priority::assert_effective(
+        &priority::job(&client, admin, inheriting.job_id).await,
+        4,
+        None,
+        "a waiting, non-forced descendant follows its recalculated root",
     );
 
     // Then: no other job moved — forced, already under the cap, another user's, or executing
@@ -188,6 +220,13 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
             "another user's job is not that user's",
         ),
         (running_id, 5, 2, None, "an executing job is not waiting"),
+        (
+            forced_child.job_id,
+            2,
+            1,
+            Some(1),
+            "a forced descendant keeps its forced level",
+        ),
     ] {
         priority::assert_priorities(
             &priority::job(&client, admin, job_id).await,
@@ -233,6 +272,14 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         None,
         "a cleared maximum falls back to JOBS_DEFAULT_MAX_PRIORITY",
     );
+    let cleared_rows =
+        await_recalculations(&mut listing, &[raised.job_id, inheriting.job_id]).await;
+    priority::assert_effective(
+        &delta::assert_upserted_summary(&cleared_rows[1], inheriting.job_id, "PENDING")["job"],
+        3,
+        None,
+        "the cascade follows the cleared maximum too",
+    );
     priority::await_max_change(&mut capped_own, 3, LONG).await;
     assert_eq!(priority::my_max_priority(&client, &capped).await, 3);
     priority::assert_priorities(
@@ -243,7 +290,7 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a forced job still keeps its forced level",
     );
 
-    // When: the super user sets a maximum outside 1..=5
+    // When: the super user sets a maximum outside 1..=5, or for a user Jobs does not know
     for level in [0, 6] {
         let refused =
             priority::set_user_max_priority(&client, admin, capped.actor_id(), level).await;
@@ -252,6 +299,11 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
             wire::REASON_INVALID_PRIORITY,
         );
     }
+    let stranger = priority::set_user_max_priority(&client, admin, Uuid::now_v7(), 4).await;
+    assert_eq!(
+        gql::mutation_error_reason(&stranger, "a maximum for a user unknown to Jobs"),
+        wire::REASON_USER_NOT_FOUND,
+    );
 
     // Then: nothing moved
     stream::expect_total_silence(&mut capped_own, "a refused maximum changes nothing", QUIET).await;
@@ -294,6 +346,7 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
     dispatch::await_live_instances(&client, admin, &side_type, 1, LONG).await;
     dispatch::switch_to_claim(&client, admin, &side_type).await;
 
+    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -359,7 +412,14 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         )
         .await;
         let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
-        priority::assert_effective(&opening["job"], 2, None, "before the force");
+        let requested = if job_id == job.job_id { 5 } else { 2 };
+        priority::assert_priorities(
+            &opening["job"],
+            requested,
+            2,
+            None,
+            "before the force: descendants store the effective level they inherited",
+        );
         gql::assert_allowed(&opening, wire::ACTION_FORCE_PRIORITY);
         watches.push((job_id, watch));
     }
@@ -416,11 +476,19 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         QUIET,
     )
     .await;
-    priority::assert_effective(
+    priority::assert_priorities(
         &priority::job(&client, admin, reserved_child.job_id).await,
+        2,
         2,
         None,
         "a descendant that no longer waits is not forced",
+    );
+    priority::assert_priorities(
+        &priority::job(&client, admin, child_one.job_id).await,
+        2,
+        5,
+        Some(5),
+        "a forced child keeps the request it inherited at creation",
     );
     assert_eq!(
         priority::my_max_priority(&client, &capped).await,
@@ -445,8 +513,9 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         LONG,
     )
     .await;
-    priority::assert_effective(
+    priority::assert_priorities(
         &delta::projection(&reforced, child_two.job_id, "PENDING"),
+        2,
         1,
         Some(1),
         "the second force replaces the first",
@@ -550,6 +619,7 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
     let runner_type = wire::unique_runner_type("guarded");
     let producer = Producer::new(fixture.fabric(), "projects");
 
+    priority::introduce(&producer, &events, member.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, member.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -751,4 +821,29 @@ fn assert_nothing_leaked(response: &Value, job_id: Uuid, what: &str) {
                 .is_some_and(|fields| fields.values().all(Value::is_null)),
         "{what} must return no data at all: {response}"
     );
+}
+
+async fn await_recalculations(listing: &mut SseSubscription, expected: &[Uuid]) -> Vec<Value> {
+    let mut found: Vec<Option<Value>> = vec![None; expected.len()];
+    while found.iter().any(Option::is_none) {
+        let message = stream::await_message(
+            listing,
+            JOBS_CHANGED,
+            "a priority recalculation for one of the expected jobs",
+            |message| {
+                message["event"]["__typename"] == json!(wire::EVT_PRIORITY_RECALCULATED)
+                    && expected.iter().zip(&found).any(|(id, seen)| {
+                        seen.is_none() && message["event"]["jobId"] == json!(id.to_string())
+                    })
+            },
+            LONG,
+        )
+        .await;
+        let index = expected
+            .iter()
+            .position(|id| message["event"]["jobId"] == json!(id.to_string()))
+            .expect("the predicate matched one of the expected jobs");
+        found[index] = Some(message);
+    }
+    found.into_iter().flatten().collect()
 }

@@ -20,8 +20,13 @@ const CLAIM_WAIT: Duration = Duration::from_secs(4);
 
 #[tokio::test]
 async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
-    // Given: a super user caps an ordinary user at 3, the user watching their own maximum
-    let fixture = JobsFixture::start().await;
+    // Given: a service default maximum of 5, and a super user capping a user Jobs knows at 3, the
+    // user watching their own maximum
+    let fixture = JobsFixture::start_with(Knobs {
+        default_max_priority: Some(5),
+        ..Knobs::default()
+    })
+    .await;
     let events = EventLog::open(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
@@ -38,6 +43,7 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         5,
         "a user without a maximum of their own has the service default",
     );
+    priority::introduce(&producer, &events, user_id).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, user_id, 3).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -210,7 +216,7 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
 async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_default_maximum() {
     // Given: the service default maximum set to 4, and a user who has no maximum of their own
     let fixture = JobsFixture::start_with(Knobs {
-        default_max_priority: 4,
+        default_max_priority: Some(4),
         ..Knobs::default()
     })
     .await;
@@ -325,9 +331,13 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
 
 #[tokio::test]
 async fn children_wait_at_their_parents_effective_priority_whatever_they_request() {
-    // Given: a parent at effective priority 5 executing on its own type, and a CLAIM type its
-    // children target, on which an unrelated root at 4 already waits
-    let fixture = JobsFixture::start().await;
+    // Given: a service default maximum of 5, a parent at effective priority 5 executing on its own
+    // type, and a CLAIM type its children target, on which an unrelated root at 4 already waits
+    let fixture = JobsFixture::start_with(Knobs {
+        default_max_priority: Some(5),
+        ..Knobs::default()
+    })
+    .await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
     let admin = fixture.admin();
@@ -337,6 +347,7 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     let child_type = wire::unique_runner_type("pages");
     let producer = Producer::new(fixture.fabric(), "projects");
 
+    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -403,20 +414,23 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     producer.declare(&by_v1).await;
     let children = [lowest.job_id, for_capped_user.job_id, by_v1.job_id];
 
-    // Then: every child waits at its parent's effective priority, nothing forced
+    // Then: every child stores its parent's effective priority as both requested and effective,
+    // nothing forced
     for child_id in children {
         events.expect_one(wire::FACT_QUEUED, child_id, LONG).await;
         let queued =
             stream::await_delta_of(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, child_id, LONG)
                 .await;
-        priority::assert_effective(
+        priority::assert_priorities(
             &delta::assert_upserted_summary(&queued, child_id, "PENDING")["job"],
             5,
+            5,
             None,
-            "a child takes its parent's effective priority",
+            "a child takes its parent's effective priority, as requested and effective",
         );
-        priority::assert_effective(
+        priority::assert_priorities(
             &priority::job(&client, admin, child_id).await,
+            5,
             5,
             None,
             "a child takes its parent's effective priority, whoever it runs for",

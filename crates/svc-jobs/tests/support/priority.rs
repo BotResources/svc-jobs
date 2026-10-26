@@ -9,10 +9,25 @@ use super::docs::{
     CLEAR_USER_MAX_PRIORITY, FORCE_JOB_PRIORITY, JOB_PRIORITY, JOBS_LIST_PRIORITY, MY_MAX_PRIORITY,
     SET_USER_MAX_PRIORITY,
 };
-use super::{MY_MAX_PRIORITY_CHANGED, gql, stream};
+use super::events::EventLog;
+use super::producer::{JobDeclaration, Producer};
+use super::{LONG, MY_MAX_PRIORITY_CHANGED, gql, stream, wire};
 
 const MAX_SNAPSHOT: &str = "JobsMyMaxPrioritySnapshot";
 const MAX_DELTA: &str = "JobsMyMaxPriorityDelta";
+
+/// A user becomes known to Jobs when a job is declared on their behalf. The acquaintance job
+/// targets a runner type of its own that nobody serves, so it waits there for good and never
+/// meets the scenario's own types, windows or claims.
+pub async fn introduce(producer: &Producer<'_>, events: &EventLog, user_id: Uuid) -> Uuid {
+    let acquaintance =
+        JobDeclaration::new(&wire::unique_runner_type("acquaintance")).triggered_by_user(user_id);
+    producer.declare(&acquaintance).await;
+    events
+        .expect_one(wire::FACT_QUEUED, acquaintance.job_id, LONG)
+        .await;
+    acquaintance.job_id
+}
 
 pub async fn set_user_max_priority(
     client: &GraphqlClient,
