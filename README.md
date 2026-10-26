@@ -50,7 +50,8 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   it also caps a job that runs for nobody. A child job requests and waits at
   its parent's effective level; under a forced parent it is born forced at the
   parent's forced level. A super user may force a non-terminal job to
-  any level, which also forces its waiting, non-forced descendants; a change
+  any level, which also forces every waiting descendant, forced earlier or
+  not — the latest force on an ancestor wins; a change
   of a user's maximum recalculates that user's waiting, non-forced root jobs
   and the waiting descendants inheriting from them. Priority orders waiting
   jobs only: a started run is never interrupted.

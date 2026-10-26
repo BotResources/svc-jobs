@@ -110,7 +110,28 @@ pub async fn cancel_from_integration(
     cancel(jobs, job_id, resolution_id, requester, metadata).await
 }
 
+/// Attempts a cancellation makes when its tree grows under it before giving
+/// the race back to the caller.
+const CANCEL_ATTEMPTS: usize = 5;
+
 pub async fn cancel(
+    jobs: &Jobs,
+    job_id: JobId,
+    resolution_id: ResolutionId,
+    requester: CancelRequester,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    let mut outcome = Err(ServiceError::Contended);
+    for _ in 0..CANCEL_ATTEMPTS {
+        outcome = cancel_once(jobs, job_id, resolution_id, requester.clone(), metadata).await;
+        if !matches!(outcome, Err(ServiceError::Contended)) {
+            return outcome;
+        }
+    }
+    outcome
+}
+
+async fn cancel_once(
     jobs: &Jobs,
     job_id: JobId,
     resolution_id: ResolutionId,
@@ -144,7 +165,10 @@ pub async fn cancel(
         ));
     }
     cascaded.sort_by_key(|change| change.job_id.as_uuid());
-    let mut changes = vec![JobChange::new(job_id, Some(job.clone()), result.events)];
+    let mut changes = vec![
+        JobChange::new(job_id, Some(job.clone()), result.events)
+            .over_descendants(descendants.iter().map(Job::id)),
+    ];
     changes.append(&mut cascaded);
     jobs.commit(changes, metadata).await
 }

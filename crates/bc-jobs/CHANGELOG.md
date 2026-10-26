@@ -20,7 +20,9 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `Job::recalculate_priority`, `set_max_priority` and `clear_max_priority`;
   facts `JobPriorityForced`, `JobPriorityRecalculated` and the `KnownUser`
   aggregate's `UserMaxPrioritySet` / `UserMaxPriorityCleared`; policies
-  `forcing_cascade` and `recalculate_for_user`.
+  `forcing_cascade` (every waiting descendant, forced earlier or not) and
+  `recalculate_for_user`. A pushed run failed unstarted as
+  `trigger_stranded` hydrates.
 - `PrincipalFacts`: the trusted facts of the caller and the three decisions
   taken from them (platform administrator, super user, own maximum).
   `Job::affordances` takes the principal and carries `force_priority`.

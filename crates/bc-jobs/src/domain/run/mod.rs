@@ -300,10 +300,18 @@ impl Run {
 /// A Run may settle without ever starting when it is cancelled before an
 /// Instance took it, or when it fails while reserved to an Instance that never
 /// started it (a lost claim, a lost Instance).
+/// A Run may end without ever starting when it was cancelled, when the
+/// instance holding its reservation never started it, or when the stranded-
+/// trigger backstop failed a trigger left unconsumed by a switch to `CLAIM`.
 fn settles_unstarted(terminal: &RunTerminal, reserved: bool) -> bool {
     match terminal.kind() {
         RunTerminalKind::Cancelled => true,
-        RunTerminalKind::Failed => reserved,
+        RunTerminalKind::Failed => {
+            reserved
+                || terminal.failure().is_some_and(|report| {
+                    report.reason_code().as_str() == crate::domain::run::failure::TRIGGER_STRANDED
+                })
+        }
         RunTerminalKind::Completed => false,
     }
 }

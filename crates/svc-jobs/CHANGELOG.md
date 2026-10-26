@@ -28,7 +28,8 @@ in.
   and `jobsForceJobPriority`. Setting a maximum accepts any user id, observed
   by Jobs or not. A change of a user's maximum recalculates their waiting,
   non-forced root jobs and the waiting, non-forced descendants inheriting from
-  them; forcing a job also forces its waiting, non-forced descendants. A
+  them; forcing a job also forces every waiting descendant, forced earlier or
+  not (the latest force on an ancestor wins). A
   descendant reached by either cascade records the inherited level as both its
   request and its effective level. A forced level holds until forced again.
 - The user surface: `jobsMyMaxPriority` and `jobsMyMaxPriorityChanged`
@@ -97,6 +98,8 @@ in.
   `FORBIDDEN` before a resolver runs.
 - `job.queued.v1` is unchanged.
 - No preemption: a started run is never interrupted for a higher priority.
+- A cancellation re-reads, under its locks, the descendants it decided on and
+  starts over when the tree grew meanwhile.
 - Admission re-checks the priority facts it decided on under a shared lock on
   the user or on the parent and its root (id order); a parent settled in the
   meantime refuses the child with `parent_job_terminal`. Forcing and a change

@@ -13,12 +13,14 @@ pub struct ForceDescendant {
     pub originating_job_id: JobId,
 }
 
-/// Forcing a Job also forces its waiting descendants that are not forced
-/// already; descendants running, settled or forced to their own level keep it.
+/// Forcing a Job also forces every waiting descendant, forced already or not:
+/// the latest force on an ancestor wins, so a descendant admitted before,
+/// during or after it ends at the same level. Descendants running or settled
+/// keep theirs — a forced level only matters while a Job waits.
 pub fn forcing_cascade(forced: &Job, descendants: &[Job]) -> Vec<ForceDescendant> {
     descendants
         .iter()
-        .filter(|descendant| descendant.is_waiting() && !descendant.priority().is_forced())
+        .filter(|descendant| descendant.is_waiting())
         .map(|descendant| ForceDescendant {
             job_id: descendant.id(),
             originating_job_id: forced.id(),
@@ -118,15 +120,21 @@ mod tests {
     }
 
     #[test]
-    fn forcing_skips_a_descendant_already_forced_to_its_own_level() {
-        // Given: a forced parent with a waiting child forced earlier to 1
+    fn forcing_reaches_a_waiting_descendant_forced_earlier() {
+        // Given: a parent with a waiting child forced earlier to 1
         let parent = JobBuilder::new().build();
         let forced = JobBuilder::new()
             .with_parent(parent.id())
             .with_priority(level(3), level(1), Some(level(1)))
             .build();
-        // When/Then: the cascade leaves it alone
-        assert!(forcing_cascade(&parent, &[forced]).is_empty());
+        // When/Then: the latest force on the parent reaches it too
+        assert_eq!(
+            forcing_cascade(&parent, std::slice::from_ref(&forced)),
+            vec![ForceDescendant {
+                job_id: forced.id(),
+                originating_job_id: parent.id(),
+            }]
+        );
     }
 
     #[test]

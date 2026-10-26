@@ -27,14 +27,15 @@ impl Job {
     }
 
     /// The same level reaching a waiting descendant of the Job a super user
-    /// forced. A descendant that stopped waiting since the cascade was decided
-    /// is left alone: a forced level only matters while a Job waits.
+    /// forced, whether it was forced before or not. A descendant that stopped
+    /// waiting since the cascade was decided, or already stands forced at that
+    /// level, is left alone.
     pub fn force_priority_as_descendant(
         &self,
         command: ForcePriority,
         originating_job_id: JobId,
     ) -> JobCommandResult {
-        if !self.is_waiting() || self.priority().is_forced() {
+        if !self.is_waiting() || self.priority().is_forced_to(command.priority) {
             return CommandResult::new(vec![]);
         }
         self.forced(
@@ -216,6 +217,40 @@ mod tests {
                 if fact.originating_job_id == Some(parent)
                     && fact.requested_priority == Some(level(5))
         ));
+    }
+
+    #[test]
+    fn a_waiting_descendant_forced_earlier_takes_the_new_forced_level() {
+        // Given: a waiting child forced earlier to 5 through its parent
+        let parent = job_id();
+        let child = JobBuilder::new()
+            .with_parent(parent)
+            .with_priority(level(5), level(5), Some(level(5)))
+            .build();
+        // When: the parent is forced again, to 4
+        let result = child.force_priority_as_descendant(force(4), parent);
+        // Then: the child follows the latest force
+        assert!(matches!(
+            result.events.as_slice(),
+            [JobEvent::JobPriorityForced(fact)]
+                if fact.priority == level(4) && fact.requested_priority == Some(level(4))
+        ));
+    }
+
+    #[test]
+    fn a_descendant_already_forced_to_that_level_records_nothing() {
+        // Given: a waiting child forced to 4
+        let parent = job_id();
+        let child = JobBuilder::new()
+            .with_parent(parent)
+            .with_priority(level(4), level(4), Some(level(4)))
+            .build();
+        // When/Then: a cascade to 4 records nothing
+        assert!(
+            child
+                .force_priority_as_descendant(force(4), parent)
+                .is_empty()
+        );
     }
 
     #[test]

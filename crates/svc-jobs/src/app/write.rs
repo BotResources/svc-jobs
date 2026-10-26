@@ -29,6 +29,9 @@ pub struct JobChange {
     pub note: Option<String>,
     pub claimed_source: Option<SourceReference>,
     pub priority_premise: Option<PriorityPremise>,
+    /// The descendants a cascade over this Job was decided on. Re-read under
+    /// the write's locks: a descendant admitted since makes the write a race.
+    pub descendants_premise: Option<Vec<Uuid>>,
 }
 
 /// The fact an admission derived its effective priority from. It is read
@@ -83,7 +86,15 @@ impl JobChange {
             note: None,
             claimed_source: None,
             priority_premise: None,
+            descendants_premise: None,
         }
+    }
+
+    pub fn over_descendants(mut self, descendants: impl IntoIterator<Item = JobId>) -> Self {
+        let mut ids: Vec<Uuid> = descendants.into_iter().map(|id| id.as_uuid()).collect();
+        ids.sort_unstable();
+        self.descendants_premise = Some(ids);
+        self
     }
 
     pub fn on_priority_premise(mut self, premise: Option<PriorityPremise>) -> Self {
@@ -145,6 +156,9 @@ pub async fn commit_job_changes_in(
     let locked = lock_in_ascending_order(&mut *tx, held.ids()).await?;
     for change in changes.iter().filter(|change| change.before.is_some()) {
         guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
+    }
+    for change in &changes {
+        guard_descendants_unchanged(&mut *tx, change).await?;
     }
     let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
@@ -300,6 +314,26 @@ fn guard_runner_types_still_accept_jobs(
         }
     }
     Ok(())
+}
+
+/// A child admission share-locks its parent until it commits, so once the
+/// cascade holds its Jobs for update, every descendant admitted under one of
+/// them is either committed and read here, or waits and then finds its parent
+/// settled.
+async fn guard_descendants_unchanged(
+    tx: &mut sqlx::PgConnection,
+    change: &JobChange,
+) -> Result<(), ServiceError> {
+    let Some(decided_on) = &change.descendants_premise else {
+        return Ok(());
+    };
+    let mut current = PgStore::descendant_ids_in(tx, &[change.job_id.as_uuid()]).await?;
+    current.sort_unstable();
+    if &current == decided_on {
+        Ok(())
+    } else {
+        Err(ServiceError::Contended)
+    }
 }
 
 fn guard_decision_still_holds(

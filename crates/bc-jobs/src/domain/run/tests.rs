@@ -262,3 +262,16 @@ fn a_reserved_run_may_fail_without_ever_starting_while_a_pushed_one_may_not() {
         })
     );
 }
+
+#[test]
+fn a_pushed_run_may_fail_unstarted_only_as_a_stranded_trigger() {
+    // Given: the failure the stranded-trigger backstop records
+    let report = RunFailureReport::platform(RunFailureKind::Transient, "trigger_stranded").unwrap();
+    // When: a pushed run that never started carries it
+    let stranded = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::failed(at(90), report)),
+        ..pending()
+    });
+    // Then: it loads — no instance ever took the trigger
+    assert!(stranded.is_ok());
+}
