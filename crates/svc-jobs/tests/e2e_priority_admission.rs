@@ -260,7 +260,22 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
     producer.declare_v2(&autonomous_low).await;
 
     // Then: each is admitted at the level the default rules give it
-    for (job_id, requested, effective, what) in [
+    let admitted = [
+        by_v1.job_id,
+        by_v2.job_id,
+        above_default.job_id,
+        autonomous_high.job_id,
+        autonomous_low.job_id,
+    ];
+    let queued_rows = stream::await_deltas_of_each(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_QUEUED,
+        &admitted,
+        LONG,
+    )
+    .await;
+    for ((job_id, requested, effective, what), queued) in [
         (
             by_v1.job_id,
             3,
@@ -291,16 +306,16 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
             2,
             "a request under the cap is kept as requested",
         ),
-    ] {
+    ]
+    .into_iter()
+    .zip(&queued_rows)
+    {
         events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
         events
             .expect_none(wire::FACT_CREATION_REJECTED, job_id, QUIET)
             .await;
-        let queued =
-            stream::await_delta_of(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, job_id, LONG)
-                .await;
         priority::assert_priorities(
-            &delta::assert_upserted_summary(&queued, job_id, "PENDING")["job"],
+            &delta::assert_upserted_summary(queued, job_id, "PENDING")["job"],
             requested,
             effective,
             None,
@@ -397,30 +412,43 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
     // When: the parent's runner fans out children requesting 1, by v2 and by v1, one of them on
-    // behalf of a user capped at 2
+    // behalf of a user capped at 2 — each accepted before the next, so creation order is defined
     let lowest = JobDeclaration::new(&child_type)
         .with_parent(parent_id)
         .triggered_by_user(owner.actor_id())
         .with_priority(1);
     producer.declare_v2(&lowest).await;
+    events
+        .expect_one(wire::FACT_QUEUED, lowest.job_id, LONG)
+        .await;
     let for_capped_user = JobDeclaration::new(&child_type)
         .with_parent(parent_id)
         .triggered_by_user(capped.actor_id())
         .with_priority(1);
     producer.declare_v2(&for_capped_user).await;
+    events
+        .expect_one(wire::FACT_QUEUED, for_capped_user.job_id, LONG)
+        .await;
     let by_v1 = JobDeclaration::new(&child_type).with_parent(parent_id);
     producer.declare(&by_v1).await;
+    events
+        .expect_one(wire::FACT_QUEUED, by_v1.job_id, LONG)
+        .await;
     let children = [lowest.job_id, for_capped_user.job_id, by_v1.job_id];
 
     // Then: every child stores its parent's effective priority as both requested and effective,
     // nothing forced
-    for child_id in children {
-        events.expect_one(wire::FACT_QUEUED, child_id, LONG).await;
-        let queued =
-            stream::await_delta_of(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, child_id, LONG)
-                .await;
+    let queued_rows = stream::await_deltas_of_each(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_QUEUED,
+        &children,
+        LONG,
+    )
+    .await;
+    for (child_id, queued) in children.into_iter().zip(&queued_rows) {
         priority::assert_priorities(
-            &delta::assert_upserted_summary(&queued, child_id, "PENDING")["job"],
+            &delta::assert_upserted_summary(queued, child_id, "PENDING")["job"],
             5,
             5,
             None,

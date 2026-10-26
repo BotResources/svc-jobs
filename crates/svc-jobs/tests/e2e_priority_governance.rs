@@ -143,10 +143,11 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     );
 
     // Then: the one waiting, unforced job capped below its request is recalculated, on its stream
-    let recalculated = stream::await_delta(
+    let recalculated = stream::await_delta_of(
         &mut watch,
         JOB_CHANGED,
         wire::EVT_PRIORITY_RECALCULATED,
+        raised.job_id,
         LONG,
     )
     .await;
@@ -165,7 +166,14 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         None,
         "the pushed projection is already the recalculated job",
     );
-    let listed = await_recalculations(&mut listing, &[raised.job_id, inheriting.job_id]).await;
+    let listed = stream::await_deltas_of_each(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_PRIORITY_RECALCULATED,
+        &[raised.job_id, inheriting.job_id],
+        LONG,
+    )
+    .await;
     priority::assert_priorities(
         &delta::assert_upserted_summary(&listed[0], raised.job_id, "PENDING")["job"],
         4,
@@ -260,10 +268,11 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     );
 
     // Then: the same job is recalculated to the default, the others stay put
-    let cleared = stream::await_delta(
+    let cleared = stream::await_delta_of(
         &mut watch,
         JOB_CHANGED,
         wire::EVT_PRIORITY_RECALCULATED,
+        raised.job_id,
         LONG,
     )
     .await;
@@ -274,8 +283,14 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         None,
         "a cleared maximum falls back to JOBS_DEFAULT_MAX_PRIORITY",
     );
-    let cleared_rows =
-        await_recalculations(&mut listing, &[raised.job_id, inheriting.job_id]).await;
+    let cleared_rows = stream::await_deltas_of_each(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_PRIORITY_RECALCULATED,
+        &[raised.job_id, inheriting.job_id],
+        LONG,
+    )
+    .await;
     priority::assert_priorities(
         &delta::assert_upserted_summary(&cleared_rows[1], inheriting.job_id, "PENDING")["job"],
         3,
@@ -476,7 +491,9 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
 
     // Then: the job and every waiting descendant are forced to 5, each on its own stream
     for (job_id, watch) in watches.iter_mut() {
-        let forced = stream::await_delta(watch, JOB_CHANGED, wire::EVT_PRIORITY_FORCED, LONG).await;
+        let forced =
+            stream::await_delta_of(watch, JOB_CHANGED, wire::EVT_PRIORITY_FORCED, *job_id, LONG)
+                .await;
         assert_eq!(
             delta::event_of(&forced, wire::EVT_PRIORITY_FORCED, *job_id)["forcedPriority"],
             json!(5),
@@ -521,10 +538,11 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
     );
     priority::assert_priorities(
         &priority::job(&client, admin, child_one.job_id).await,
-        2,
+        5,
         5,
         Some(5),
-        "a forced child keeps the request it inherited at creation",
+        "a force cascades: the waiting descendant takes the forced root's level as requested and \
+         effective, and is forced",
     );
     assert_eq!(
         priority::my_max_priority(&client, &capped).await,
@@ -542,16 +560,17 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "a forced priority holds until it is forced again",
     );
     let (_, child_two_watch) = &mut watches[2];
-    let reforced = stream::await_delta(
+    let reforced = stream::await_delta_of(
         child_two_watch,
         JOB_CHANGED,
         wire::EVT_PRIORITY_FORCED,
+        child_two.job_id,
         LONG,
     )
     .await;
     priority::assert_priorities(
         &delta::projection(&reforced, child_two.job_id, "PENDING"),
-        2,
+        5,
         1,
         Some(1),
         "the second force replaces the first",
@@ -856,29 +875,4 @@ fn assert_nothing_leaked(response: &Value, job_id: Uuid, what: &str) {
                 .is_some_and(|fields| fields.values().all(Value::is_null)),
         "{what} must return no data at all: {response}"
     );
-}
-
-async fn await_recalculations(listing: &mut SseSubscription, expected: &[Uuid]) -> Vec<Value> {
-    let mut found: Vec<Option<Value>> = vec![None; expected.len()];
-    while found.iter().any(Option::is_none) {
-        let message = stream::await_message(
-            listing,
-            JOBS_CHANGED,
-            "a priority recalculation for one of the expected jobs",
-            |message| {
-                message["event"]["__typename"] == json!(wire::EVT_PRIORITY_RECALCULATED)
-                    && expected.iter().zip(&found).any(|(id, seen)| {
-                        seen.is_none() && message["event"]["jobId"] == json!(id.to_string())
-                    })
-            },
-            LONG,
-        )
-        .await;
-        let index = expected
-            .iter()
-            .position(|id| message["event"]["jobId"] == json!(id.to_string()))
-            .expect("the predicate matched one of the expected jobs");
-        found[index] = Some(message);
-    }
-    found.into_iter().flatten().collect()
 }
