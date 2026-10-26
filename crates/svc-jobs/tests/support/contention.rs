@@ -7,7 +7,6 @@ use bc_jobs::domain::attempts::MaxAttempts;
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::fleet::capacity::Capacity;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
-use bc_jobs::domain::fleet::settings::RunnerTypeSettings;
 use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::ids::{JobId, PresenceSessionId, RunId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
@@ -253,7 +252,6 @@ pub fn announcing(
         version: RunnerVersion::new("1.4.2").expect("a valid version"),
         reported_status: ReportedStatus::Ready,
         capacity: one_run(),
-        registration_settings: RunnerTypeSettings::default(),
     }
 }
 

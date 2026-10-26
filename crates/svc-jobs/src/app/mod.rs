@@ -1,6 +1,8 @@
 pub mod admin;
 pub mod backstop;
 pub mod claim;
+pub mod claim_waiters;
+pub mod claim_wakes;
 pub mod create;
 pub mod dispatch;
 pub mod environment;
@@ -53,6 +55,7 @@ pub struct Jobs {
     pub retry: RetryPolicy,
     pub catalog: Arc<dyn RunnerTypeCatalogWriter>,
     pub claims: ClaimSettings,
+    pub waiters: Arc<claim_waiters::ClaimWaiters>,
 }
 
 pub fn service_metadata() -> EventMetadata {

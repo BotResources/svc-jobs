@@ -328,7 +328,7 @@ fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
     let served = serde_json::to_value(runner::ClaimReply::served(trigger.clone())).unwrap();
     let empty = serde_json::to_value(runner::ClaimReply::empty()).unwrap();
     let refused = serde_json::to_value(runner::ClaimReply::refused(
-        runner::CLAIM_REASON_NOT_CLAIM_MODE,
+        runner::ClaimRefusal::NotClaimMode,
     ))
     .unwrap();
     // When/Then: the served run is the trigger itself, the empty reply carries neither run nor
@@ -337,4 +337,22 @@ fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
     assert!(empty.get("run").is_none() && empty.get("reason").is_none());
     assert!(refused.get("run").is_none());
     assert_eq!(refused["reason"], "not_claim_mode");
+}
+
+#[test]
+fn every_claim_refusal_is_written_as_its_published_code_and_nothing_else_parses() {
+    // Given: every refusal of the closed vocabulary
+    for refusal in runner::ClaimRefusal::ALL {
+        // When/Then: its wire form is its code, both ways
+        let written = serde_json::to_value(refusal).unwrap();
+        assert_eq!(written, json_code(refusal.as_str()));
+        assert_eq!(
+            serde_json::from_value::<runner::ClaimRefusal>(written).unwrap(),
+            refusal
+        );
+    }
+    // And: a word outside the vocabulary is not a refusal a runner could misread
+    for outside in ["blank_value", "NOT_CLAIM_MODE", "busy", ""] {
+        assert!(serde_json::from_value::<runner::ClaimRefusal>(json_code(outside)).is_err());
+    }
 }

@@ -48,7 +48,8 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   level is capped by the maximum of the user it runs for — a super user sets
   or clears that maximum; without one, `JOBS_DEFAULT_MAX_PRIORITY` applies, and
   it also caps a job that runs for nobody. A child job requests and waits at
-  its parent's effective level. A super user may force a non-terminal job to
+  its parent's effective level; under a forced parent it is born forced at the
+  parent's forced level. A super user may force a non-terminal job to
   any level, which also forces its waiting, non-forced descendants; a change
   of a user's maximum recalculates that user's waiting, non-forced root jobs
   and the waiting descendants inheriting from them. Priority orders waiting
@@ -67,13 +68,19 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
     many pods serve claims, a job is reserved once. The reply carries exactly
     what a trigger carries. A run reserved and never started within
     `JOBS_CLAIM_RESERVATION_SECONDS` fails as transient with `claim_lost`.
+    Each pod holds at most `JOBS_CLAIM_MAX_HELD` claims open at once and
+    answers further claims empty at once. A waiting job is woken by one held
+    claim of its type, never by a broadcast to all of them.
 - **Retries**: after a transient run failure, jobs computes exponential
   backoff with jitter once and stores the due time; a runner `retry_after`
   hint may lengthen but never shorten it. A permanent failure ends automatic
   retry. Backstops reclaim abandoned work: a run exceeding the maximum
   duration of its runner type (the one it was dispatched with) fails as
   transient, a run reserved by a claim and never started fails as transient
-  with `claim_lost`, and a job idle beyond the inactivity timeout fails with
+  with `claim_lost`, a trigger published before its type switched to `CLAIM`
+  and still neither started nor reserved after `JOBS_CLAIM_RESERVATION_SECONDS`
+  fails as transient with `trigger_stranded` (its retry is then claimed),
+  and a job idle beyond the inactivity timeout fails with
   `INACTIVITY_TIMEOUT`.
 
 ## NATS surface
@@ -150,7 +157,7 @@ design.
 
 | Channel | Name / subject | Direction | Contract |
 |---|---|---|---|
-| Claim subject | `jobs.claim.{runner_type}` (core NATS request/reply, queue group `svc_jobs_claims`) | runners → jobs, answered | `CLAIM` types only. Request `{instance_key, claim_id, wait_ms}`; reply `{run?, reason?}`, `run` being a trigger. At most once: an instance repeats an unanswered claim under the same `claim_id` and is handed the run already reserved to it. Refusals: `instance_unknown`, `not_claim_mode`, `instance_draining`, `runner_type_retired`, `claim_spent`, `malformed_claim`. |
+| Claim subject | `jobs.claim.{runner_type}` (core NATS request/reply, queue group `svc_jobs_claims`) | runners → jobs, answered | `CLAIM` types only. Request `{instance_key, claim_id, wait_ms}`; reply `{run?, reason?}`, `run` being a trigger. At most once: an instance repeats an unanswered claim under the same `claim_id` and is handed the run already reserved to it. Refusals form a closed set (`contract_jobs::runner::ClaimRefusal`): `instance_unknown` (announce presence, claim later), `not_claim_mode` (consume the trigger stream instead), `instance_draining` (stop claiming until `READY`), `runner_type_retired` (stop claiming), `claim_spent` (mint a new `claim_id`), `malformed_claim` (fix the claim; a nil `claim_id` is malformed). |
 | Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.{runner_type}` | jobs → runners | `PUSH` types only. Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. Switching a type to `CLAIM` does not withdraw triggers already published. |
 | Status stream | `JOBS_STATUS` / `jobs.status.{runner_type}.{started,plan_declared,step_started,completed,failed}` | runners → jobs | Persistent, acknowledged, at-least-once; carries start, plan, step and terminal run facts. |
 | Log stream | `JOBS_LOG` / `jobs.log.{runner_type}` | runners → jobs | Size-bounded, discard-old; a lost log line is tolerated, a lost lifecycle fact is not — which is why logs never share the status stream. |
@@ -321,10 +328,11 @@ failing job by job.
 | `NATS_URL` | — required | The NATS server carrying the integration bus and the runner transport. |
 | `NATS_USER` / `NATS_PASSWORD` | unset | Optional credential pair — both or neither; one without the other refuses to boot. |
 | `JOBS_INACTIVITY_TIMEOUT_SECONDS` | `86400` | An `IN_PROGRESS` job with no active run and no scheduled retry beyond this fails with `INACTIVITY_TIMEOUT`. |
-| `JOBS_RUN_MAX_DURATION_SECONDS` | `259200` (72 h) | The maximum run duration a runner type is registered with; a platform administrator changes it per type. A `STARTED` run exceeding the maximum it was dispatched with fails as transient and gets a cancel entry (a run dispatched before 0.4 answers to this value). |
+| `JOBS_RUN_MAX_DURATION_SECONDS` | `259200` (72 h) | The maximum run duration of every runner type that has none of its own (a type registered before 0.4, or never set); a platform administrator sets one per type. A `STARTED` run exceeding the maximum it was dispatched with fails as transient and gets a cancel entry (a run dispatched before 0.4 answers to this value). |
 | `JOBS_DEFAULT_MAX_PRIORITY` | `3` | The maximum priority (1–5) of a user without one of their own, and of a job that runs for nobody. |
 | `JOBS_CLAIM_MAX_WAIT_SECONDS` | `30` | The longest a claim is held open, whatever `wait_ms` it asks for. |
-| `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost` (swept with the backstops). |
+| `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost`; a pushed trigger of a `CLAIM` type left unstarted this long fails with `trigger_stranded` (both swept with the backstops). |
+| `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered empty immediately. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |
@@ -378,7 +386,9 @@ before integrating.
 | `JOBS_CANCEL` bucket TTL must cover the longest runner-type maximum run duration | The bucket's expiry is the cleanup backstop for cancel entries whose terminal fact never arrived; a TTL shorter than a run's maximum duration can drop a stop request a slow run still needs. A platform administrator may set a type above `JOBS_RUN_MAX_DURATION_SECONDS`: keep the TTL above the largest value in use. |
 | Claims ride core NATS request/reply, not a stream | A claim is a question with a short life: an unanswered one is simply repeated. Durability is in the ledger — the reservation is committed before the reply leaves — and the repeat carries the same `claim_id`, so a lost reply is answered with the run already reserved, never with a second one. |
 | The claim locks its job with `FOR UPDATE SKIP LOCKED` | Claims for one type are served concurrently by every pod. Skipping a locked row instead of waiting on it is what lets two claims take the next two jobs rather than queue on the first; the run is created in that same transaction, and a unique (instance, `claim_id`) reservation stops two pods serving one repeated claim twice. |
-| An admission re-reads the priority facts it decided on, under lock | A user's maximum or a parent's forced level can change between the decision and the commit. The change locks the user (an advisory lock — the user need not be known to Jobs) or the parent; the admission takes the shared side and re-reads, so a stale level fails as a write race and is redelivered, never committed. |
+| An admission re-reads the priority facts it decided on, under lock | A user's maximum or a parent's level can change between the decision and the commit. The admission takes a shared lock on the user (an advisory lock — the user need not be known to Jobs) or on the parent and its root, in id order, then re-reads: a changed level fails as a write race and is retried, a parent settled meanwhile refuses the child (`parent_job_terminal`). |
+| Force and cap cascades are decided inside the write transaction | A force locks the forced job, reads its descendants and locks them in one id-ordered statement; a change of maximum takes the user's exclusive lock before reading which jobs it reaches. Each row is re-decided on the locked state, and a row that stopped waiting is skipped — a child admitted concurrently is either seen by the cascade or re-reads the new level. |
+| Waiting jobs have their own table | `waiting_jobs` is maintained in the transaction that makes a job start or stop waiting, so dispatch and claims read an indexed queue instead of anti-joining every resolution and run. Fairness turns are kept per runner type and root (`root_dispatch_turns`). |
 | Logs ride their own size-bounded, discard-old stream | A log flood can neither delay a status fact nor evict one; losing an old log line is acceptable, losing a lifecycle fact is not. |
 | A reclaim only takes runs started inside the closed presence session's window | An instance key outlives its sessions: reclaiming by key alone would fail a run the replacement session is executing. The session that carried the run owns the reclaim. |
 | The service clock truncates every instant it mints to microseconds | `timestamptz` keeps microseconds, a Linux clock reads nanoseconds. An instant minted at nanosecond precision is carried one way by the event a subscriber folds and another way by the column a later read returns — the same moment, two values. Truncating where the instant is minted is the only place that keeps the two identical; every timestamp the service authors comes from that clock, never from an ambient `Utc::now()`. |

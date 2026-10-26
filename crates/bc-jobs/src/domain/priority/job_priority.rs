@@ -20,14 +20,22 @@ impl JobPriority {
     /// effective level: what it asked for itself is ignored.
     pub fn admitted(requested: Priority, basis: PriorityBasis) -> Self {
         let effective = basis.derive(requested);
-        let requested = match basis {
-            PriorityBasis::Capped { .. } => requested,
-            PriorityBasis::InheritedFromParent { .. } => effective,
-        };
-        Self {
-            requested,
-            effective,
-            forced: None,
+        match basis {
+            PriorityBasis::Capped { .. } => Self {
+                requested,
+                effective,
+                forced: None,
+            },
+            PriorityBasis::InheritedFromParent { .. } => Self {
+                requested: effective,
+                effective,
+                forced: None,
+            },
+            PriorityBasis::ForcedByParent { parent_forced } => Self {
+                requested: parent_forced,
+                effective: parent_forced,
+                forced: Some(parent_forced),
+            },
         }
     }
 
@@ -119,6 +127,21 @@ mod tests {
         // Then: it requested and waits at 5
         assert_eq!(priority.requested(), level(5));
         assert_eq!(priority.effective(), level(5));
+    }
+
+    #[test]
+    fn a_child_under_a_forced_parent_is_born_forced_at_that_level() {
+        // Given: a child requesting 1 under a parent forced to 5
+        let priority = JobPriority::admitted(
+            level(1),
+            PriorityBasis::ForcedByParent {
+                parent_forced: level(5),
+            },
+        );
+        // Then: requested, effective and forced are all 5
+        assert_eq!(priority.requested(), level(5));
+        assert_eq!(priority.effective(), level(5));
+        assert_eq!(priority.forced(), Some(level(5)));
     }
 
     #[test]

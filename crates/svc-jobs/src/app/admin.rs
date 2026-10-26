@@ -1,8 +1,8 @@
 use bc_jobs::commands::job::deletion::DeleteJob;
 use bc_jobs::commands::job::manual_retry::{
-    ManualRetryJob, ManualRetryOutcome, SuccessorDispatch, manual_retry as decide_manual_retry,
+    ManualRetryJob, ManualRetryOutcome, manual_retry as decide_manual_retry,
 };
-use bc_jobs::domain::fleet::dispatch_mode::DispatchMode;
+use bc_jobs::domain::actions::fleet::successor_dispatch;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{JobId, KnownUserId, ManualRetryId, ResolutionId, RunId};
 use bc_jobs::domain::job::parenting::ParentContext;
@@ -70,21 +70,11 @@ pub async fn manual_retry(
         None => None,
     };
     let runner_type = FleetReader::load(&jobs.store, predecessor.runner_type()).await?;
-    let dispatch = match &runner_type {
-        Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
-            SuccessorDispatch::AwaitClaim
-        }
-        known => SuccessorDispatch::Push {
-            first_run_id: RunId::new(jobs.ids.next())?,
-            max_run_duration: known
-                .as_ref()
-                .map(|known| known.max_run_duration())
-                .map_or_else(
-                    || MaxRunDuration::from_delta(jobs.limits.max_run_duration()),
-                    Ok,
-                )?,
-        },
-    };
+    let dispatch = successor_dispatch(
+        runner_type.as_ref(),
+        RunId::new(jobs.ids.next())?,
+        MaxRunDuration::from_delta(jobs.limits.max_run_duration())?,
+    );
     let user_maximum = match predecessor.triggered_by() {
         Some(user) => Some(
             jobs.store

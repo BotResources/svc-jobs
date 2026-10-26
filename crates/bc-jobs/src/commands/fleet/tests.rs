@@ -25,7 +25,6 @@ fn declaring(status: ReportedStatus, capacity: u32) -> ObservePresence {
         version: RunnerVersion::new("1.4.2").unwrap(),
         reported_status: status,
         capacity: Capacity::new(capacity).unwrap(),
-        registration_settings: RunnerTypeSettings::default(),
     }
 }
 
@@ -361,30 +360,6 @@ fn configured(settings: RunnerTypeSettings) -> RunnerType {
 }
 
 #[test]
-fn the_first_presence_of_a_type_registers_it_with_the_settings_it_is_given() {
-    // Given: a service whose default maximum run duration is 96 hours
-    let settings =
-        RunnerTypeSettings::registered_with(MaxRunDuration::from_seconds(96 * 3600).unwrap());
-    // When: the first instance of an unknown type announces itself
-    let result = observe_presence(
-        None,
-        ObservePresence {
-            registration_settings: settings,
-            ..presence(ReportedStatus::Ready)
-        },
-    )
-    .unwrap();
-    // Then: the type is registered pushed to, with that maximum
-    match result.events.first() {
-        Some(FleetEvent::RunnerTypeRegistered(fact)) => {
-            assert_eq!(fact.dispatch_mode, DispatchMode::Push);
-            assert_eq!(fact.max_run_duration, settings.max_run_duration);
-        }
-        other => panic!("expected a registration, got {other:?}"),
-    }
-}
-
-#[test]
 fn switching_a_type_to_claim_records_the_new_mode() {
     // Given: a type pushed to
     let runner_type = configured(RunnerTypeSettings::default());
@@ -450,10 +425,24 @@ fn a_retired_type_may_still_be_configured() {
 
 #[test]
 fn setting_the_duration_a_type_already_has_records_nothing() {
-    // Given: a type at the service default
-    let runner_type = configured(RunnerTypeSettings::default());
+    // Given: a type set to 96 hours
+    let duration = MaxRunDuration::from_seconds(96 * 3600).unwrap();
+    let runner_type = configured(RunnerTypeSettings {
+        max_run_duration: Some(duration),
+        ..RunnerTypeSettings::default()
+    });
     // When: the same maximum is set again
-    let result = set_max_run_duration(&runner_type, MaxRunDuration::SERVICE_DEFAULT).unwrap();
+    let result = set_max_run_duration(&runner_type, duration).unwrap();
     // Then: nothing is recorded
     assert!(result.is_empty());
+}
+
+#[test]
+fn setting_the_service_default_on_a_type_that_follows_it_pins_it() {
+    // Given: a type following the service default
+    let runner_type = configured(RunnerTypeSettings::default());
+    // When: the default's value is set explicitly
+    let result = set_max_run_duration(&runner_type, MaxRunDuration::SERVICE_DEFAULT).unwrap();
+    // Then: the type now carries its own maximum, independent of a later default change
+    assert_eq!(result.events.len(), 1);
 }

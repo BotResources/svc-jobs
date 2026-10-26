@@ -85,7 +85,8 @@ impl Job {
                     user_id,
                     requested_priority: match basis {
                         PriorityBasis::Capped { .. } => None,
-                        PriorityBasis::InheritedFromParent { .. } => Some(effective_priority),
+                        PriorityBasis::InheritedFromParent { .. }
+                        | PriorityBasis::ForcedByParent { .. } => Some(effective_priority),
                     },
                 }),
             ),

@@ -204,12 +204,64 @@ pub struct Presence {
     pub capacity: Capacity,
 }
 
-/// The reasons a claim reply carries, alongside an absent `run`, when the
-/// claim was refused rather than answered empty at the end of its wait.
 pub const CLAIM_REASON_INSTANCE_UNKNOWN: &str = "instance_unknown";
 pub const CLAIM_REASON_NOT_CLAIM_MODE: &str = "not_claim_mode";
+pub const CLAIM_REASON_INSTANCE_DRAINING: &str = "instance_draining";
+pub const CLAIM_REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
+pub const CLAIM_REASON_CLAIM_SPENT: &str = "claim_spent";
+pub const CLAIM_REASON_MALFORMED_CLAIM: &str = "malformed_claim";
 /// The reason a reserved Run its Instance never started fails with.
 pub const RUN_FAILURE_CLAIM_LOST: &str = "claim_lost";
+/// The reason a Run left on the trigger stream of a type switched to `CLAIM`
+/// fails with, once nobody started it within the reservation delay.
+pub const RUN_FAILURE_TRIGGER_STRANDED: &str = "trigger_stranded";
+
+/// Why a claim was refused rather than served or answered empty. A closed
+/// vocabulary: a reason outside it does not parse, so a runner compiled
+/// against this contract handles every refusal Jobs can give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimRefusal {
+    /// Jobs has no live presence for this Instance of this type: announce
+    /// presence (or wait for it to be observed), then claim again later.
+    InstanceUnknown,
+    /// The type is dispatched by `PUSH`: stop claiming and consume the trigger
+    /// stream. Claim again only once the type is switched back to `CLAIM`.
+    NotClaimMode,
+    /// The Instance reports `DRAINING`: stop claiming until it reports `READY`.
+    InstanceDraining,
+    /// The type is retired and takes no new Job: stop claiming.
+    RunnerTypeRetired,
+    /// The `claim_id` already served a Run that was started or settled: mint a
+    /// new `claim_id` for a new slot. Never reuse one.
+    ClaimSpent,
+    /// The claim could not be read — an unparseable payload, a nil `claim_id`,
+    /// an invalid subject: fix the claim; repeating it unchanged gets the same
+    /// answer.
+    MalformedClaim,
+}
+
+impl ClaimRefusal {
+    pub const ALL: [Self; 6] = [
+        Self::InstanceUnknown,
+        Self::NotClaimMode,
+        Self::InstanceDraining,
+        Self::RunnerTypeRetired,
+        Self::ClaimSpent,
+        Self::MalformedClaim,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InstanceUnknown => CLAIM_REASON_INSTANCE_UNKNOWN,
+            Self::NotClaimMode => CLAIM_REASON_NOT_CLAIM_MODE,
+            Self::InstanceDraining => CLAIM_REASON_INSTANCE_DRAINING,
+            Self::RunnerTypeRetired => CLAIM_REASON_RUNNER_TYPE_RETIRED,
+            Self::ClaimSpent => CLAIM_REASON_CLAIM_SPENT,
+            Self::MalformedClaim => CLAIM_REASON_MALFORMED_CLAIM,
+        }
+    }
+}
 
 /// An Instance of a `CLAIM` runner type asking for its next Run, on
 /// `jobs.claim.{runner_type}` (core NATS request/reply).
@@ -230,7 +282,8 @@ pub struct Claim {
 
 /// The answer to a [`Claim`]. `run` carries exactly what a trigger carries;
 /// absent, it means nothing was waiting during the wait — or, with a `reason`,
-/// that the claim was refused.
+/// that the claim was refused. An empty answer is claimed again; a refusal is
+/// handled as its [`ClaimRefusal`] says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimReply {
     #[serde(default = "wire_version")]
@@ -238,7 +291,7 @@ pub struct ClaimReply {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Trigger>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    pub reason: Option<ClaimRefusal>,
 }
 
 impl ClaimReply {
@@ -258,11 +311,11 @@ impl ClaimReply {
         }
     }
 
-    pub fn refused(reason: impl Into<String>) -> Self {
+    pub fn refused(reason: ClaimRefusal) -> Self {
         Self {
             version: WIRE_VERSION,
             run: None,
-            reason: Some(reason.into()),
+            reason: Some(reason),
         }
     }
 }

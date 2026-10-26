@@ -69,6 +69,8 @@ spec:
               value: {{ .Values.claims.maxWaitSeconds | quote }}
             - name: JOBS_CLAIM_RESERVATION_SECONDS
               value: {{ .Values.claims.reservationSeconds | quote }}
+            - name: JOBS_CLAIM_MAX_HELD
+              value: {{ .Values.claims.maxHeld | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

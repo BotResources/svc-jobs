@@ -50,5 +50,12 @@ pub trait DueWorkReader: Send + Sync {
     /// started.
     async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 
+    /// Jobs of `CLAIM` runner types whose Run was published on the trigger
+    /// stream before `cutoff` and never started nor reserved.
+    async fn jobs_with_stranded_triggers(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<Job>, PortError>;
+
     async fn jobs_idle_since(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 }

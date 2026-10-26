@@ -9,11 +9,14 @@ use crate::error::JobsError;
 ///
 /// A root Job is capped by the maximum of the user it runs for — or by the
 /// service default when it runs for nobody. A child Job takes the effective
-/// priority of its parent, whatever it requested.
+/// priority of its parent, whatever it requested; under a parent a super user
+/// forced, it is born forced at that level, so a child admitted before, during
+/// or after the force ends up the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriorityBasis {
     Capped { maximum: Priority },
     InheritedFromParent { parent_effective: Priority },
+    ForcedByParent { parent_forced: Priority },
 }
 
 impl PriorityBasis {
@@ -27,13 +30,21 @@ impl PriorityBasis {
         limits: &ServiceLimits,
     ) -> Self {
         match parent {
-            Some(parent) => Self::InheritedFromParent {
-                parent_effective: parent.priority().effective(),
-            },
+            Some(parent) => Self::inherited_from(parent),
             None => Self::Capped {
                 maximum: user_maximum
                     .and_then(UserMaxPriority::maximum)
                     .unwrap_or_else(|| limits.default_max_priority()),
+            },
+        }
+    }
+
+    /// The basis of a child of `parent`.
+    pub fn inherited_from(parent: &Job) -> Self {
+        match parent.priority().forced() {
+            Some(parent_forced) => Self::ForcedByParent { parent_forced },
+            None => Self::InheritedFromParent {
+                parent_effective: parent.priority().effective(),
             },
         }
     }
@@ -56,6 +67,7 @@ impl PriorityBasis {
         match self {
             Self::Capped { maximum } => requested.capped_by(maximum),
             Self::InheritedFromParent { parent_effective } => parent_effective,
+            Self::ForcedByParent { parent_forced } => parent_forced,
         }
     }
 }
@@ -120,6 +132,21 @@ mod tests {
         let basis = PriorityBasis::of(Some(&parent), Some(&user), &ServiceLimits::default());
         // Then: it waits at its parent's level, neither its request nor its user's cap
         assert_eq!(basis.derive(level(1)), level(5));
+    }
+
+    #[test]
+    fn a_child_under_a_forced_parent_is_based_on_the_forced_level() {
+        // Given: a parent forced to 5
+        let parent = JobBuilder::new()
+            .with_priority(level(3), level(5), Some(level(5)))
+            .build();
+        // When/Then: its child stands on the forced level
+        assert_eq!(
+            PriorityBasis::of(Some(&parent), None, &ServiceLimits::default()),
+            PriorityBasis::ForcedByParent {
+                parent_forced: level(5)
+            }
+        );
     }
 
     #[test]

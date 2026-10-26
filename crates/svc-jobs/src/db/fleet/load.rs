@@ -212,7 +212,10 @@ async fn load_instances(
 fn settings_of(row: &PgRow) -> Result<RunnerTypeSettings, JobsError> {
     Ok(RunnerTypeSettings {
         dispatch_mode: DispatchMode::from_db_str(&row.get::<String, _>("dispatch_mode"))?,
-        max_run_duration: MaxRunDuration::from_seconds(row.get("max_run_duration_seconds"))?,
+        max_run_duration: row
+            .get::<Option<i64>, _>("max_run_duration_seconds")
+            .map(MaxRunDuration::from_seconds)
+            .transpose()?,
     })
 }
 

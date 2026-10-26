@@ -120,10 +120,15 @@ pub async fn fleet_views(
         .map(RunnerTypeKey::new)
         .transpose()
         .map_err(edge_error)?;
+    let service_default = bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_delta(
+        state.jobs.limits.max_run_duration(),
+    )
+    .map_err(edge_error)?;
     crate::app::fleet::views(
         &state.store,
         watched.as_ref(),
         state.jobs.retirement_window(),
+        service_default,
     )
     .await
     .map_err(edge_error)

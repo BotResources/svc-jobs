@@ -1,9 +1,10 @@
 use super::*;
 use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
-use crate::domain::fleet::dispatch_mode::DispatchMode;
+use crate::domain::fleet::dispatch_mode::{DispatchMode, SuccessorDispatch};
 use crate::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
@@ -274,4 +275,41 @@ fn the_settings_affordances_are_open_whatever_the_lifecycle() {
             .unwrap_or_else(|| panic!("{action} is projected"));
         assert!(entry.allowed(), "{action} is open");
     }
+}
+
+#[test]
+fn the_successor_of_a_claim_type_waits_to_be_claimed_and_any_other_is_pushed() {
+    // Given: a CLAIM type, a PUSH type set to 96 hours, and no registered type
+    let run = crate::fixtures::run_id();
+    let pushed = RunnerType::hydrate(RunnerTypeState {
+        id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+        key: RunnerTypeKey::new("analyst").unwrap(),
+        registered_at: ts(0),
+        lifecycle: RunnerTypeLifecycle::Active,
+        settings: RunnerTypeSettings {
+            max_run_duration: Some(MaxRunDuration::from_seconds(96 * 3600).unwrap()),
+            ..RunnerTypeSettings::default()
+        },
+        instances: vec![],
+    })
+    .unwrap();
+    // When/Then: the decision follows the type's mode and duration
+    assert_eq!(
+        successor_dispatch(Some(&claimed(vec![])), run, MaxRunDuration::SERVICE_DEFAULT),
+        SuccessorDispatch::AwaitClaim
+    );
+    assert_eq!(
+        successor_dispatch(Some(&pushed), run, MaxRunDuration::SERVICE_DEFAULT),
+        SuccessorDispatch::Push {
+            first_run_id: run,
+            max_run_duration: MaxRunDuration::from_seconds(96 * 3600).unwrap(),
+        }
+    );
+    assert_eq!(
+        successor_dispatch(None, run, MaxRunDuration::SERVICE_DEFAULT),
+        SuccessorDispatch::Push {
+            first_run_id: run,
+            max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
+        }
+    );
 }

@@ -117,6 +117,9 @@ pub enum JobsError {
     ReservationWithinDelay {
         run_id: Uuid,
     },
+    TriggerNotStranded {
+        run_id: Uuid,
+    },
     RunnerTypeMismatch {
         expected: String,
         claimed: String,

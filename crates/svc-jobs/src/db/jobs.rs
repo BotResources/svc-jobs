@@ -9,7 +9,7 @@ use sqlx::{PgConnection, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::dispatch_order::{ORDER_BY, ordered_waiting, pushed_scope};
+use super::dispatch_order::{ORDER_BY, PUSHED_TYPES, ordered_waiting};
 use super::hydrate::{load_many, unavailable};
 
 pub(crate) const NO_ACTIVE_RUN: &str = "NOT EXISTS (SELECT 1 FROM runs r \
@@ -25,11 +25,6 @@ const ACTIVE_FOR_SOURCE_SQL: &str = "SELECT j.id::uuid AS id FROM jobs j \
      WHERE p.bc_key = $1 AND se.external_id = $2 \
        AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
      ORDER BY j.created_at DESC, j.id DESC LIMIT 1";
-
-pub(crate) const HAS_LIVE_INSTANCE: &str = "EXISTS (SELECT 1 FROM runner_instances ri \
-     JOIN runner_presence_sessions ps ON ps.instance_id = ri.id \
-         AND ps.disconnected_at IS NULL \
-     WHERE ri.runner_type_id = j.runner_type_id)";
 
 pub(crate) const UNCONSUMED_RETRY: &str = "SELECT s.due_at FROM run_retry_schedules s \
      JOIN runs fr ON fr.id = s.failed_run_id \
@@ -83,11 +78,9 @@ impl PgStore {
     }
 
     pub async fn next_retry_due_at(&self) -> Result<Option<DateTime<Utc>>, PortError> {
-        let scope = pushed_scope();
         let sql = format!(
-            "SELECT min(due.due_at) AS due_at FROM jobs j \
-             JOIN LATERAL ({UNCONSUMED_RETRY}) due ON true \
-             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} AND {scope}"
+            "SELECT min(w.due_at) AS due_at FROM waiting_jobs w \
+             WHERE w.due_at IS NOT NULL AND w.runner_type_id IN ({PUSHED_TYPES})"
         );
         let row = sqlx::query(&sql)
             .fetch_one(self.pool())
@@ -203,8 +196,8 @@ impl JobReader for PgStore {
 impl DueWorkReader for PgStore {
     async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
         let sql = format!(
-            "{} SELECT o.id::uuid AS id FROM ordered o {ORDER_BY} LIMIT {DUE_WORK_BATCH}",
-            ordered_waiting(&pushed_scope()),
+            "{} SELECT o.job_id::uuid AS id FROM ordered o {ORDER_BY} LIMIT {DUE_WORK_BATCH}",
+            ordered_waiting(PUSHED_TYPES),
         );
         let ids = self.ids(&sql, at).await?;
         let mut jobs = self.load_batch(&ids).await?;
@@ -243,13 +236,29 @@ impl DueWorkReader for PgStore {
 
     async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
         let sql = format!(
+            "SELECT DISTINCT r.job_id::uuid AS id FROM run_reservations rr \
+             JOIN runs r ON r.id = rr.run_id \
+             WHERE rr.settled_at IS NULL AND rr.reserved_at < $1 \
+             LIMIT {DUE_WORK_BATCH}"
+        );
+        let ids = self.ids(&sql, cutoff).await?;
+        self.load_batch(&ids).await
+    }
+
+    async fn jobs_with_stranded_triggers(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<Job>, PortError> {
+        let sql = format!(
             "SELECT j.id::uuid AS id FROM jobs j \
+             JOIN registered_runner_types reg ON reg.runner_type_id = j.runner_type_id \
+                AND reg.dispatch_mode = 'CLAIM' \
              WHERE {NOT_RESOLVED} AND EXISTS (SELECT 1 FROM runs r \
-                JOIN run_reservations rr ON rr.run_id = r.id \
                 LEFT JOIN run_starts rs ON rs.run_id = r.id \
                 LEFT JOIN run_terminals t ON t.run_id = r.id \
+                LEFT JOIN run_reservations rr ON rr.run_id = r.id \
                 WHERE r.job_id = j.id AND rs.run_id IS NULL AND t.run_id IS NULL \
-                  AND rr.reserved_at < $1) \
+                  AND rr.run_id IS NULL AND r.dispatched_at < $1) \
              LIMIT {DUE_WORK_BATCH}"
         );
         let ids = self.ids(&sql, cutoff).await?;

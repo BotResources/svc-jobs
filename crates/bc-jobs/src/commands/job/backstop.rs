@@ -2,6 +2,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::commands::job::run_outcome::RunFailureFact;
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::ids::{ResolutionId, RetryScheduleId, RunId};
 use crate::domain::job::Job;
 use crate::domain::job::resolution::JobFailureCause;
@@ -9,7 +10,7 @@ use crate::domain::job::status::JobStatus;
 use crate::domain::keys::ReasonCode;
 use crate::domain::policy::{Jitter, RetryPolicy, ServiceLimits};
 use crate::domain::run::failure::{
-    CLAIM_LOST, INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport,
+    CLAIM_LOST, INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport, TRIGGER_STRANDED,
 };
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -140,6 +141,50 @@ impl Job {
             },
         )];
         let report = RunFailureReport::platform(RunFailureKind::Transient, CLAIM_LOST)?;
+        let fact = command.into_failure(report);
+        events.extend(self.run_failure_events(run, &fact, policy, limits)?);
+        Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))
+    }
+
+    /// A Run of a `CLAIM` type still waiting on the trigger stream — published
+    /// before its type switched to claims — that no Instance started within
+    /// `delay` fails as transient with `trigger_stranded`: its retry waits to be
+    /// claimed. A pushed Instance that still takes the trigger is told to stop.
+    pub fn fail_run_for_stranded_trigger(
+        &self,
+        command: ReclaimRun,
+        dispatch_mode: DispatchMode,
+        delay: TimeDelta,
+        policy: &RetryPolicy,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
+            return Ok(discarded);
+        }
+        let run = self.find_run(command.run_id)?;
+        if let Some(discarded) = self.discard_settled("RunFailed", run) {
+            return Ok(discarded);
+        }
+        if dispatch_mode != DispatchMode::Claim {
+            return Err(JobsError::NotClaimMode {
+                runner_type: self.runner_type().as_str().to_owned(),
+            });
+        }
+        if !run.has_a_stranded_trigger(command.at, delay) {
+            return Err(JobsError::TriggerNotStranded {
+                run_id: run.id().as_uuid(),
+            });
+        }
+        let mut events = vec![JobEvent::RunCancellationRequested(
+            RunCancellationRequested {
+                job_id: self.id(),
+                run_id: run.id(),
+                reason_code: ReasonCode::new(TRIGGER_STRANDED)?,
+                requested_by: None,
+                originating_job_id: None,
+            },
+        )];
+        let report = RunFailureReport::platform(RunFailureKind::Transient, TRIGGER_STRANDED)?;
         let fact = command.into_failure(report);
         events.extend(self.run_failure_events(run, &fact, policy, limits)?);
         Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))

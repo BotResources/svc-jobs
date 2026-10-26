@@ -5,7 +5,6 @@ use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::fleet::instance::RunnerInstance;
 use crate::domain::fleet::run_duration::MaxRunDuration;
-use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
@@ -29,9 +28,6 @@ pub struct ObservePresence {
     pub version: RunnerVersion,
     pub reported_status: ReportedStatus,
     pub capacity: Capacity,
-    /// The settings the RunnerType is registered with, when this presence is
-    /// the first of its type.
-    pub registration_settings: RunnerTypeSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +46,6 @@ pub fn observe_presence(
             FleetEvent::RunnerTypeRegistered(RunnerTypeRegistered {
                 runner_type_id: command.runner_type_id,
                 runner_type: command.runner_type.clone(),
-                dispatch_mode: command.registration_settings.dispatch_mode,
-                max_run_duration: command.registration_settings.max_run_duration,
             }),
             connected(
                 command.runner_type_id,
@@ -175,7 +169,7 @@ pub fn set_max_run_duration(
     max_run_duration: MaxRunDuration,
 ) -> Result<FleetCommandResult, JobsError> {
     runner_type.guard_configure()?;
-    if runner_type.max_run_duration() == max_run_duration {
+    if runner_type.own_max_run_duration() == Some(max_run_duration) {
         return Ok(CommandResult::nothing_happened(
             CommandWarning::CommandAlreadyApplied {
                 command: "set_max_run_duration",

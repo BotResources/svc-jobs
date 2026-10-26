@@ -63,7 +63,7 @@ fn of_run(run: &Run) -> RunFingerprint {
 #[derive(Debug, PartialEq, Eq)]
 pub struct FleetFingerprint {
     lifecycle: Option<&'static str>,
-    settings: Option<(&'static str, i64)>,
+    settings: Option<(&'static str, Option<i64>)>,
     instances: Vec<InstanceFingerprint>,
 }
 
@@ -89,7 +89,9 @@ pub fn of_fleet(runner_type: Option<&RunnerType>) -> FleetFingerprint {
         settings: runner_type.map(|known| {
             (
                 known.dispatch_mode().as_str(),
-                known.max_run_duration().seconds(),
+                known
+                    .own_max_run_duration()
+                    .map(|duration| duration.seconds()),
             )
         }),
         instances,

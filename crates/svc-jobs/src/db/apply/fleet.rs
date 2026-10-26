@@ -16,14 +16,11 @@ pub async fn write(
     match event {
         FleetEvent::RunnerTypeRegistered(fact) => {
             sqlx::query(
-                "INSERT INTO registered_runner_types (runner_type_id, lifecycle, registered_at, \
-                 dispatch_mode, max_run_duration_seconds) \
-                 VALUES ($1, 'ACTIVE', $2, $3, $4) ON CONFLICT (runner_type_id) DO NOTHING",
+                "INSERT INTO registered_runner_types (runner_type_id, lifecycle, registered_at) \
+                 VALUES ($1, 'ACTIVE', $2) ON CONFLICT (runner_type_id) DO NOTHING",
             )
             .bind(fact.runner_type_id.as_uuid())
             .bind(at)
-            .bind(fact.dispatch_mode.as_str())
-            .bind(fact.max_run_duration.seconds())
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;

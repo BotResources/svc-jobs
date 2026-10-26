@@ -101,6 +101,7 @@ pub fn create_job(
             max_attempts: command.max_attempts,
             requested_priority: priority.requested(),
             effective_priority: priority.effective(),
+            forced_priority: priority.forced(),
         }),
     )))
 }

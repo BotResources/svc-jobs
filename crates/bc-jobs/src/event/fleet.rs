@@ -15,15 +15,6 @@ pub const RUNNER_TYPE_AGGREGATE_TYPE: &str = "RunnerType";
 pub struct RunnerTypeRegistered {
     pub runner_type_id: RunnerTypeId,
     pub runner_type: RunnerTypeKey,
-    #[serde(default)]
-    pub dispatch_mode: DispatchMode,
-    #[serde(default = "service_default_duration")]
-    pub max_run_duration: MaxRunDuration,
-}
-
-/// What a registration recorded before RunnerTypes carried settings reads as.
-fn service_default_duration() -> MaxRunDuration {
-    MaxRunDuration::SERVICE_DEFAULT
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,25 +269,6 @@ mod tests {
         // Then: presence traffic never reaches the bucket, a lifecycle change always does
         assert!(!reported.changes_published_catalog());
         assert!(deprecated.changes_published_catalog());
-    }
-
-    #[test]
-    fn a_registration_recorded_before_settings_existed_reads_as_pushed_with_the_default() {
-        // Given: a registration payload written by a previous version
-        let stored = serde_json::json!({
-            "runner_type_id": Uuid::now_v7(),
-            "runner_type": "analyst",
-        });
-        // When: it is decoded
-        let decoded = FleetEvent::decode("RunnerTypeRegistered", stored).unwrap();
-        // Then: it carries the settings every type had then
-        match decoded {
-            FleetEvent::RunnerTypeRegistered(fact) => {
-                assert_eq!(fact.dispatch_mode, DispatchMode::Push);
-                assert_eq!(fact.max_run_duration, MaxRunDuration::SERVICE_DEFAULT);
-            }
-            other => panic!("expected a registration, got {other:?}"),
-        }
     }
 
     #[test]

@@ -88,6 +88,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunNotReserved { .. }
         | JobsError::RunReservedElsewhere { .. }
         | JobsError::ReservationWithinDelay { .. }
+        | JobsError::TriggerNotStranded { .. }
         | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),
 
         JobsError::RunNotFound { .. } | JobsError::ParentJobUnknown { .. } => {

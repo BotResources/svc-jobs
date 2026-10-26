@@ -285,11 +285,22 @@ async fn fetch(
         .map_err(unavailable)
 }
 
+/// SQLSTATEs that mean "another writer got there first": a deadlock the
+/// server broke by aborting this transaction, and a serialization failure.
+/// Both are retried like a lost write race, never surfaced as an outage.
+const RETRYABLE_SQLSTATES: [&str; 2] = ["40P01", "40001"];
+
+pub fn is_write_race(error: &sqlx::Error) -> bool {
+    error.as_database_error().is_some_and(|database| {
+        database.is_unique_violation()
+            || database
+                .code()
+                .is_some_and(|code| RETRYABLE_SQLSTATES.contains(&code.as_ref()))
+    })
+}
+
 pub fn unavailable(error: sqlx::Error) -> PortError {
-    if error
-        .as_database_error()
-        .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
-    {
+    if is_write_race(&error) {
         return PortError::ConcurrentModification;
     }
     PortError::Unavailable {

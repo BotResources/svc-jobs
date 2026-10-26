@@ -14,6 +14,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   effective, forced) on the Job aggregate, `PriorityBasis` (capped by a user's
   maximum or the service default, or inherited from the parent) and
   `UserMaxPriority`. `ServiceLimits::with_default_max_priority` (default 3).
+  `PriorityBasis::ForcedByParent`: a child under a forced parent is born
+  forced at that level; `JobQueued::forced_priority` carries it.
 - Commands `Job::force_priority`, `Job::force_priority_as_descendant`,
   `Job::recalculate_priority`, `set_max_priority` and `clear_max_priority`;
   facts `JobPriorityForced`, `JobPriorityRecalculated` and the `KnownUser`
@@ -24,17 +26,22 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `Job::affordances` takes the principal and carries `force_priority`.
 - Claims: `Job::reserve_run` shares the dispatch decision; `RunReservation`
   and `ClaimId`; `RunnerType::guard_claim` and `guard_push_dispatch`;
-  `Job::fail_run_for_lost_claim` (`claim_lost`); a reserved run is cancelled
-  through a stop request and reclaimed with its lost instance.
+  `Job::fail_run_for_lost_claim` (`claim_lost`) and
+  `Job::fail_run_for_stranded_trigger` (`trigger_stranded`); `Job::recall_claim`
+  decides whether a repeated claim is answered or spent; a reserved run is
+  cancelled through a stop request and reclaimed with its lost instance.
 - Runner-type settings: `DispatchMode`, `MaxRunDuration`,
-  `RunnerTypeSettings`, commands `set_dispatch_mode` / `set_max_run_duration`
-  and their facts; a run carries the maximum duration it was dispatched with.
+  `RunnerTypeSettings` (a type registered before 0.4 has no maximum duration
+  of its own and answers to the service default), commands
+  `set_dispatch_mode` / `set_max_run_duration` and their facts, and
+  `successor_dispatch` (whether a manual-retry successor is pushed or waits to
+  be claimed); a run carries the maximum duration it was dispatched with.
 - Breaking for callers (svc-jobs only): `create_job` takes the user's stored
-  maximum, `CreateJob` / `DispatchRun` / `ManualRetryJob` / `ObservePresence`
-  / `RunnerTypeState` / `RunState` / `JobState` gain fields,
+  maximum, `CreateJob` / `DispatchRun` / `ManualRetryJob` / `RunnerTypeState`
+  / `RunState` / `JobState` gain fields,
   `ManualRetryStarted::run_id` is optional, `DueWorkReader` gains
-  `jobs_with_lost_claims` and `jobs_with_outrun_runs` takes the service
-  default.
+  `jobs_with_lost_claims` and `jobs_with_stranded_triggers`, and
+  `jobs_with_outrun_runs` takes the service default.
 
 ## 0.5.1 - 2026-10-17
 

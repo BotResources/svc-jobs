@@ -34,6 +34,10 @@ pub struct JobQueued {
     pub requested_priority: Priority,
     #[serde(default = "default_priority")]
     pub effective_priority: Priority,
+    /// Set when the Job is born under a parent a super user forced: it is
+    /// forced at the parent's level from its first fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forced_priority: Option<Priority>,
 }
 
 /// What a fact recorded before priorities existed reads as: the default level,

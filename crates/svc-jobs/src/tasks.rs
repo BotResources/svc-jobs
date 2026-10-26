@@ -87,8 +87,14 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
     supervisor.spawn("runner claim responder", move |established| {
         let channels = claim_channels.clone();
         let jobs = Arc::clone(&claim_jobs);
+        async move { runner_transport::claim::respond(channels, jobs, established).await }
+    });
+
+    let wake_jobs = Arc::clone(&jobs);
+    supervisor.spawn("held claim wake router", move |established| {
+        let jobs = Arc::clone(&wake_jobs);
         let hub = hub.clone();
-        async move { runner_transport::claim::respond(channels, jobs, hub, established).await }
+        async move { crate::app::claim_wakes::route(jobs, hub, established).await }
     });
 
     supervisor.spawn("runner log consumer", move |established| {

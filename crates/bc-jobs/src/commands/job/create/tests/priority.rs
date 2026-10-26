@@ -101,6 +101,64 @@ fn a_child_waits_at_its_parents_effective_priority_whatever_it_requested() {
 }
 
 #[test]
+fn a_child_under_a_forced_parent_is_born_forced_at_the_parents_level() {
+    // Given: a parent that requested 2 and a super user forced to 5
+    let parent = JobBuilder::new()
+        .with_priority(level(2), level(5), Some(level(5)))
+        .with_run(RunBuilder::new(1).started(ts(5)).build())
+        .build();
+    let command = CreateJob {
+        parent_job_id: Some(parent.id()),
+        requested_priority: level(1),
+        ..command()
+    };
+    // When: a child is admitted under it
+    let fact = queued(
+        create_job(
+            command,
+            None,
+            None,
+            Some(&parent),
+            None,
+            &ServiceLimits::default(),
+        )
+        .unwrap(),
+    );
+    // Then: requested, effective and forced are all the parent's forced 5
+    assert_eq!(fact.requested_priority, level(5));
+    assert_eq!(fact.effective_priority, level(5));
+    assert_eq!(fact.forced_priority, Some(level(5)));
+}
+
+#[test]
+fn a_child_under_an_unforced_parent_is_not_forced() {
+    // Given: a parent at effective 4, not forced
+    let parent = JobBuilder::new()
+        .with_priority(level(4), level(4), None)
+        .with_run(RunBuilder::new(1).started(ts(5)).build())
+        .build();
+    let command = CreateJob {
+        parent_job_id: Some(parent.id()),
+        ..command()
+    };
+    // When: a child is admitted under it
+    let fact = queued(
+        create_job(
+            command,
+            None,
+            None,
+            Some(&parent),
+            None,
+            &ServiceLimits::default(),
+        )
+        .unwrap(),
+    );
+    // Then: it inherits 4 and carries no forced level
+    assert_eq!(fact.effective_priority, level(4));
+    assert_eq!(fact.forced_priority, None);
+}
+
+#[test]
 fn a_redelivery_requesting_another_priority_is_a_conflicting_reuse() {
     // Given: a job already created requesting the default
     let existing = JobBuilder::new().build();

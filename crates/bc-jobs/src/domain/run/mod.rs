@@ -274,6 +274,16 @@ impl Run {
         latest
     }
 
+    /// A Run published on the trigger stream that no Instance ever started,
+    /// past `delay`: its type switched to claims, and no pushed Instance is
+    /// left to take it.
+    pub fn has_a_stranded_trigger(&self, now: DateTime<Utc>, delay: TimeDelta) -> bool {
+        self.reservation.is_none()
+            && self.start.is_none()
+            && self.terminal.is_none()
+            && now - self.dispatched_at > delay
+    }
+
     /// A started Run past its maximum duration: the one it was dispatched with,
     /// or `service_default` for a Run that carries none.
     pub fn has_outrun(&self, now: DateTime<Utc>, service_default: TimeDelta) -> bool {

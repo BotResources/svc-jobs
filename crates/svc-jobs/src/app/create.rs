@@ -102,7 +102,10 @@ async fn decide(
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
                     refusal @ (JobsError::SourceAlreadyActive { .. }
-                    | JobsError::RunnerTypeRetired { .. }),
+                    | JobsError::RunnerTypeRetired { .. }
+                    | JobsError::ParentJobTerminal { .. }
+                    | JobsError::ParentJobDeleted { .. }
+                    | JobsError::ParentJobUnknown { .. }),
                 )) => reject(jobs, wire, &refusal, metadata).await,
                 settled => settled,
             }

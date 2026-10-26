@@ -5,12 +5,11 @@ use bc_jobs::domain::ids::{JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::priority::{Priority, UserMaxPriority};
 use bc_jobs::ports::PortError;
-use sqlx::PgConnection;
+use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::{load_many, unavailable};
-use super::jobs::{NO_ACTIVE_RUN, NOT_RESOLVED};
 use super::rows;
 
 const MAXIMUM_SQL: &str = "SELECT m.max_priority::smallint FROM user_max_priorities m \
@@ -66,47 +65,92 @@ impl PgStore {
         maximum(tx, user_id).await
     }
 
-    /// The effective priority a child admission inherited still holds: read
-    /// under a share lock on the parent, which forcing or recalculating it
-    /// locks exclusively.
-    pub async fn effective_priority_in(
+    /// Share-locks the lineage a child admission inherits from — the parent's
+    /// root and the parent, in id order, the order every cascade takes them
+    /// in — and reads the parent's state under that lock: its effective level,
+    /// and whether it still admits work. `None` when the parent is gone.
+    pub async fn share_lock_lineage(
         tx: &mut PgConnection,
-        job_id: JobId,
-    ) -> Result<Option<Priority>, PortError> {
-        let stored: Option<i16> = sqlx::query_scalar(
-            "SELECT effective_priority::smallint FROM jobs WHERE id = $1 FOR SHARE",
+        parent_job_id: JobId,
+    ) -> Result<Option<ParentState>, PortError> {
+        let root: Option<Option<Uuid>> = sqlx::query_scalar(
+            "SELECT coalesce(root_job_id, parent_job_id)::uuid FROM jobs WHERE id = $1",
         )
-        .bind(job_id.as_uuid())
+        .bind(parent_job_id.as_uuid())
         .fetch_optional(&mut *tx)
         .await
         .map_err(unavailable)?;
-        stored
-            .map(rows::priority)
-            .transpose()
-            .map_err(PortError::from)
-    }
-
-    /// The root Jobs a change of the user's maximum may recalculate — waiting
-    /// and not forced — and every descendant of them.
-    pub async fn priority_reach_of(
-        &self,
-        user_id: KnownUserId,
-    ) -> Result<(Vec<Job>, Vec<Job>), PortError> {
-        let sql = format!(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             WHERE j.triggered_by_id = $1 AND j.parent_job_id IS NULL \
-               AND j.forced_priority IS NULL AND {NOT_RESOLVED} AND {NO_ACTIVE_RUN}"
-        );
-        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        let roots: Vec<Uuid> = sqlx::query_scalar(&sql)
-            .bind(user_id.as_uuid())
-            .fetch_all(&mut *connection)
+        let Some(root) = root else {
+            return Ok(None);
+        };
+        let mut lineage = vec![parent_job_id.as_uuid()];
+        lineage.extend(root);
+        sqlx::query("SELECT id FROM jobs WHERE id = ANY($1) ORDER BY id FOR SHARE")
+            .bind(&lineage)
+            .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
-        if roots.is_empty() {
-            return Ok((vec![], vec![]));
+        let row = sqlx::query(
+            "SELECT j.effective_priority::smallint AS effective_priority, \
+                (j.forced_priority IS NOT NULL) AS forced, \
+                EXISTS (SELECT 1 FROM job_resolutions r WHERE r.job_id = j.id) AS resolved, \
+                EXISTS (SELECT 1 FROM job_deletions d WHERE d.job_id = j.id) AS deleted \
+             FROM jobs j WHERE j.id = $1",
+        )
+        .bind(parent_job_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        row.map(|row| -> Result<ParentState, bc_jobs::JobsError> {
+            Ok(ParentState {
+                effective: rows::priority(row.get("effective_priority"))?,
+                forced: row.get("forced"),
+                resolved: row.get("resolved"),
+                deleted: row.get("deleted"),
+            })
+        })
+        .transpose()
+        .map_err(PortError::from)
+    }
+
+    /// The waiting, non-forced root Jobs of a user — those a change of their
+    /// maximum recalculates — read from the waiting access path.
+    pub async fn waiting_roots_of_in(
+        tx: &mut PgConnection,
+        user_id: KnownUserId,
+    ) -> Result<Vec<Uuid>, PortError> {
+        sqlx::query_scalar(
+            "SELECT w.job_id::uuid FROM waiting_jobs w JOIN jobs j ON j.id = w.job_id \
+             WHERE j.triggered_by_id = $1 AND j.parent_job_id IS NULL \
+               AND j.forced_priority IS NULL",
+        )
+        .bind(user_id.as_uuid())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)
+    }
+
+    /// Locks the given Jobs for update in one statement, in id order — the
+    /// order every writer takes Job rows in. Returns the ids that exist.
+    pub async fn lock_jobs_in(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Uuid>, PortError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
         }
-        let descendants: Vec<Uuid> = sqlx::query_scalar(
+        sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+            .bind(ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(unavailable)
+    }
+
+    pub async fn descendant_ids_in(
+        tx: &mut PgConnection,
+        roots: &[Uuid],
+    ) -> Result<Vec<Uuid>, PortError> {
+        if roots.is_empty() {
+            return Ok(vec![]);
+        }
+        sqlx::query_scalar(
             "WITH RECURSIVE descendants AS ( \
                 SELECT id FROM jobs WHERE parent_job_id = ANY($1) \
                 UNION ALL \
@@ -114,15 +158,24 @@ impl PgStore {
                 JOIN descendants d ON child.parent_job_id = d.id) \
              SELECT id::uuid FROM descendants",
         )
-        .bind(&roots)
-        .fetch_all(&mut *connection)
+        .bind(roots)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(unavailable)?;
-        Ok((
-            load_many(&mut connection, &roots).await?,
-            load_many(&mut connection, &descendants).await?,
-        ))
+        .map_err(unavailable)
     }
+
+    pub async fn load_jobs_in(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Job>, PortError> {
+        load_many(tx, ids).await
+    }
+}
+
+/// The parent of a child admission, as read under the lineage share lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParentState {
+    pub effective: Priority,
+    pub forced: bool,
+    pub resolved: bool,
+    pub deleted: bool,
 }
 
 async fn maximum(

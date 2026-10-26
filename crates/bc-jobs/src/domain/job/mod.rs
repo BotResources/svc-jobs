@@ -1,3 +1,4 @@
+pub mod claim;
 pub mod derived;
 pub mod parenting;
 pub mod parts;

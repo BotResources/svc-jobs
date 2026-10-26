@@ -9,21 +9,8 @@ use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::dispatch_order::{CLAIMED_SCOPE, ORDER_BY, ordered_waiting};
+use super::dispatch_order::{CLAIMED_TYPE, ORDER_BY, ordered_waiting};
 use super::hydrate::unavailable;
-use super::jobs::{NO_ACTIVE_RUN, NOT_RESOLVED, UNCONSUMED_RETRY};
-
-/// What a repeated claim finds under its identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClaimedBefore {
-    /// Nothing: the claim is new.
-    Nothing,
-    /// A Run reserved to it and not yet started — the reply that was lost.
-    Pending { job_id: JobId, run_id: RunId },
-    /// A Run its Instance already started or that already settled: the
-    /// identity was spent.
-    Spent,
-}
 
 impl PgStore {
     /// The next Job of `runner_type` waiting at `at`, in dispatch order, locked
@@ -38,10 +25,10 @@ impl PgStore {
         passed_over: &[Uuid],
     ) -> Result<Option<JobId>, PortError> {
         let sql = format!(
-            "{} SELECT j.id::uuid AS id FROM jobs j JOIN ordered o ON o.id = j.id \
+            "{} SELECT j.id::uuid AS id FROM jobs j JOIN ordered o ON o.job_id = j.id \
              WHERE NOT (j.id = ANY($3)) {ORDER_BY} \
              FOR UPDATE OF j SKIP LOCKED LIMIT 1",
-            ordered_waiting(CLAIMED_SCOPE),
+            ordered_waiting(CLAIMED_TYPE),
         );
         let found: Option<Uuid> = sqlx::query_scalar(&sql)
             .bind(at)
@@ -53,21 +40,19 @@ impl PgStore {
         found.map(JobId::new).transpose().map_err(PortError::from)
     }
 
-    pub async fn claimed_before(
+    /// The Job and Run an earlier claim under this identity reserved, if any.
+    pub async fn reserved_by_claim(
         &self,
         runner_type: &RunnerTypeKey,
         instance_key: &InstanceKey,
         claim_id: ClaimId,
-    ) -> Result<ClaimedBefore, PortError> {
+    ) -> Result<Option<(JobId, RunId)>, PortError> {
         let row = sqlx::query(
-            "SELECT r.job_id::uuid AS job_id, r.id::uuid AS run_id, \
-                (rs.run_id IS NOT NULL OR t.run_id IS NOT NULL) AS spent \
+            "SELECT r.job_id::uuid AS job_id, r.id::uuid AS run_id \
              FROM run_reservations rr \
              JOIN runs r ON r.id = rr.run_id \
              JOIN runner_instances ri ON ri.id = rr.instance_id \
              JOIN runner_types rt ON rt.id = ri.runner_type_id \
-             LEFT JOIN run_starts rs ON rs.run_id = r.id \
-             LEFT JOIN run_terminals t ON t.run_id = r.id \
              WHERE rt.type_key = $1 AND ri.instance_key = $2 AND rr.claim_id = $3",
         )
         .bind(runner_type.as_str())
@@ -76,16 +61,28 @@ impl PgStore {
         .fetch_optional(self.pool())
         .await
         .map_err(unavailable)?;
-        let Some(row) = row else {
-            return Ok(ClaimedBefore::Nothing);
-        };
-        if row.get::<bool, _>("spent") {
-            return Ok(ClaimedBefore::Spent);
-        }
-        Ok(ClaimedBefore::Pending {
-            job_id: JobId::new(row.get("job_id"))?,
-            run_id: RunId::new(row.get("run_id"))?,
+        row.map(|row| -> Result<(JobId, RunId), bc_jobs::JobsError> {
+            Ok((
+                JobId::new(row.get("job_id"))?,
+                RunId::new(row.get("run_id"))?,
+            ))
         })
+        .transpose()
+        .map_err(PortError::from)
+    }
+
+    pub async fn runner_type_of(&self, job_id: JobId) -> Result<Option<RunnerTypeKey>, PortError> {
+        let key: Option<String> = sqlx::query_scalar(
+            "SELECT rt.type_key FROM jobs j JOIN runner_types rt ON rt.id = j.runner_type_id \
+             WHERE j.id = $1",
+        )
+        .bind(job_id.as_uuid())
+        .fetch_optional(self.pool())
+        .await
+        .map_err(unavailable)?;
+        key.map(RunnerTypeKey::new)
+            .transpose()
+            .map_err(PortError::from)
     }
 
     /// The earliest moment a retry of `runner_type` becomes due, so a held
@@ -94,17 +91,15 @@ impl PgStore {
         &self,
         runner_type: &RunnerTypeKey,
     ) -> Result<Option<DateTime<Utc>>, PortError> {
-        let sql = format!(
-            "SELECT min(due.due_at) AS due_at FROM jobs j \
-             JOIN LATERAL ({UNCONSUMED_RETRY}) due ON true \
-             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} \
-               AND j.runner_type_id = (SELECT rt.id FROM runner_types rt WHERE rt.type_key = $1)"
-        );
-        let row = sqlx::query(&sql)
-            .bind(runner_type.as_str())
-            .fetch_one(self.pool())
-            .await
-            .map_err(unavailable)?;
+        let row = sqlx::query(
+            "SELECT min(w.due_at) AS due_at FROM waiting_jobs w \
+             WHERE w.due_at > now() \
+               AND w.runner_type_id = (SELECT rt.id FROM runner_types rt WHERE rt.type_key = $1)",
+        )
+        .bind(runner_type.as_str())
+        .fetch_one(self.pool())
+        .await
+        .map_err(unavailable)?;
         Ok(row.get("due_at"))
     }
 }

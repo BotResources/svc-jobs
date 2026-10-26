@@ -60,14 +60,31 @@ in.
 - `integration.cmd.jobs.job.create.v2` on its own durable
   (`svc_jobs_job_create_v2`): v1 plus an optional `priority`; out of range is
   rejected with `invalid_priority`. v1 is unchanged and requests 3.
-- Migration `0003_priority_and_claim.sql` — schema only, no data rewritten:
-  existing jobs read as requesting and waiting at 3, existing runner types as
-  `PUSH` with a 72 h maximum, existing runs answer to the service default.
+- A child admitted under a forced parent is born forced at the parent's forced
+  level (requested, effective and forced alike).
+- Each pod holds at most `JOBS_CLAIM_MAX_HELD` (default 1024) claims open and
+  answers further claims empty at once. A waiting job wakes one held claim of
+  its type; a due retry wakes the held claims of its type.
+- A closed set of claim refusals: `instance_unknown`, `not_claim_mode`,
+  `instance_draining`, `runner_type_retired`, `claim_spent`,
+  `malformed_claim` (a nil `claim_id` is malformed).
+- Backstop `trigger_stranded`: a run of a `CLAIM` type published as a trigger
+  before the switch, neither started nor reserved after
+  `JOBS_CLAIM_RESERVATION_SECONDS`, fails as transient; its retry is claimed.
+- Migration `0003_priority_and_claim.sql`. Existing jobs read as requesting
+  and waiting at 3 (column defaults, no table rewrite: checks and the root
+  foreign key are added `NOT VALID`, then validated). Existing runner types
+  read as `PUSH` and store no maximum duration of their own: they show and
+  apply `JOBS_RUN_MAX_DURATION_SECONDS`. Existing runs answer to the service
+  default. New tables `user_max_priorities`, `run_reservations`,
+  `waiting_jobs` and `root_dispatch_turns`; `waiting_jobs` is filled once from
+  the jobs waiting at migration time (a derived access path, not a rewrite of
+  ledger data).
 
 ### Changed
 
-- `JOBS_RUN_MAX_DURATION_SECONDS` is now the maximum a runner type is
-  registered with, not a single service-wide maximum. Keep the `JOBS_CANCEL`
+- `JOBS_RUN_MAX_DURATION_SECONDS` is the maximum of every runner type that has
+  none of its own, not a single fixed maximum. Keep the `JOBS_CANCEL`
   bucket TTL above the largest maximum any type is set to.
 - The run-duration backstop holds each run to the maximum it was dispatched
   with.
@@ -80,12 +97,16 @@ in.
   `FORBIDDEN` before a resolver runs.
 - `job.queued.v1` is unchanged.
 - No preemption: a started run is never interrupted for a higher priority.
+- Admission re-checks the priority facts it decided on under a shared lock on
+  the user or on the parent and its root (id order); a parent settled in the
+  meantime refuses the child with `parent_job_terminal`. Forcing and a change
+  of maximum lock what they reach before deciding each row.
 
 ### Known limitations
 
 - Switching a runner type from `PUSH` to `CLAIM` does not withdraw triggers
-  already published; they are consumed by the remaining push instances or end
-  through the usual backstops.
+  already published; one consumed by a remaining push instance runs, one left
+  unstarted fails as `trigger_stranded` and its retry is claimed.
 - `jobs.trigger.{runner_type}` carries the deprecation intent of the contract;
   no deletion version is set yet.
 - `contract-jobs` 0.6.0, `bc-jobs` 0.6.0.

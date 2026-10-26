@@ -32,8 +32,8 @@ pub async fn queued(
     sqlx::query(
         "INSERT INTO jobs (id, runner_type_id, config, parent_job_id, predecessor_job_id, \
          triggered_by_id, producer_id, source_entity_id, max_attempts, created_at, \
-         requested_priority, effective_priority, root_job_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+         requested_priority, effective_priority, forced_priority, root_job_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
             coalesce((SELECT coalesce(p.root_job_id, p.parent_job_id, p.id) \
                       FROM jobs p WHERE p.id = $4), $1))",
     )
@@ -52,10 +52,11 @@ pub async fn queued(
     .bind(at)
     .bind(fact.requested_priority.get_i16())
     .bind(fact.effective_priority.get_i16())
+    .bind(fact.forced_priority.map(|level| level.get_i16()))
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), None).await
 }
 
 pub async fn priority_forced(
@@ -72,7 +73,7 @@ pub async fn priority_forced(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::reprioritize(tx, fact.job_id.as_uuid(), fact.priority.get_i16()).await
 }
 
 pub async fn priority_recalculated(
@@ -90,11 +91,10 @@ pub async fn priority_recalculated(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    if updated.rows_affected() == 1 {
-        Ok(())
-    } else {
-        Err(PortError::ConcurrentModification)
+    if updated.rows_affected() != 1 {
+        return Err(PortError::ConcurrentModification);
     }
+    super::waiting::reprioritize(tx, fact.job_id.as_uuid(), fact.effective_priority.get_i16()).await
 }
 
 pub async fn completed(
@@ -179,7 +179,7 @@ async fn resolution(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::end_waiting(tx, job_id).await
 }
 
 pub async fn manual_retry_started(

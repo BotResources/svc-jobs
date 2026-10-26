@@ -2,9 +2,11 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::fleet::RunnerType;
-use crate::domain::fleet::dispatch_mode::DispatchMode;
+use crate::domain::fleet::dispatch_mode::{DispatchMode, SuccessorDispatch};
 use crate::domain::fleet::instance::RunnerInstance;
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::run_duration::MaxRunDuration;
+use crate::domain::ids::RunId;
 use crate::domain::keys::{InstanceKey, RunnerTypeKey};
 use crate::error::JobsError;
 
@@ -45,6 +47,28 @@ impl RunnerTypeDecisionFacts {
 }
 
 impl RunnerType {
+    /// How the first Run of a manual-retry successor of a Job of `runner_type`
+    /// leaves the ledger: a `CLAIM` type's successor waits to be claimed; any other
+    /// — or a type never registered — is pushed with the intervention, held to the
+    /// type's maximum duration or the service default.
+    pub fn successor_dispatch(
+        runner_type: Option<&RunnerType>,
+        first_run_id: RunId,
+        service_default: MaxRunDuration,
+    ) -> SuccessorDispatch {
+        match runner_type {
+            Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
+                SuccessorDispatch::AwaitClaim
+            }
+            known => SuccessorDispatch::Push {
+                first_run_id,
+                max_run_duration: known.map_or(service_default, |known| {
+                    known.max_run_duration_or(service_default)
+                }),
+            },
+        }
+    }
+
     pub fn guard_accept_job(&self) -> Result<(), JobsError> {
         guard_accept_job(self.lifecycle(), self.key())
     }
@@ -169,6 +193,28 @@ impl RunnerType {
             Affordance::new(SET_DISPATCH_MODE, self.can_configure()),
             Affordance::new(SET_MAX_RUN_DURATION, self.can_configure()),
         ]
+    }
+}
+
+/// How the first Run of a manual-retry successor of a Job of `runner_type`
+/// leaves the ledger: a `CLAIM` type's successor waits to be claimed; any other
+/// — or a type never registered — is pushed with the intervention, held to the
+/// type's maximum duration or the service default.
+pub fn successor_dispatch(
+    runner_type: Option<&RunnerType>,
+    first_run_id: RunId,
+    service_default: MaxRunDuration,
+) -> SuccessorDispatch {
+    match runner_type {
+        Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
+            SuccessorDispatch::AwaitClaim
+        }
+        known => SuccessorDispatch::Push {
+            first_run_id,
+            max_run_duration: known.map_or(service_default, |known| {
+                known.max_run_duration_or(service_default)
+            }),
+        },
     }
 }
 

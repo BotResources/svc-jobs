@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::fixtures::{JobBuilder, RunBuilder, resolution_id, schedule_id, ts};
 use chrono::TimeDelta;
 
@@ -308,6 +309,70 @@ fn a_run_dispatched_with_a_longer_maximum_outlives_the_service_default() {
     assert_eq!(
         result,
         Err(JobsError::RunWithinMaxDuration {
+            run_id: run_id.as_uuid()
+        })
+    );
+}
+
+#[test]
+fn a_trigger_left_on_the_stream_of_a_claim_type_fails_as_stranded_and_waits_for_a_claim() {
+    // Given: a pushed run never started, its type since switched to CLAIM
+    let run = RunBuilder::new(1).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the backstop sweeps past the delay
+    let result = job
+        .fail_run_for_stranded_trigger(
+            reclaim(run_id, ts(70)),
+            DispatchMode::Claim,
+            TimeDelta::seconds(60),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        )
+        .unwrap();
+    // Then: any taker is told to stop, the run fails transient, and a retry waits
+    match result.events.as_slice() {
+        [
+            JobEvent::RunCancellationRequested(requested),
+            JobEvent::RunFailed(failed),
+            JobEvent::RetryScheduled(_),
+        ] => {
+            assert_eq!(requested.reason_code.as_str(), "trigger_stranded");
+            assert_eq!(failed.report.reason_code().as_str(), "trigger_stranded");
+            assert_eq!(failed.report.kind(), RunFailureKind::Transient);
+        }
+        other => panic!("expected a stop, a transient failure and a retry, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_trigger_of_a_push_type_or_within_the_delay_is_not_stranded() {
+    // Given: a pushed run never started
+    let run = RunBuilder::new(1).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When/Then: on a PUSH type it is waiting for its taker, within the delay it is fresh
+    assert_eq!(
+        job.fail_run_for_stranded_trigger(
+            reclaim(run_id, ts(70)),
+            DispatchMode::Push,
+            TimeDelta::seconds(60),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        )
+        .unwrap_err()
+        .code(),
+        "not_claim_mode"
+    );
+    assert_eq!(
+        job.fail_run_for_stranded_trigger(
+            reclaim(run_id, ts(30)),
+            DispatchMode::Claim,
+            TimeDelta::seconds(60),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        ),
+        Err(JobsError::TriggerNotStranded {
             run_id: run_id.as_uuid()
         })
     );

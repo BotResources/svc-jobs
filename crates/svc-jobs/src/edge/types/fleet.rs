@@ -1,5 +1,6 @@
 use async_graphql::SimpleObject;
 use bc_jobs::domain::fleet::RunnerType;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::fleet::view::FleetView;
 use br_util_graphql::Affordance;
 use chrono::{DateTime, Utc};
@@ -61,18 +62,21 @@ fn count(value: u32) -> i32 {
 pub fn view_of(view: crate::app::fleet::RunnerTypeView) -> GqlRunnerTypeView {
     let known = &view.runner_type;
     GqlRunnerTypeView {
-        runner_type: runner_type_of(known, &view.fleet),
+        runner_type: runner_type_of(known, &view.fleet, view.max_run_duration),
         affordances: affordance_list(view.affordances),
     }
 }
 
-fn runner_type_of(known: &RunnerType, projection: &FleetView) -> GqlRunnerType {
+fn runner_type_of(
+    known: &RunnerType,
+    projection: &FleetView,
+    max_run_duration: MaxRunDuration,
+) -> GqlRunnerType {
     GqlRunnerType {
         type_key: known.key().as_str().to_owned(),
         lifecycle: known.lifecycle().into(),
         dispatch_mode: known.dispatch_mode().into(),
-        max_run_duration_seconds: i32::try_from(known.max_run_duration().seconds())
-            .unwrap_or(i32::MAX),
+        max_run_duration_seconds: i32::try_from(max_run_duration.seconds()).unwrap_or(i32::MAX),
         instances: projection
             .instances()
             .iter()

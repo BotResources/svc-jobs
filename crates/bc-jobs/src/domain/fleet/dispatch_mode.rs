@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::fleet::run_duration::MaxRunDuration;
+use crate::domain::ids::RunId;
 use crate::error::JobsError;
 
 pub const PUSH: &str = "PUSH";
@@ -34,6 +36,20 @@ impl DispatchMode {
             Self::Claim => CLAIM,
         }
     }
+}
+
+/// How the first Run of a manual-retry successor leaves the ledger, from the
+/// dispatch mode of its RunnerType.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuccessorDispatch {
+    /// Dispatched with the intervention, on the trigger stream — even when the
+    /// predecessor spent its whole budget.
+    Push {
+        first_run_id: RunId,
+        max_run_duration: MaxRunDuration,
+    },
+    /// Waiting to be claimed, at its effective priority, like any Job.
+    AwaitClaim,
 }
 
 #[cfg(test)]

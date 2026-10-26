@@ -33,6 +33,7 @@ const DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_PRIORITY: i64 = 3;
 const DEFAULT_CLAIM_RESERVATION_SECONDS: i64 = 60;
 const DEFAULT_CLAIM_MAX_WAIT_SECONDS: u64 = 30;
+const DEFAULT_CLAIM_MAX_HELD: usize = 1024;
 
 pub struct Settings {
     pub port: u16,
@@ -58,6 +59,8 @@ pub struct Settings {
 pub struct ClaimSettings {
     pub max_wait: Duration,
     pub reservation_delay: TimeDelta,
+    /// The claims one pod holds open at once; a claim beyond is answered empty.
+    pub max_held: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -155,6 +158,13 @@ impl Settings {
             "JOBS_CLAIM_MAX_WAIT_SECONDS",
             DEFAULT_CLAIM_MAX_WAIT_SECONDS,
         )?;
+        let claim_max_held: usize = read("JOBS_CLAIM_MAX_HELD", DEFAULT_CLAIM_MAX_HELD)?;
+        if claim_max_held == 0 {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_MAX_HELD",
+                value: claim_max_held.to_string(),
+            });
+        }
 
         let ceiling = MaxAttempts::new(max_attempts_ceiling)?;
         let limits = ServiceLimits::new(
@@ -212,6 +222,7 @@ impl Settings {
             claims: ClaimSettings {
                 max_wait: Duration::from_secs(claim_max_wait_seconds),
                 reservation_delay: TimeDelta::seconds(claim_reservation_seconds),
+                max_held: claim_max_held,
             },
         })
     }

@@ -3,29 +3,32 @@
 //! The claim is held open until a Job is waiting for the type, then that Job is
 //! reserved to the Instance and its Run created in the same transaction that
 //! locked it — `FOR UPDATE SKIP LOCKED`, so the claims served by several pods
-//! never reserve one Job twice. A claim repeated under the same identity finds
-//! the Run already reserved to it. At the end of the wait the answer is empty.
+//! never reserve one Job twice. A claim repeated under the same identity is
+//! answered with the Run already reserved to it. At the end of the wait the
+//! answer is empty.
 
 use std::time::Duration;
 
+use bc_jobs::JobsError;
 use bc_jobs::commands::job::dispatch::ReserveRun;
 use bc_jobs::domain::fleet::RunnerType;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{ClaimId, JobId, RunId};
+use bc_jobs::domain::job::claim::RecalledClaim;
 use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::transport::RunTrigger;
-use tokio::sync::broadcast::error::RecvError;
+use contract_jobs::runner::ClaimRefusal;
 use tokio::time::{Instant, sleep_until};
 use uuid::Uuid;
 
+use super::claim_waiters::HeldClaim;
 use super::write::{self, JobChange};
 use super::{Jobs, service_metadata};
 use crate::db::PgStore;
-use crate::db::claim::ClaimedBefore;
 use crate::error::ServiceError;
-use crate::stream::{Fact, Hub};
 
 /// What a claim is answered with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,15 +36,14 @@ pub enum ClaimAnswer {
     Served(RunTrigger),
     /// Nothing was waiting during the wait.
     Empty,
-    /// The claim was refused, under a stable code.
-    Refused(&'static str),
+    /// The claim was refused.
+    Refused(ClaimRefusal),
 }
 
-/// A claim identity whose Run was already started or settled: it named one
-/// slot, and that slot was spent.
-pub const CLAIM_SPENT: &str = "claim_spent";
-
-const MINIMUM_WAKE: Duration = Duration::from_millis(250);
+/// The longest a reservation may start before the claim's deadline: a Run is
+/// never reserved for a claim whose reply would arrive after its Instance gave
+/// up waiting.
+const RESERVATION_MARGIN: Duration = Duration::from_millis(500);
 
 pub struct ClaimRequest {
     pub runner_type: String,
@@ -50,8 +52,8 @@ pub struct ClaimRequest {
     pub wait: Duration,
 }
 
-pub async fn serve(jobs: &Jobs, hub: &Hub, request: ClaimRequest) -> ClaimAnswer {
-    match answer(jobs, hub, request).await {
+pub async fn serve(jobs: &Jobs, request: ClaimRequest) -> ClaimAnswer {
+    match answer(jobs, request).await {
         Ok(answer) => answer,
         Err(error) => {
             tracing::warn!(
@@ -69,73 +71,94 @@ enum Reservation {
     PassedOver(JobId),
 }
 
-async fn answer(
-    jobs: &Jobs,
-    hub: &Hub,
-    request: ClaimRequest,
-) -> Result<ClaimAnswer, ServiceError> {
-    let (Ok(key), Ok(instance_key)) = (
+/// The refusal a claim gets when the domain refuses to serve it.
+fn refusal_of(refusal: &JobsError) -> ClaimRefusal {
+    match refusal {
+        JobsError::NotClaimMode { .. } => ClaimRefusal::NotClaimMode,
+        JobsError::InstanceDraining { .. } => ClaimRefusal::InstanceDraining,
+        JobsError::RunnerTypeRetired { .. } => ClaimRefusal::RunnerTypeRetired,
+        _ => ClaimRefusal::InstanceUnknown,
+    }
+}
+
+async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, ServiceError> {
+    let (Ok(key), Ok(instance_key), Ok(claim_id)) = (
         RunnerTypeKey::new(&request.runner_type),
         InstanceKey::new(&request.instance_key),
+        ClaimId::new(request.claim_id),
     ) else {
-        return Ok(ClaimAnswer::Refused(
-            bc_jobs::JobsError::InstanceUnknown {
-                instance_key: request.instance_key,
-            }
-            .code(),
-        ));
+        return Ok(ClaimAnswer::Refused(ClaimRefusal::MalformedClaim));
     };
-    let claim_id = match ClaimId::new(request.claim_id) {
-        Ok(claim_id) => claim_id,
-        Err(refusal) => return Ok(ClaimAnswer::Refused(refusal.code())),
-    };
-    let deadline = Instant::now() + request.wait.min(jobs.claims.max_wait);
-    let mut facts = hub.subscribe();
+    let wait = request.wait.min(jobs.claims.max_wait);
+    let deadline = Instant::now() + wait;
+    let last_reservation = deadline - RESERVATION_MARGIN.min(wait / 5);
     let mut passed_over: Vec<Uuid> = Vec::new();
+    let mut first_pass = true;
     loop {
+        if !first_pass && Instant::now() >= last_reservation {
+            return Ok(ClaimAnswer::Empty);
+        }
+        first_pass = false;
         let Some(runner_type) = FleetReader::load(&jobs.store, &key).await? else {
-            return Ok(ClaimAnswer::Refused(
-                bc_jobs::JobsError::InstanceUnknown {
-                    instance_key: instance_key.as_str().to_owned(),
-                }
-                .code(),
-            ));
+            return Ok(ClaimAnswer::Refused(ClaimRefusal::InstanceUnknown));
         };
         if let Err(refusal) = runner_type.guard_claim(&instance_key) {
-            return Ok(ClaimAnswer::Refused(refusal.code()));
+            return Ok(ClaimAnswer::Refused(refusal_of(&refusal)));
         }
-        match jobs
-            .store
-            .claimed_before(&key, &instance_key, claim_id)
-            .await?
-        {
-            ClaimedBefore::Pending { job_id, run_id } => {
-                return Ok(ClaimAnswer::Served(trigger_of(jobs, job_id, run_id).await?));
-            }
-            ClaimedBefore::Spent => return Ok(ClaimAnswer::Refused(CLAIM_SPENT)),
-            ClaimedBefore::Nothing => {}
+        if let Some(answer) = recalled(jobs, &key, &instance_key, claim_id).await? {
+            return Ok(answer);
         }
+        let held = jobs.waiters.hold(&key);
         match reserve(jobs, &runner_type, &instance_key, claim_id, &passed_over).await {
             Ok(Reservation::Reserved(trigger)) => return Ok(ClaimAnswer::Served(trigger)),
             Ok(Reservation::PassedOver(job_id)) => {
                 passed_over.push(job_id.as_uuid());
-                if Instant::now() >= deadline {
-                    return Ok(ClaimAnswer::Empty);
-                }
                 continue;
             }
             Ok(Reservation::NothingWaiting) => {}
             // Another claim or write moved the job between the selection and the
-            // commit: the next pass sees it settled — a repeat of this very claim
-            // finds the run it reserved.
-            Err(ServiceError::Contended) if Instant::now() < deadline => continue,
-            Err(ServiceError::Contended) => return Ok(ClaimAnswer::Empty),
+            // commit; the job this pass locked and rolled back may still wait, so
+            // another held claim of the type is woken to look again. A repeat of
+            // this very claim on another pod finds its run on the next pass.
+            Err(ServiceError::Contended) => {
+                jobs.waiters.wake_one(&key);
+                continue;
+            }
             Err(other) => return Err(other),
         }
-        if !wait_for_work(jobs, &key, &mut facts, hub, deadline).await? {
+        if !wait_for_work(jobs, &key, &held, deadline).await? {
             return Ok(ClaimAnswer::Empty);
         }
     }
+}
+
+/// A claim repeated under an identity that already reserved a Run: the
+/// domain decides whether that Run is handed back or the identity was spent.
+async fn recalled(
+    jobs: &Jobs,
+    key: &RunnerTypeKey,
+    instance_key: &InstanceKey,
+    claim_id: ClaimId,
+) -> Result<Option<ClaimAnswer>, ServiceError> {
+    let Some((job_id, run_id)) = jobs
+        .store
+        .reserved_by_claim(key, instance_key, claim_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let job = jobs.require(job_id).await?;
+    Ok(Some(match job.recall_claim(run_id)? {
+        RecalledClaim::Pending { run_id, attempt } => ClaimAnswer::Served(RunTrigger {
+            job_id,
+            run_id,
+            runner_type: job.runner_type().clone(),
+            config: job.config().cloned(),
+            attempt,
+            triggered_by: job.triggered_by().cloned(),
+        }),
+        RecalledClaim::Spent => ClaimAnswer::Refused(ClaimRefusal::ClaimSpent),
+    }))
 }
 
 async fn reserve(
@@ -160,7 +183,8 @@ async fn reserve(
         ReserveRun {
             run_id,
             at,
-            max_run_duration: runner_type.max_run_duration(),
+            max_run_duration: runner_type
+                .max_run_duration_or(MaxRunDuration::from_delta(jobs.limits.max_run_duration())?),
             instance: RunnerInstanceReference::new(runner_type.key().clone(), instance_key.clone()),
             claim_id,
         },
@@ -202,67 +226,30 @@ async fn reserve(
     }))
 }
 
-async fn trigger_of(jobs: &Jobs, job_id: JobId, run_id: RunId) -> Result<RunTrigger, ServiceError> {
-    let job = jobs.require(job_id).await?;
-    let run = job.find_run(run_id)?;
-    Ok(RunTrigger {
-        job_id,
-        run_id,
-        runner_type: job.runner_type().clone(),
-        config: job.config().cloned(),
-        attempt: run.attempt_number(),
-        triggered_by: job.triggered_by().cloned(),
-    })
-}
-
-/// Parks the claim until something could make a Job of the type claimable — a
-/// Job queued, a retry falling due, the fleet of the type moving — or until
-/// the deadline. `false` at the deadline.
+/// Parks the claim until it is woken — a Job queued for the type, a retry of
+/// the type scheduled, the fleet of the type moving — or until the next retry
+/// of the type falls due, or the deadline. The retry timer is read once per
+/// wait. `false` at the deadline.
 async fn wait_for_work(
     jobs: &Jobs,
     key: &RunnerTypeKey,
-    facts: &mut tokio::sync::broadcast::Receiver<Fact>,
-    hub: &Hub,
+    held: &HeldClaim,
     deadline: Instant,
 ) -> Result<bool, ServiceError> {
-    loop {
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(false);
-        }
-        let wake = match jobs.store.next_retry_due_for(key).await? {
-            Some(due) => match (due - jobs.clock.now()).to_std() {
-                Ok(remaining) => deadline.min(now + remaining.max(MINIMUM_WAKE)),
-                // A retry already due that the claim could not take — refused by the
-                // domain, or taken by another claim — is looked at again after the
-                // floor, never in a spin.
-                Err(_) => deadline.min(now + MINIMUM_WAKE),
-            },
-            None => deadline,
-        };
-        tokio::select! {
-            () = sleep_until(wake) => return Ok(Instant::now() < deadline),
-            fact = facts.recv() => match fact {
-                Ok(fact) if may_make_work_claimable(&fact, key) => return Ok(true),
-                Ok(_) => {}
-                Err(RecvError::Lagged(_)) => return Ok(true),
-                Err(RecvError::Closed) => {
-                    *facts = hub.subscribe();
-                    return Ok(true);
-                }
-            },
-        }
+    let now = Instant::now();
+    if now >= deadline {
+        return Ok(false);
     }
-}
-
-fn may_make_work_claimable(fact: &Fact, key: &RunnerTypeKey) -> bool {
-    match fact {
-        Fact::Job { event, .. } => match event.as_ref() {
-            JobEvent::JobQueued(queued) => &queued.runner_type == key,
-            JobEvent::RetryScheduled(_) => true,
-            _ => false,
+    let wake = match jobs.store.next_retry_due_for(key).await? {
+        Some(due) => match (due - jobs.clock.now()).to_std() {
+            Ok(remaining) => deadline.min(now + remaining),
+            Err(_) => now,
         },
-        Fact::Fleet { event, .. } => event.runner_type() == key,
-        _ => false,
+        None => deadline,
+    };
+    tokio::select! {
+        () = sleep_until(wake) => {}
+        () = held.woken() => {}
     }
+    Ok(Instant::now() < deadline)
 }

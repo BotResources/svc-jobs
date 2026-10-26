@@ -43,6 +43,7 @@ impl JobsError {
             Self::RunNotReserved { .. } => "run_not_reserved",
             Self::RunReservedElsewhere { .. } => "run_reserved_elsewhere",
             Self::ReservationWithinDelay { .. } => "reservation_within_delay",
+            Self::TriggerNotStranded { .. } => "trigger_not_stranded",
             Self::RunnerTypeMismatch { .. } => "runner_type_mismatch",
             Self::RunnerTypeUnavailable { .. } => "runner_type_unavailable",
             Self::RunnerTypeRetired { .. } => "runner_type_retired",

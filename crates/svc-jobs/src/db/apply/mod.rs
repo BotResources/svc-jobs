@@ -3,6 +3,7 @@ pub mod job;
 pub mod refs;
 pub mod run;
 pub mod user;
+pub mod waiting;
 
 use bc_jobs::domain::ids::{EventId, JobId, KnownUserId, RunnerTypeId};
 use bc_jobs::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};

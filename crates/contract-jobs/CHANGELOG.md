@@ -19,9 +19,13 @@ Additive: every 0.5 subject, payload and constant is unchanged.
   `runner::CLAIM_FILTER`, `runner::Claim { version, instance_key, claim_id,
   wait_ms }` and `runner::ClaimReply { version, run, reason }` with
   `served` / `empty` / `refused`. A served `run` is exactly a `Trigger`.
-  Reasons `CLAIM_REASON_INSTANCE_UNKNOWN` (`instance_unknown`),
-  `CLAIM_REASON_NOT_CLAIM_MODE` (`not_claim_mode`), and the run failure
-  `RUN_FAILURE_CLAIM_LOST` (`claim_lost`).
+- The closed refusal set `runner::ClaimRefusal` (`ALL`, `as_str`), each
+  variant documenting the runner's reaction: `instance_unknown`,
+  `not_claim_mode`, `instance_draining`, `runner_type_retired`,
+  `claim_spent`, `malformed_claim` (a nil `claim_id` is malformed), with the
+  matching `CLAIM_REASON_*` constants.
+- Run failures `RUN_FAILURE_CLAIM_LOST` (`claim_lost`) and
+  `RUN_FAILURE_TRIGGER_STRANDED` (`trigger_stranded`).
 - `jobs.trigger.{runner_type}` carries a deprecation intent: it serves `PUSH`
   types only, and goes once every type claims. No deletion version is set.
 

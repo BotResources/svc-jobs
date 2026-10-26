@@ -6,6 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Semaphore;
+
 use contract_jobs::runner as wire;
 use futures::StreamExt;
 
@@ -14,23 +16,19 @@ use super::trigger::wire_trigger;
 use crate::app::Jobs;
 use crate::app::claim::{self, ClaimAnswer, ClaimRequest};
 use crate::error::ServiceError;
-use crate::stream::Hub;
 use crate::supervision::Established;
 
 pub const CLAIM_QUEUE_GROUP: &str = "svc_jobs_claims";
 
 const CLAIM_PREFIX: &str = "jobs.claim.";
 
-/// The reason a claim this service cannot read is refused under.
-pub const MALFORMED_CLAIM: &str = "malformed_claim";
-
 pub async fn respond(
     channels: RunnerChannels,
     jobs: Arc<Jobs>,
-    hub: Hub,
     established: Established,
 ) -> Result<(), ServiceError> {
     let client = channels.client();
+    let held = Arc::new(Semaphore::new(jobs.claims.max_held));
     let mut claims = client
         .queue_subscribe(wire::CLAIM_FILTER, CLAIM_QUEUE_GROUP.to_owned())
         .await
@@ -43,9 +41,18 @@ pub async fn respond(
         };
         let client = client.clone();
         let jobs = Arc::clone(&jobs);
-        let hub = hub.clone();
+        // A pod holds a bounded number of claims open: past the bound a claim is
+        // answered empty at once, and its Instance claims again — on this pod or
+        // another one of the queue group.
+        let permit = Arc::clone(&held).try_acquire_owned().ok();
         tokio::spawn(async move {
-            let reply = answer(&jobs, &hub, message.subject.as_str(), &message.payload).await;
+            let reply = match permit {
+                Some(_permit) => answer(&jobs, message.subject.as_str(), &message.payload).await,
+                None => {
+                    tracing::debug!("the pod holds as many claims as it may; answered empty");
+                    wire::ClaimReply::empty()
+                }
+            };
             let bytes = match serde_json::to_vec(&reply) {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -67,15 +74,15 @@ pub async fn respond(
     ))
 }
 
-async fn answer(jobs: &Jobs, hub: &Hub, subject: &str, payload: &[u8]) -> wire::ClaimReply {
+async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> wire::ClaimReply {
     let Some(runner_type) = subject.strip_prefix(CLAIM_PREFIX) else {
-        return wire::ClaimReply::refused(MALFORMED_CLAIM);
+        return wire::ClaimReply::refused(wire::ClaimRefusal::MalformedClaim);
     };
     let claim: wire::Claim = match serde_json::from_slice(payload) {
         Ok(claim) => claim,
         Err(error) => {
             tracing::warn!(subject, error = %error, "a claim this service cannot read, refused");
-            return wire::ClaimReply::refused(MALFORMED_CLAIM);
+            return wire::ClaimReply::refused(wire::ClaimRefusal::MalformedClaim);
         }
     };
     let request = ClaimRequest {
@@ -84,7 +91,7 @@ async fn answer(jobs: &Jobs, hub: &Hub, subject: &str, payload: &[u8]) -> wire::
         claim_id: claim.claim_id,
         wait: Duration::from_millis(claim.wait_ms),
     };
-    match claim::serve(jobs, hub, request).await {
+    match claim::serve(jobs, request).await {
         ClaimAnswer::Served(trigger) => wire::ClaimReply::served(wire_trigger(&trigger)),
         ClaimAnswer::Empty => wire::ClaimReply::empty(),
         ClaimAnswer::Refused(reason) => wire::ClaimReply::refused(reason),

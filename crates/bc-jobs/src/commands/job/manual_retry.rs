@@ -1,8 +1,7 @@
 use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::AttemptNumber;
-use crate::domain::fleet::run_duration::MaxRunDuration;
-use crate::domain::ids::{JobId, ManualRetryId, ResolutionId, RunId};
+use crate::domain::ids::{JobId, ManualRetryId, ResolutionId};
 use crate::domain::job::Job;
 use crate::domain::job::parenting::ParentContext;
 use crate::domain::priority::{JobPriority, Priority, PriorityBasis};
@@ -12,19 +11,7 @@ use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::{JobQueued, ManualRetryStarted, RunDispatched};
 
-/// How the successor's first Run leaves the ledger, from the dispatch mode of
-/// its RunnerType.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuccessorDispatch {
-    /// Dispatched with the intervention, on the trigger stream — even when the
-    /// predecessor spent its whole budget.
-    Push {
-        first_run_id: RunId,
-        max_run_duration: MaxRunDuration,
-    },
-    /// Waiting to be claimed, at its effective priority, like any Job.
-    AwaitClaim,
-}
+pub use crate::domain::fleet::dispatch_mode::SuccessorDispatch;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManualRetryJob {
@@ -76,9 +63,7 @@ pub fn manual_retry(
     guard_current_failure(predecessor, command.failed_resolution_id)?;
     guard_source_free(predecessor.source(), active_for_source)?;
     let basis = match parent.resolve(predecessor.parent_job_id())? {
-        Some(parent) => PriorityBasis::InheritedFromParent {
-            parent_effective: parent.priority().effective(),
-        },
+        Some(parent) => PriorityBasis::inherited_from(parent),
         None => PriorityBasis::Capped {
             maximum: command.applicable_maximum,
         },
@@ -97,6 +82,7 @@ pub fn manual_retry(
         max_attempts: predecessor.max_attempts(),
         requested_priority: priority.requested(),
         effective_priority: priority.effective(),
+        forced_priority: priority.forced(),
     })];
     let first_run_id = match command.dispatch {
         SuccessorDispatch::Push {

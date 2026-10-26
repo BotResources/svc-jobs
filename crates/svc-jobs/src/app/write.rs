@@ -43,6 +43,7 @@ pub enum PriorityPremise {
     ParentEffective {
         parent_job_id: JobId,
         effective: Priority,
+        forced: bool,
     },
 }
 
@@ -57,12 +58,14 @@ impl PriorityPremise {
         user: Option<&UserMaxPriority>,
     ) -> Option<Self> {
         match (basis, parent) {
-            (PriorityBasis::InheritedFromParent { parent_effective }, Some(parent)) => {
-                Some(Self::ParentEffective {
-                    parent_job_id: parent.id(),
-                    effective: parent_effective,
-                })
-            }
+            (
+                PriorityBasis::InheritedFromParent { .. } | PriorityBasis::ForcedByParent { .. },
+                Some(parent),
+            ) => Some(Self::ParentEffective {
+                parent_job_id: parent.id(),
+                effective: parent.priority().effective(),
+                forced: parent.priority().is_forced(),
+            }),
             _ => user.map(|user| Self::UserMaximum {
                 user_id: user.user_id(),
                 maximum: user.maximum(),
@@ -133,12 +136,15 @@ pub async fn commit_job_changes_in(
         return Ok(());
     }
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
+    // The lineage an admission inherits from is share-locked first: a root and
+    // a parent are older than every Job this write locks for update, so taking
+    // them first keeps every writer locking Job rows in ascending id order.
+    for change in &changes {
+        guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
+    }
     let locked = lock_in_ascending_order(&mut *tx, held.ids()).await?;
     for change in changes.iter().filter(|change| change.before.is_some()) {
         guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
-    }
-    for change in &changes {
-        guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
     }
     let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
@@ -163,7 +169,30 @@ async fn guard_priority_premise_still_holds(
         Some(PriorityPremise::ParentEffective {
             parent_job_id,
             effective,
-        }) => PgStore::effective_priority_in(tx, parent_job_id).await? == Some(effective),
+            forced,
+        }) => {
+            let Some(parent) = PgStore::share_lock_lineage(tx, parent_job_id).await? else {
+                return Err(ServiceError::Domain(bc_jobs::JobsError::ParentJobUnknown {
+                    parent_job_id: parent_job_id.as_uuid(),
+                }));
+            };
+            // The parent settled between the decision and this lock: a child
+            // under it could never be resolved, so the admission is refused,
+            // exactly as the domain refuses it when it reads a settled parent.
+            if parent.deleted {
+                return Err(ServiceError::Domain(bc_jobs::JobsError::ParentJobDeleted {
+                    parent_job_id: parent_job_id.as_uuid(),
+                }));
+            }
+            if parent.resolved {
+                return Err(ServiceError::Domain(
+                    bc_jobs::JobsError::ParentJobTerminal {
+                        parent_job_id: parent_job_id.as_uuid(),
+                    },
+                ));
+            }
+            parent.effective == effective && parent.forced == forced
+        }
     };
     if holds {
         Ok(())
@@ -172,38 +201,21 @@ async fn guard_priority_premise_still_holds(
     }
 }
 
-/// A change of a user's maximum and the recalculations it carries, in one
-/// transaction. The user is locked first: an admission that read the old
-/// maximum fails its premise check instead of committing a stale level.
-pub struct UserChange {
-    pub user_id: KnownUserId,
-    /// The maximum stored when the change was decided.
-    pub decided_on: Option<Priority>,
-    pub events: Vec<UserEvent>,
-    pub recalculations: Vec<JobChange>,
-}
-
-pub async fn commit_user_change(
-    store: &PgStore,
+/// Records the facts of a change of a user's maximum inside the caller's
+/// transaction — the one that locked the user and the Jobs it recalculates.
+pub async fn record_user_events_in(
+    tx: &mut sqlx::PgConnection,
     ids: &dyn IdFactory,
-    change: UserChange,
+    user_id: KnownUserId,
+    events: Vec<UserEvent>,
     metadata: &EventMetadata,
     at: DateTime<Utc>,
 ) -> Result<(), ServiceError> {
-    if change.events.is_empty() {
-        return Ok(());
-    }
-    let mut tx = store.begin().await?;
-    if PgStore::lock_user_max_priority(&mut tx, change.user_id).await? != change.decided_on {
-        return Err(ServiceError::Contended);
-    }
-    let mut recorded = Vec::with_capacity(change.events.len());
-    for event in change.events {
+    let mut recorded = Vec::with_capacity(events.len());
+    for event in events {
         recorded.push((EventId::new(ids.next())?, event));
     }
-    apply::apply_user_events(&mut tx, change.user_id, &recorded, metadata, at).await?;
-    commit_job_changes_in(&mut tx, ids, change.recalculations, metadata, at).await?;
-    tx.commit().await?;
+    apply::apply_user_events(tx, user_id, &recorded, metadata, at).await?;
     Ok(())
 }
 

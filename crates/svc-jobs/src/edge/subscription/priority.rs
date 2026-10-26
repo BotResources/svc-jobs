@@ -1,3 +1,4 @@
+use bc_jobs::domain::priority::UserMaxPriority;
 use futures::Stream;
 use uuid::Uuid;
 
@@ -33,9 +34,10 @@ pub fn my_max_priority_stream(
             if carried.as_uuid() != user_id {
                 continue;
             }
-            let maximum = event
-                .resulting_maximum()
-                .unwrap_or_else(|| state.jobs.limits.default_max_priority());
+            let maximum = priority::applicable(
+                &UserMaxPriority::new(carried, event.resulting_maximum()),
+                &state.jobs,
+            );
             yield GqlMyMaxPriorityStreamMessage::Delta(GqlMyMaxPriorityDelta {
                 cursor: cursor(event_id),
                 max_priority: i32::from(maximum.get()),

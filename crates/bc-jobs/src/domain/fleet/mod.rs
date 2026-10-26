@@ -94,8 +94,16 @@ impl RunnerType {
         self.settings.dispatch_mode
     }
 
-    pub fn max_run_duration(&self) -> MaxRunDuration {
+    /// The maximum set for this type, absent while it follows the service
+    /// default.
+    pub fn own_max_run_duration(&self) -> Option<MaxRunDuration> {
         self.settings.max_run_duration
+    }
+
+    /// The maximum duration a Run of this type is dispatched with: its own, or
+    /// `service_default`.
+    pub fn max_run_duration_or(&self, service_default: MaxRunDuration) -> MaxRunDuration {
+        self.settings.max_run_duration.unwrap_or(service_default)
     }
 
     pub fn instance(&self, key: &InstanceKey) -> Option<&RunnerInstance> {

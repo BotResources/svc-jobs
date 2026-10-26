@@ -112,6 +112,7 @@ async fn boot(
         retry: settings.retry_policy,
         catalog,
         claims: settings.claims,
+        waiters: Arc::default(),
     });
     app::runner_type_catalog::reconcile(&jobs).await?;
 
