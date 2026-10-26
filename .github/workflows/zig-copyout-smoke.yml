@@ -68,10 +68,11 @@ jobs:
         run: cargo zigbuild --release --locked -p svc-jobs --target aarch64-unknown-linux-musl
 
       - name: Registry docs (--pg docker, --print-only, no registry call)
-        run: >
-          scripts/registry-docs.sh
-          svc-jobs
-          0.0.0
-          --pg docker
-          --binary target/x86_64-unknown-linux-musl/release/svc-jobs
-          --print-only
+        # the script refuses any version but the one this checkout declares
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "svc-jobs") | .version')"
+          scripts/registry-docs.sh svc-jobs "$version" \
+            --pg docker \
+            --binary target/x86_64-unknown-linux-musl/release/svc-jobs \
+            --print-only
