@@ -1,6 +1,7 @@
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::attempts::{AttemptNumber, MaxAttempts};
+use crate::domain::priority::Priority;
 use crate::error::JobsError;
 
 const BASIS: i64 = 10_000;
@@ -35,6 +36,7 @@ pub struct ServiceLimits {
     max_run_duration: TimeDelta,
     inactivity_timeout: TimeDelta,
     retirement_quiet_period: TimeDelta,
+    default_max_priority: Priority,
 }
 
 impl Default for ServiceLimits {
@@ -45,6 +47,7 @@ impl Default for ServiceLimits {
             max_run_duration: TimeDelta::hours(72),
             inactivity_timeout: TimeDelta::hours(24),
             retirement_quiet_period: TimeDelta::hours(24),
+            default_max_priority: Priority::DEFAULT,
         }
     }
 }
@@ -64,7 +67,20 @@ impl ServiceLimits {
             max_run_duration: positive("max_run_duration", max_run_duration)?,
             inactivity_timeout: positive("inactivity_timeout", inactivity_timeout)?,
             retirement_quiet_period: positive("retirement_quiet_period", retirement_quiet_period)?,
+            default_max_priority: Priority::DEFAULT,
         })
+    }
+
+    /// The maximum priority of a user who has none of their own, and of a Job
+    /// that runs for nobody.
+    #[must_use]
+    pub fn with_default_max_priority(mut self, maximum: Priority) -> Self {
+        self.default_max_priority = maximum;
+        self
+    }
+
+    pub fn default_max_priority(&self) -> Priority {
+        self.default_max_priority
     }
 
     pub fn max_attempts_ceiling(&self) -> MaxAttempts {
@@ -75,6 +91,9 @@ impl ServiceLimits {
         self.default_max_attempts
     }
 
+    /// The service default maximum Run duration: the one a RunnerType is
+    /// registered with, and the one a Run dispatched before Runs carried their
+    /// own applies.
     pub fn max_run_duration(&self) -> TimeDelta {
         self.max_run_duration
     }

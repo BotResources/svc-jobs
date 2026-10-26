@@ -79,6 +79,14 @@ impl Job {
                 CommandWarning::FactAlreadyRecorded { fact: "RunStarted" },
             ));
         }
+        if run
+            .reservation()
+            .is_some_and(|reservation| reservation.instance() != &fact.instance)
+        {
+            return Err(JobsError::RunReservedElsewhere {
+                run_id: run.id().as_uuid(),
+            });
+        }
         Ok(CommandResult::from_event(JobEvent::RunStarted(
             RunStarted {
                 job_id: self.id(),

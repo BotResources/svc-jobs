@@ -74,7 +74,7 @@ fn wait_on_a_retry_already_due(
 fn unblocks_dispatch(fact: &Fact) -> bool {
     match fact {
         Fact::Fleet { .. } => true,
-        Fact::Log { .. } => false,
+        Fact::Log { .. } | Fact::User { .. } => false,
         Fact::Job { event, .. } => matches!(
             **event,
             JobEvent::JobQueued(_)
@@ -82,6 +82,8 @@ fn unblocks_dispatch(fact: &Fact) -> bool {
                 | JobEvent::RunCompleted(_)
                 | JobEvent::RunFailed(_)
                 | JobEvent::RunCancelled(_)
+                | JobEvent::JobPriorityForced(_)
+                | JobEvent::JobPriorityRecalculated(_)
         ),
     }
 }

@@ -21,8 +21,11 @@ NATS at {{ .Values.nats.url }} must already carry the declared JetStream
 topology — streams INTEGRATION_CMD, INTEGRATION_EVT, JOBS_TRIGGER, JOBS_STATUS,
 JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE. svc-jobs binds them and
 fails the boot loudly when one is absent; it never creates them. Keep the
-JOBS_CANCEL bucket's TTL aligned with the configured maximum run duration
-(JOBS_RUN_MAX_DURATION_SECONDS, default 72h).
+JOBS_CANCEL bucket's TTL at least as long as the longest maximum run duration
+any runner type is set to (a new type starts at JOBS_RUN_MAX_DURATION_SECONDS,
+default 72h). Instances of CLAIM runner types request their runs on
+jobs.claim.{runner_type} (core NATS request/reply): the runner credentials must
+be allowed to publish there, and svc-jobs to subscribe to jobs.claim.*.
 
 The chart does NOT create Secrets. Provision them via your secret-management
 tool (ExternalSecrets, Sealed Secrets, kubectl, etc.).

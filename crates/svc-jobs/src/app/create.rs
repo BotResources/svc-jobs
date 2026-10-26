@@ -2,27 +2,50 @@ use bc_jobs::JobsError;
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
 use bc_jobs::domain::attempts::MaxAttempts;
 use bc_jobs::domain::config::RunnerConfig;
-use bc_jobs::domain::ids::{JobId, SourceEntityId};
+use bc_jobs::domain::ids::{JobId, KnownUserId, SourceEntityId};
 use bc_jobs::domain::keys::{DisplayName, ProducerKey, RunnerTypeKey};
+use bc_jobs::domain::priority::{Priority, PriorityBasis};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{EventMetadata, UserId};
-use contract_jobs::command::CreateJob as Wire;
+use contract_jobs::command::{CreateJob as Wire, CreateJobV2};
 use contract_jobs::event::{
     REASON_DUPLICATE_ACTIVE_ENTITY, REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD,
 };
 use serde_json::{Value, json};
 
+use super::write::PriorityPremise;
 use super::{Jobs, write};
 use crate::error::ServiceError;
 
+/// `job.create.v1`: the producer names no priority, so the Job requests the
+/// default.
 pub async fn handle(
     jobs: &Jobs,
     wire: &Wire,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    match build(wire) {
+    admit(jobs, wire, Ok(Priority::DEFAULT), metadata).await
+}
+
+/// `job.create.v2`: the v1 declaration plus an optional requested priority.
+pub async fn handle_v2(
+    jobs: &Jobs,
+    wire: &CreateJobV2,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    let requested = wire.priority.map_or(Ok(Priority::DEFAULT), Priority::new);
+    admit(jobs, &wire.declaration(), requested, metadata).await
+}
+
+async fn admit(
+    jobs: &Jobs,
+    wire: &Wire,
+    requested: Result<Priority, JobsError>,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    match requested.and_then(|requested| build(wire, requested)) {
         Err(refusal) => reject(jobs, wire, &refusal, metadata).await,
         Ok(command) => decide(jobs, wire, command, metadata).await,
     }
@@ -48,18 +71,34 @@ async fn decide(
         Some(source) => JobReader::load_active_for_source(&jobs.store, &source).await?,
         None => None,
     };
+    let user_maximum = match &command.triggered_by {
+        Some(user) => Some(
+            jobs.store
+                .user_max_priority(KnownUserId::new(user.id().0)?)
+                .await?,
+        ),
+        None => None,
+    };
     let outcome = create_job(
         command.clone(),
         existing.as_ref(),
         active.as_ref(),
         parent.as_ref(),
+        user_maximum.as_ref(),
         &jobs.limits,
     );
     match outcome {
         Ok(CreateOutcome::AlreadyQueued) => Ok(()),
         Ok(CreateOutcome::Queued(result)) => {
+            let admitted_under = command.parent_job_id.and(parent.as_ref());
+            let premise = PriorityPremise::of(
+                PriorityBasis::of(admitted_under, user_maximum.as_ref(), &jobs.limits),
+                admitted_under,
+                user_maximum.as_ref(),
+            );
             let change = write::JobChange::new(command.id, None, result.events)
-                .claiming_source(command.source());
+                .claiming_source(command.source())
+                .on_priority_premise(premise);
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
                     refusal @ (JobsError::SourceAlreadyActive { .. }
@@ -129,7 +168,7 @@ fn rejection_params(wire: &Wire, refusal: &JobsError) -> Value {
     params
 }
 
-fn build(wire: &Wire) -> Result<CreateJob, JobsError> {
+fn build(wire: &Wire, requested_priority: Priority) -> Result<CreateJob, JobsError> {
     let producer = ProducerKey::new(&wire.producer)?;
     let source_entity_id = match (&wire.source_bc, wire.source_entity_id) {
         (Some(bc), Some(entity_id)) => {
@@ -156,6 +195,7 @@ fn build(wire: &Wire) -> Result<CreateJob, JobsError> {
         triggered_by: triggered_by(wire)?,
         source_entity_id,
         max_attempts: wire.max_attempts.map(max_attempts).transpose()?,
+        requested_priority,
     })
 }
 

@@ -30,6 +30,9 @@ pub enum JobsError {
     InvalidDuration {
         field: &'static str,
     },
+    InvalidPriority {
+        value: i64,
+    },
     OutOfRange {
         field: &'static str,
         value: i64,
@@ -74,6 +77,9 @@ pub enum JobsError {
         status: &'static str,
     },
     NotOwner,
+    NotPlatformAdministrator,
+    NotSuperUser,
+    NotActiveHuman,
     SuccessorStillActive {
         successor_job_id: Uuid,
     },
@@ -102,6 +108,15 @@ pub enum JobsError {
     RunWithinMaxDuration {
         run_id: Uuid,
     },
+    RunNotReserved {
+        run_id: Uuid,
+    },
+    RunReservedElsewhere {
+        run_id: Uuid,
+    },
+    ReservationWithinDelay {
+        run_id: Uuid,
+    },
     RunnerTypeMismatch {
         expected: String,
         claimed: String,
@@ -126,6 +141,12 @@ pub enum JobsError {
         eligible_at: DateTime<Utc>,
     },
     RunnerTypeHasNoLiveInstances,
+    NotClaimMode {
+        runner_type: String,
+    },
+    NotPushMode {
+        runner_type: String,
+    },
     RetryBudgetExhausted {
         attempts: u32,
         max_attempts: u32,
@@ -139,6 +160,12 @@ pub enum JobsError {
         step_index: u32,
     },
     InstanceNotLive {
+        instance_key: String,
+    },
+    InstanceUnknown {
+        instance_key: String,
+    },
+    InstanceDraining {
         instance_key: String,
     },
     StaleLoss {

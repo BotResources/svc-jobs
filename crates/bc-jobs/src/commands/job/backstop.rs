@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::commands::job::run_outcome::RunFailureFact;
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
@@ -8,7 +8,9 @@ use crate::domain::job::resolution::JobFailureCause;
 use crate::domain::job::status::JobStatus;
 use crate::domain::keys::ReasonCode;
 use crate::domain::policy::{Jitter, RetryPolicy, ServiceLimits};
-use crate::domain::run::failure::{INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport};
+use crate::domain::run::failure::{
+    CLAIM_LOST, INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport,
+};
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::{JobFailed, RunCancellationRequested};
@@ -90,6 +92,54 @@ impl Job {
             },
         )];
         let report = RunFailureReport::platform(RunFailureKind::Transient, RUN_TIMEOUT)?;
+        let fact = command.into_failure(report);
+        events.extend(self.run_failure_events(run, &fact, policy, limits)?);
+        Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))
+    }
+
+    /// A Run reserved by a claim and never started within the reservation
+    /// delay fails as transient with `claim_lost`. Its Instance is told to stop
+    /// in case it starts late: the Job waits again, and a late start is
+    /// discarded against the settled Run.
+    pub fn fail_run_for_lost_claim(
+        &self,
+        command: ReclaimRun,
+        reservation_delay: TimeDelta,
+        policy: &RetryPolicy,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
+            return Ok(discarded);
+        }
+        let run = self.find_run(command.run_id)?;
+        if let Some(discarded) = self.discard_settled("RunFailed", run) {
+            return Ok(discarded);
+        }
+        if !run.is_reserved() {
+            return Err(JobsError::RunNotReserved {
+                run_id: run.id().as_uuid(),
+            });
+        }
+        if run.has_started() {
+            return Ok(CommandResult::nothing_happened(
+                CommandWarning::FactAlreadyRecorded { fact: "RunStarted" },
+            ));
+        }
+        if !run.has_lost_its_claim(command.at, reservation_delay) {
+            return Err(JobsError::ReservationWithinDelay {
+                run_id: run.id().as_uuid(),
+            });
+        }
+        let mut events = vec![JobEvent::RunCancellationRequested(
+            RunCancellationRequested {
+                job_id: self.id(),
+                run_id: run.id(),
+                reason_code: ReasonCode::new(CLAIM_LOST)?,
+                requested_by: None,
+                originating_job_id: None,
+            },
+        )];
+        let report = RunFailureReport::platform(RunFailureKind::Transient, CLAIM_LOST)?;
         let fact = command.into_failure(report);
         events.extend(self.run_failure_events(run, &fact, policy, limits)?);
         Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))

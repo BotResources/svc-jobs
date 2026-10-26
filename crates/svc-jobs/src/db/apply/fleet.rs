@@ -16,11 +16,14 @@ pub async fn write(
     match event {
         FleetEvent::RunnerTypeRegistered(fact) => {
             sqlx::query(
-                "INSERT INTO registered_runner_types (runner_type_id, lifecycle, registered_at) \
-                 VALUES ($1, 'ACTIVE', $2) ON CONFLICT (runner_type_id) DO NOTHING",
+                "INSERT INTO registered_runner_types (runner_type_id, lifecycle, registered_at, \
+                 dispatch_mode, max_run_duration_seconds) \
+                 VALUES ($1, 'ACTIVE', $2, $3, $4) ON CONFLICT (runner_type_id) DO NOTHING",
             )
             .bind(fact.runner_type_id.as_uuid())
             .bind(at)
+            .bind(fact.dispatch_mode.as_str())
+            .bind(fact.max_run_duration.seconds())
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
@@ -35,6 +38,27 @@ pub async fn write(
             set_lifecycle(tx, fact.runner_type_id, "RETIRED").await?;
         }
         FleetEvent::RunnerTypeBecameRetirable(_) => {}
+        FleetEvent::RunnerTypeDispatchModeChanged(fact) => {
+            sqlx::query(
+                "UPDATE registered_runner_types SET dispatch_mode = $2 WHERE runner_type_id = $1",
+            )
+            .bind(fact.runner_type_id.as_uuid())
+            .bind(fact.dispatch_mode.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        }
+        FleetEvent::RunnerTypeMaxRunDurationChanged(fact) => {
+            sqlx::query(
+                "UPDATE registered_runner_types SET max_run_duration_seconds = $2 \
+                 WHERE runner_type_id = $1",
+            )
+            .bind(fact.runner_type_id.as_uuid())
+            .bind(fact.max_run_duration.seconds())
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        }
         FleetEvent::InstanceConnected(fact) => {
             let instance =
                 refs::runner_instance_id(tx, fact.runner_type_id.as_uuid(), &fact.instance_key)

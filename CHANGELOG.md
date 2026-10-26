@@ -9,6 +9,86 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-26
+
+Priorities and claim-based dispatch. Every 0.3 behaviour of a `PUSH` runner
+type is kept; what changes for it is the order its waiting jobs are published
+in.
+
+### Added
+
+- **Priorities.** A job requests a level from 1 (lowest) to 5 (highest), 3 by
+  default, and waits at an effective level capped by the maximum of the user
+  it runs for — or by `JOBS_DEFAULT_MAX_PRIORITY` (default 3) when that user
+  has none or the job runs for nobody. A child job requests and waits at its
+  parent's effective level. A manual-retry successor copies its predecessor's
+  request, capped again (a forced level is not copied).
+- Super-user mutations `jobsSetUserMaxPriority`, `jobsClearUserMaxPriority`
+  and `jobsForceJobPriority`. Setting a maximum accepts any user id, observed
+  by Jobs or not. A change of a user's maximum recalculates their waiting,
+  non-forced root jobs and the waiting, non-forced descendants inheriting from
+  them; forcing a job also forces its waiting, non-forced descendants. A
+  descendant reached by either cascade records the inherited level as both its
+  request and its effective level. A forced level holds until forced again.
+- The user surface: `jobsMyMaxPriority` and `jobsMyMaxPriorityChanged`
+  (snapshot, then every change), open to any active human and to nothing else.
+- Job views carry `requestedPriority`, `effectivePriority` and
+  `forcedPriority`; job affordances carry `force_priority`; job streams carry
+  `JobsJobPriorityForcedEvent` and `JobsJobPriorityRecalculatedEvent`.
+- **Dispatch order.** Highest effective priority first; within a level, strict
+  round-robin between root jobs (least recently served root first, then the
+  root whose oldest waiting job is oldest); then creation time. Both modes.
+- **`CLAIM` dispatch mode** per runner type: instances claim their next run on
+  `jobs.claim.{runner_type}` (core NATS request/reply, queue group
+  `svc_jobs_claims`, served by every pod). A claim is held open up to
+  `JOBS_CLAIM_MAX_WAIT_SECONDS` (default 30); the job is locked with
+  `FOR UPDATE SKIP LOCKED` and its run created reserved to the claiming
+  instance before the reply leaves. A claim repeated under the same `claim_id`
+  is answered with the run already reserved. A reserved run not started within
+  `JOBS_CLAIM_RESERVATION_SECONDS` (default 60) fails as transient with
+  `claim_lost` and gets a cancel entry. A waiting job of a `CLAIM` type is
+  cancelled in the ledger only; a reserved run is told to stop through the
+  cancel bucket.
+- **Per-runner-type settings**: `jobsSetRunnerTypeDispatchMode` and
+  `jobsSetRunnerTypeMaxRunDuration` (platform administrators), the
+  `dispatchMode` and `maxRunDurationSeconds` fields, the `set_dispatch_mode`
+  and `set_max_run_duration` affordances, and the
+  `RUNNER_TYPE_DISPATCH_MODE_CHANGED` / `RUNNER_TYPE_MAX_RUN_DURATION_CHANGED`
+  fleet event kinds. A change applies to runs dispatched afterwards: a run
+  carries the maximum duration it was dispatched with.
+- `integration.cmd.jobs.job.create.v2` on its own durable
+  (`svc_jobs_job_create_v2`): v1 plus an optional `priority`; out of range is
+  rejected with `invalid_priority`. v1 is unchanged and requests 3.
+- Migration `0003_priority_and_claim.sql` — schema only, no data rewritten:
+  existing jobs read as requesting and waiting at 3, existing runner types as
+  `PUSH` with a 72 h maximum, existing runs answer to the service default.
+
+### Changed
+
+- `JOBS_RUN_MAX_DURATION_SECONDS` is now the maximum a runner type is
+  registered with, not a single service-wide maximum. Keep the `JOBS_CANCEL`
+  bucket TTL above the largest maximum any type is set to.
+- The run-duration backstop holds each run to the maximum it was dispatched
+  with.
+- `JobsManualRetryStartedEvent.runId` is nullable: the successor of a `CLAIM`
+  type has no run until it is claimed. `JobsRun.instance` names the reserving
+  instance of a claimed run before it starts; `JobsRun.reservedAt` and
+  `JobsRun.maxRunDurationSeconds` are new.
+- The GraphQL door admits an active human who is not a platform administrator
+  for the user surface alone; every other request of theirs is still refused
+  `FORBIDDEN` before a resolver runs.
+- `job.queued.v1` is unchanged.
+- No preemption: a started run is never interrupted for a higher priority.
+
+### Known limitations
+
+- Switching a runner type from `PUSH` to `CLAIM` does not withdraw triggers
+  already published; they are consumed by the remaining push instances or end
+  through the usual backstops.
+- `jobs.trigger.{runner_type}` carries the deprecation intent of the contract;
+  no deletion version is set yet.
+- `contract-jobs` 0.6.0, `bc-jobs` 0.6.0.
+
 ## 0.3.4 - 2026-10-17
 
 Dependency re-pin maintenance release. No wire, schema, migration or

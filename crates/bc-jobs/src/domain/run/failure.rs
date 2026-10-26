@@ -8,6 +8,7 @@ use crate::error::JobsError;
 
 pub const INSTANCE_LOST: &str = "instance_lost";
 pub const RUN_TIMEOUT: &str = "run_timeout";
+pub const CLAIM_LOST: &str = "claim_lost";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

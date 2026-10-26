@@ -19,7 +19,7 @@ macro_rules! job_event {
 }
 
 job_event!(GqlJobQueuedEvent, "JobsJobQueuedEvent", { parent_job_id: Option<Uuid> });
-job_event!(GqlRunDispatchedEvent, "JobsRunDispatchedEvent", { run_id: Uuid, attempt_number: i32 });
+job_event!(GqlRunDispatchedEvent, "JobsRunDispatchedEvent", { run_id: Uuid, attempt_number: i32, reserved_for: Option<String> });
 job_event!(GqlRunStartedEvent, "JobsRunStartedEvent", { run_id: Uuid, instance_key: String });
 job_event!(GqlRunPlanDeclaredEvent, "JobsRunPlanDeclaredEvent", { run_id: Uuid, declaration_number: i32 });
 job_event!(GqlRunStepStartedEvent, "JobsRunStepStartedEvent", { run_id: Uuid, step_index: i32 });
@@ -30,9 +30,11 @@ job_event!(GqlRetryScheduledEvent, "JobsRetryScheduledEvent", { failed_run_id: U
 job_event!(GqlJobCompletedEvent, "JobsJobCompletedEvent", { resolution_id: Uuid });
 job_event!(GqlJobFailedEvent, "JobsJobFailedEvent", { resolution_id: Uuid, failure_cause: GqlJobFailureCause });
 job_event!(GqlJobCancelledEvent, "JobsJobCancelledEvent", { resolution_id: Uuid });
-job_event!(GqlManualRetryStartedEvent, "JobsManualRetryStartedEvent", { successor_job_id: Uuid, manual_retry_id: Uuid, run_id: Uuid });
+job_event!(GqlManualRetryStartedEvent, "JobsManualRetryStartedEvent", { successor_job_id: Uuid, manual_retry_id: Uuid, run_id: Option<Uuid> });
 job_event!(GqlJobDeletedEvent, "JobsJobDeletedEvent", { deleted_by_id: Uuid });
 job_event!(GqlJobAffordancesChangedEvent, "JobsJobAffordancesChangedEvent", { caused_by_job_id: Option<Uuid> });
+job_event!(GqlJobPriorityForcedEvent, "JobsJobPriorityForcedEvent", { forced_priority: i32, originating_job_id: Option<Uuid> });
+job_event!(GqlJobPriorityRecalculatedEvent, "JobsJobPriorityRecalculatedEvent", { effective_priority: i32, previous_priority: i32 });
 
 #[derive(Interface, Clone)]
 // clippy reads the repeated `field(...)` of an async-graphql interface as one duplicated attribute
@@ -59,6 +61,8 @@ pub enum GqlJobEvent {
     ManualRetryStarted(GqlManualRetryStartedEvent),
     JobDeleted(GqlJobDeletedEvent),
     AffordancesChanged(GqlJobAffordancesChangedEvent),
+    PriorityForced(GqlJobPriorityForcedEvent),
+    PriorityRecalculated(GqlJobPriorityRecalculatedEvent),
 }
 
 pub fn of_domain(id: Uuid, occurred_at: DateTime<Utc>, event: &JobEvent) -> Option<GqlJobEvent> {
@@ -79,6 +83,10 @@ pub fn of_domain(id: Uuid, occurred_at: DateTime<Utc>, event: &JobEvent) -> Opti
             occurred_at,
             run_id: fact.run_id.as_uuid(),
             attempt_number: i32::try_from(fact.attempt_number.get()).unwrap_or(i32::MAX),
+            reserved_for: fact
+                .claimed_by
+                .as_ref()
+                .map(|claim| claim.instance_key.as_str().to_owned()),
         }),
         JobEvent::RunStarted(fact) => GqlJobEvent::RunStarted(GqlRunStartedEvent {
             id,
@@ -154,7 +162,7 @@ pub fn of_domain(id: Uuid, occurred_at: DateTime<Utc>, event: &JobEvent) -> Opti
                 occurred_at,
                 successor_job_id: fact.successor_job_id.as_uuid(),
                 manual_retry_id: fact.manual_retry_id.as_uuid(),
-                run_id: fact.run_id.as_uuid(),
+                run_id: fact.run_id.map(|run_id| run_id.as_uuid()),
             })
         }
         JobEvent::JobDeleted(fact) => GqlJobEvent::JobDeleted(GqlJobDeletedEvent {
@@ -169,6 +177,24 @@ pub fn of_domain(id: Uuid, occurred_at: DateTime<Utc>, event: &JobEvent) -> Opti
                 job_id,
                 occurred_at,
                 caused_by_job_id: fact.caused_by_job_id.map(|id| id.as_uuid()),
+            })
+        }
+        JobEvent::JobPriorityForced(fact) => {
+            GqlJobEvent::PriorityForced(GqlJobPriorityForcedEvent {
+                id,
+                job_id,
+                occurred_at,
+                forced_priority: i32::from(fact.priority.get()),
+                originating_job_id: fact.originating_job_id.map(|id| id.as_uuid()),
+            })
+        }
+        JobEvent::JobPriorityRecalculated(fact) => {
+            GqlJobEvent::PriorityRecalculated(GqlJobPriorityRecalculatedEvent {
+                id,
+                job_id,
+                occurred_at,
+                effective_priority: i32::from(fact.effective_priority.get()),
+                previous_priority: i32::from(fact.previous_priority.get()),
             })
         }
         JobEvent::RunCancellationRequested(_) => return None,

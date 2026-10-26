@@ -41,7 +41,9 @@ pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
         | JobEvent::RunCancellationRequested(_)
         | JobEvent::ManualRetryStarted(_)
         | JobEvent::JobDeleted(_)
-        | JobEvent::JobAffordancesChanged(_) => vec![],
+        | JobEvent::JobAffordancesChanged(_)
+        | JobEvent::JobPriorityForced(_)
+        | JobEvent::JobPriorityRecalculated(_) => vec![],
     }
 }
 
@@ -71,12 +73,21 @@ impl LostPresenceSession {
         }
     }
 
+    /// The session carried the run when the run started on it within the
+    /// session's window — or, never started, was reserved to it within that
+    /// window by a claim.
     fn carried(&self, run: &Run) -> bool {
-        run.start().is_some_and(|start| {
-            start.instance() == &self.instance
-                && start.started_at() >= self.connected_at
-                && start.started_at() <= self.disconnected_at
-        })
+        match (run.start(), run.reservation()) {
+            (Some(start), _) => self.held(start.instance(), start.started_at()),
+            (None, Some(reservation)) => {
+                self.held(reservation.instance(), reservation.reserved_at())
+            }
+            (None, None) => false,
+        }
+    }
+
+    fn held(&self, instance: &RunnerInstanceReference, at: DateTime<Utc>) -> bool {
+        instance == &self.instance && at >= self.connected_at && at <= self.disconnected_at
     }
 }
 
@@ -214,5 +225,23 @@ mod tests {
         let intents = runs_lost_with_instance(&lost, &[executing]);
         // Then: the run belongs to the earlier session and is not reclaimed twice
         assert!(intents.is_empty());
+    }
+
+    #[test]
+    fn losing_an_instance_reclaims_the_run_it_had_claimed_but_not_started() {
+        // Given: a run reserved to pod-7 within the lost session, never started
+        let reserved = RunBuilder::new(1).reserved(ts(5)).build();
+        let reserved_id = reserved.id();
+        let claimed = JobBuilder::new().with_run(reserved).build();
+        // When: pod-7's session is lost
+        let intents = runs_lost_with_instance(&session(instance()), std::slice::from_ref(&claimed));
+        // Then: the reserved run is reclaimed like an executing one
+        assert_eq!(
+            intents,
+            vec![RunLostWithInstance {
+                job_id: claimed.id(),
+                run_id: reserved_id
+            }]
+        );
     }
 }

@@ -2,12 +2,16 @@ use async_graphql::{Context, Object, Result};
 use br_util_graphql::MutationResult;
 
 use super::error::of_service;
-use super::state::{EdgeState, administrator};
+use super::state::{EdgeState, actor, administrator, principal};
 use super::types::input::{
-    GqlCancelJobInput, GqlDeleteJobInput, GqlManualRetryJobInput, GqlRunnerTypeInput,
+    GqlCancelJobInput, GqlClearUserMaxPriorityInput, GqlDeleteJobInput, GqlForceJobPriorityInput,
+    GqlManualRetryJobInput, GqlRunnerTypeInput, GqlSetRunnerTypeDispatchModeInput,
+    GqlSetRunnerTypeMaxRunDurationInput, GqlSetUserMaxPriorityInput,
 };
 use crate::app::admin::{self, ManualRetryInput};
 use crate::app::runner_type_lifecycle::{self, RunnerTypeAction};
+use crate::app::{priority, runner_type_settings};
+use crate::error::ServiceError;
 
 pub struct MutationRoot;
 
@@ -84,6 +88,97 @@ impl MutationRoot {
     ) -> Result<MutationResult> {
         change_runner_type(ctx, input, RunnerTypeAction::Retire).await
     }
+
+    async fn jobs_set_runner_type_dispatch_mode(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlSetRunnerTypeDispatchModeInput,
+    ) -> Result<MutationResult> {
+        let actor = administrator(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            runner_type_settings::dispatch_mode(
+                &state.jobs,
+                actor,
+                input.runner_type,
+                input.dispatch_mode.into(),
+            )
+            .await,
+        )
+    }
+
+    async fn jobs_set_runner_type_max_run_duration(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlSetRunnerTypeMaxRunDurationInput,
+    ) -> Result<MutationResult> {
+        let actor = administrator(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            runner_type_settings::max_run_duration(
+                &state.jobs,
+                actor,
+                input.runner_type,
+                i64::from(input.max_run_duration_seconds),
+            )
+            .await,
+        )
+    }
+
+    /// Super users only: decided by the domain on the caller's principal.
+    async fn jobs_set_user_max_priority(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlSetUserMaxPriorityInput,
+    ) -> Result<MutationResult> {
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            priority::set_max(
+                &state.jobs,
+                actor(ctx)?,
+                &principal(ctx)?,
+                input.user_id,
+                i64::from(input.max_priority),
+            )
+            .await,
+        )
+    }
+
+    /// Super users only: decided by the domain on the caller's principal.
+    async fn jobs_clear_user_max_priority(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlClearUserMaxPriorityInput,
+    ) -> Result<MutationResult> {
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            priority::clear_max(&state.jobs, actor(ctx)?, &principal(ctx)?, input.user_id).await,
+        )
+    }
+
+    /// Super users only: decided by the domain on the caller's principal.
+    async fn jobs_force_job_priority(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlForceJobPriorityInput,
+    ) -> Result<MutationResult> {
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            priority::force(
+                &state.jobs,
+                actor(ctx)?,
+                &principal(ctx)?,
+                input.job_id,
+                i64::from(input.priority),
+            )
+            .await,
+        )
+    }
+}
+
+fn acknowledged(outcome: Result<(), ServiceError>) -> Result<MutationResult> {
+    outcome.map_err(|error| async_graphql::Error::from(of_service(error)))?;
+    Ok(MutationResult::ok())
 }
 
 async fn change_runner_type(

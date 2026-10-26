@@ -15,6 +15,7 @@ use crate::error::ServiceError;
 use crate::supervision::Established;
 
 const CREATE_DURABLE: &str = "svc_jobs_job_create";
+const CREATE_V2_DURABLE: &str = "svc_jobs_job_create_v2";
 const CANCEL_DURABLE: &str = "svc_jobs_job_cancel";
 const CANCEL_V2_DURABLE: &str = "svc_jobs_job_cancel_v2";
 const FINISH_DURABLE: &str = "svc_jobs_job_finish";
@@ -38,8 +39,8 @@ impl ContractVersion {
 }
 
 pub async fn verify_durables(fabric: &Fabric) -> Result<(), ServiceError> {
-    open::<Value>(fabric, Verb::Create, ContractVersion::V1).await?;
     for version in [ContractVersion::V1, ContractVersion::V2] {
+        open::<Value>(fabric, Verb::Create, version).await?;
         open::<wire::CancelJob>(fabric, Verb::Cancel, version).await?;
         open::<wire::FinishJob>(fabric, Verb::Finish, version).await?;
         open::<wire::FailJob>(fabric, Verb::Fail, version).await?;
@@ -65,9 +66,7 @@ impl Verb {
             (Self::Finish, ContractVersion::V2) => Ok(FINISH_V2_DURABLE),
             (Self::Fail, ContractVersion::V1) => Ok(FAIL_DURABLE),
             (Self::Fail, ContractVersion::V2) => Ok(FAIL_V2_DURABLE),
-            (Self::Create, ContractVersion::V2) => Err(ServiceError::Infra(
-                "job.create.v2 is not declared".to_owned(),
-            )),
+            (Self::Create, ContractVersion::V2) => Ok(CREATE_V2_DURABLE),
         }
     }
 
@@ -83,11 +82,7 @@ impl Verb {
             (Self::Finish, ContractVersion::V2) => contract_jobs::cmd_job_finish_v2_coords(),
             (Self::Fail, ContractVersion::V1) => contract_jobs::cmd_job_fail_v1_coords(),
             (Self::Fail, ContractVersion::V2) => contract_jobs::cmd_job_fail_v2_coords(),
-            (Self::Create, ContractVersion::V2) => {
-                return Err(ServiceError::Infra(
-                    "job.create.v2 is not declared".to_owned(),
-                ));
-            }
+            (Self::Create, ContractVersion::V2) => contract_jobs::cmd_job_create_v2_coords(),
         };
         coords.map_err(|error| ServiceError::Infra(error.to_string()))
     }
@@ -107,9 +102,10 @@ async fn open<T: DeserializeOwned>(
 pub async fn consume_creations(
     fabric: Fabric,
     jobs: Arc<Jobs>,
+    version: ContractVersion,
     established: Established,
 ) -> Result<(), ServiceError> {
-    let mut consumer = open::<Value>(&fabric, Verb::Create, ContractVersion::V1).await?;
+    let mut consumer = open::<Value>(&fabric, Verb::Create, version).await?;
     established.signal();
     while let Some(delivery) = consumer.recv().await? {
         let outcome = match delivery.payload() {
@@ -117,7 +113,7 @@ pub async fn consume_creations(
             Ok(command) => {
                 let payload = command.payload.clone();
                 let metadata = command.metadata.clone();
-                create_outcome(&jobs, payload, &metadata).await
+                create_outcome(&jobs, payload, version, &metadata).await
             }
         };
         acknowledge(delivery, outcome).await;
@@ -128,10 +124,21 @@ pub async fn consume_creations(
 async fn create_outcome(
     jobs: &Jobs,
     payload: Value,
+    version: ContractVersion,
     metadata: &br_core_integration::EventMetadata,
 ) -> MessageOutcome {
-    match serde_json::from_value::<wire::CreateJob>(payload.clone()) {
-        Ok(command) => settle(create::handle(jobs, &command, metadata).await),
+    let handled = match version {
+        ContractVersion::V1 => match serde_json::from_value::<wire::CreateJob>(payload.clone()) {
+            Ok(command) => Ok(create::handle(jobs, &command, metadata).await),
+            Err(error) => Err(error),
+        },
+        ContractVersion::V2 => match serde_json::from_value::<wire::CreateJobV2>(payload.clone()) {
+            Ok(command) => Ok(create::handle_v2(jobs, &command, metadata).await),
+            Err(error) => Err(error),
+        },
+    };
+    match handled {
+        Ok(outcome) => settle(outcome),
         Err(error) => {
             let Some(job_id) = declared_job_id(&payload) else {
                 tracing::warn!(

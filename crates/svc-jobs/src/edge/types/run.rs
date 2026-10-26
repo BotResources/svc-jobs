@@ -113,7 +113,11 @@ pub struct GqlRun {
     pub attempt_number: i32,
     pub origin: GqlRunOrigin,
     pub automatic_retry_of_run_id: Option<Uuid>,
+    /// The Instance executing the Run, or the one it is reserved to by a claim.
     pub instance: Option<GqlInstanceReference>,
+    /// When a claim reserved the Run, for a Run an Instance claimed.
+    pub reserved_at: Option<DateTime<Utc>>,
+    pub max_run_duration_seconds: Option<i32>,
     pub status: GqlRunStatus,
     pub declared_plan: Option<GqlRunPlan>,
     pub progression: Option<GqlRunProgression>,
@@ -133,7 +137,13 @@ pub fn run_of(job: &Job, run: &Run) -> GqlRun {
         attempt_number: i32::try_from(run.attempt_number().get()).unwrap_or(i32::MAX),
         origin: run.origin(job.has_predecessor()).into(),
         automatic_retry_of_run_id: job.automatic_retry_of_run_id(run).map(|id| id.as_uuid()),
-        instance: run.start().map(|start| start.instance().into()),
+        instance: run.instance().map(GqlInstanceReference::from),
+        reserved_at: run
+            .reservation()
+            .map(|reservation| reservation.reserved_at()),
+        max_run_duration_seconds: run
+            .max_duration()
+            .map(|duration| i32::try_from(duration.seconds()).unwrap_or(i32::MAX)),
         status: run.status().into(),
         declared_plan: run.plan().map(GqlRunPlan::from),
         progression: run.progression().map(GqlRunProgression::from),

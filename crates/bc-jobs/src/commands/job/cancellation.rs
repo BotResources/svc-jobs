@@ -50,7 +50,7 @@ impl Job {
             originating_job_id: command.requester.originating_job_id(),
         };
         let mut result = CommandResult::new(self.withdraw_active_run(&withdrawal));
-        if self.active_run().is_some_and(Run::has_started) {
+        if self.active_run().is_some_and(Run::is_held_by_an_instance) {
             result = result.with_warning(CommandWarning::CancellationIsBestEffort);
         }
         result.events.push(JobEvent::JobCancelled(JobCancelled {
@@ -305,6 +305,37 @@ mod tests {
             Err(JobsError::JobAlreadyTerminal {
                 status: "COMPLETED"
             })
+        );
+    }
+
+    #[test]
+    fn cancelling_a_run_reserved_by_a_claim_reaches_its_instance_through_a_stop_request() {
+        // Given: a job whose run an instance claimed but has not started
+        let run = RunBuilder::new(1).reserved(ts(1)).build();
+        let run_id = run.id();
+        let job = JobBuilder::new().with_run(run).build();
+        // When: an administrator cancels it
+        let result = job
+            .cancel(CancelJob {
+                resolution_id: resolution_id(),
+                requester: by_administrator(),
+            })
+            .unwrap();
+        // Then: there is no trigger to withdraw — the instance holds the run, so it is told to stop
+        match result.events.as_slice() {
+            [
+                JobEvent::RunCancellationRequested(requested),
+                JobEvent::RunCancelled(cancelled),
+                JobEvent::JobCancelled(_),
+            ] => {
+                assert_eq!(requested.run_id, run_id);
+                assert_eq!(cancelled.run_id, run_id);
+            }
+            other => panic!("expected a stop request and two cancellations, got {other:?}"),
+        }
+        assert_eq!(
+            result.warnings,
+            vec![CommandWarning::CancellationIsBestEffort]
         );
     }
 }

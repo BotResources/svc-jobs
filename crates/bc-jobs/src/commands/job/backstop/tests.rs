@@ -194,3 +194,121 @@ fn a_pending_job_is_not_reclaimed_for_inactivity() {
         Err(JobsError::JobNotInProgress { status: "PENDING" })
     );
 }
+
+#[test]
+fn a_reservation_never_started_fails_transiently_with_claim_lost_and_the_job_waits_again() {
+    // Given: a run reserved by a claim at five seconds and never started
+    let run = RunBuilder::new(1).reserved(ts(5)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the backstop sweeps past the sixty second reservation delay
+    let result = job
+        .fail_run_for_lost_claim(
+            reclaim(run_id, ts(70)),
+            TimeDelta::seconds(60),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        )
+        .unwrap();
+    // Then: the instance is told to stop, the run fails as transient with claim_lost, and a
+    // retry is scheduled so the job waits again
+    match result.events.as_slice() {
+        [
+            JobEvent::RunCancellationRequested(requested),
+            JobEvent::RunFailed(failed),
+            JobEvent::RetryScheduled(_),
+        ] => {
+            assert_eq!(requested.reason_code.as_str(), "claim_lost");
+            assert_eq!(failed.report.reason_code().as_str(), "claim_lost");
+            assert_eq!(failed.report.kind(), RunFailureKind::Transient);
+        }
+        other => panic!("expected a stop, a transient failure and a retry, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reservation_within_its_delay_is_left_alone() {
+    // Given: a run reserved at five seconds
+    let run = RunBuilder::new(1).reserved(ts(5)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the backstop sweeps at thirty seconds
+    let result = job.fail_run_for_lost_claim(
+        reclaim(run_id, ts(30)),
+        TimeDelta::seconds(60),
+        &RetryPolicy::default(),
+        &ServiceLimits::default(),
+    );
+    // Then: the claim still holds
+    assert_eq!(
+        result,
+        Err(JobsError::ReservationWithinDelay {
+            run_id: run_id.as_uuid()
+        })
+    );
+}
+
+#[test]
+fn a_reservation_its_instance_started_late_is_not_lost() {
+    // Given: a reserved run its instance started after the delay, before the sweep saw it
+    let run = RunBuilder::new(1).reserved(ts(5)).started(ts(80)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the backstop reaches it
+    let result = job
+        .fail_run_for_lost_claim(
+            reclaim(run_id, ts(90)),
+            TimeDelta::seconds(60),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        )
+        .unwrap();
+    // Then: nothing happens — the claim was honoured
+    assert!(result.is_empty());
+}
+
+#[test]
+fn a_pushed_run_never_loses_a_claim_it_never_had() {
+    // Given: a run published on the trigger stream and never started
+    let run = RunBuilder::new(1).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the lost-claim backstop is asked about it
+    let result = job.fail_run_for_lost_claim(
+        reclaim(run_id, ts(500)),
+        TimeDelta::seconds(60),
+        &RetryPolicy::default(),
+        &ServiceLimits::default(),
+    );
+    // Then: it is refused — a pushed run waits on its trigger, not on a claim
+    assert_eq!(
+        result,
+        Err(JobsError::RunNotReserved {
+            run_id: run_id.as_uuid()
+        })
+    );
+}
+
+#[test]
+fn a_run_dispatched_with_a_longer_maximum_outlives_the_service_default() {
+    // Given: a run of a type allowing 96 hours, started at zero
+    let run = RunBuilder::new(1)
+        .with_max_duration(96 * 3600)
+        .started(ts(0))
+        .build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    // When: the backstop sweeps fifty hours later, past nothing
+    let result = job.fail_run_for_max_duration(
+        reclaim(run_id, ts(0) + TimeDelta::hours(50)),
+        &RetryPolicy::default(),
+        &ServiceLimits::default(),
+    );
+    // Then: the run is within its own maximum and is left alone
+    assert_eq!(
+        result,
+        Err(JobsError::RunWithinMaxDuration {
+            run_id: run_id.as_uuid()
+        })
+    );
+}

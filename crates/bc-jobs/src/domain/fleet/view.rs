@@ -112,7 +112,7 @@ fn load_of<'a>(
 ) -> InstanceLoad {
     let current_run_ids = jobs
         .filter_map(Job::active_run)
-        .filter(|run| run.is_executed_by(&instance))
+        .filter(|run| run.is_held_by(&instance))
         .map(Run::id)
         .collect();
     InstanceLoad {

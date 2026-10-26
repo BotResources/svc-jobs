@@ -354,6 +354,7 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
         key: key.clone(),
         registered_at: fleet.registered_at(),
         lifecycle: fleet.lifecycle(),
+        settings: fleet.settings(),
         instances: vec![],
     })
     .expect("a runner type with no live instance loads");
@@ -574,6 +575,7 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
         key: key.clone(),
         registered_at: fleet.registered_at(),
         lifecycle: fleet.lifecycle(),
+        settings: fleet.settings(),
         instances: vec![],
     })
     .expect("a runner type with no live instance loads");

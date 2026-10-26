@@ -3,6 +3,7 @@ use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstanceState;
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::job::resolution::JobResolution;
@@ -35,6 +36,7 @@ fn analysts(instances: Vec<RunnerInstance>) -> RunnerType {
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
         lifecycle: RunnerTypeLifecycle::Active,
+        settings: RunnerTypeSettings::default(),
         instances,
     })
     .unwrap()

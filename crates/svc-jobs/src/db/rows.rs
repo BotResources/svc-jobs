@@ -1,16 +1,20 @@
 use bc_jobs::JobsError;
 use bc_jobs::domain::attempts::{AttemptNumber, MaxAttempts};
 use bc_jobs::domain::config::RunnerConfig;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{
-    JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId, SourceEntityId,
+    ClaimId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
+    SourceEntityId,
 };
 use bc_jobs::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolution, JobResolutionKind};
 use bc_jobs::domain::keys::{DisplayName, InstanceKey, ReasonCode, RunnerTypeKey, StepLabel};
+use bc_jobs::domain::priority::{JobPriority, Priority};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::domain::run::failure::{RunFailureKind, RunFailureReport};
 use bc_jobs::domain::run::parts::{
-    RetrySchedule, RunCancellationRequest, RunStart, RunTerminal, RunnerInstanceReference,
+    RetrySchedule, RunCancellationRequest, RunReservation, RunStart, RunTerminal,
+    RunnerInstanceReference,
 };
 use bc_jobs::domain::run::plan::{DeclarationNumber, RunPlan, RunPlanItem};
 use bc_jobs::domain::run::status::RunTerminalKind;
@@ -65,6 +69,39 @@ pub fn start(row: &PgRow) -> Result<(RunId, RunStart), JobsError> {
         RunId::new(row.get("run_id"))?,
         RunStart::new(instance, row.get("started_at")),
     ))
+}
+
+pub fn reservation(row: &PgRow) -> Result<(RunId, RunReservation), JobsError> {
+    let instance = RunnerInstanceReference::new(
+        RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
+        InstanceKey::new(row.get::<String, _>("instance_key"))?,
+    );
+    Ok((
+        RunId::new(row.get("run_id"))?,
+        RunReservation::new(
+            instance,
+            ClaimId::new(row.get("claim_id"))?,
+            row.get("reserved_at"),
+        ),
+    ))
+}
+
+pub fn max_run_duration(seconds: Option<i64>) -> Result<Option<MaxRunDuration>, JobsError> {
+    seconds.map(MaxRunDuration::from_seconds).transpose()
+}
+
+pub fn priority(value: i16) -> Result<Priority, JobsError> {
+    Priority::new(i64::from(value))
+}
+
+pub fn job_priority(row: &PgRow) -> Result<JobPriority, JobsError> {
+    JobPriority::hydrate(
+        priority(row.get("requested_priority"))?,
+        priority(row.get("effective_priority"))?,
+        row.get::<Option<i16>, _>("forced_priority")
+            .map(priority)
+            .transpose()?,
+    )
 }
 
 pub fn terminal(row: &PgRow) -> Result<(RunId, RunTerminal), JobsError> {

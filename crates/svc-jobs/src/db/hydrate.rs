@@ -17,6 +17,9 @@ const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
      j.parent_job_id::uuid AS parent_job_id, j.predecessor_job_id::uuid AS predecessor_job_id, \
      j.triggered_by_id::uuid AS triggered_by_id, tu.display_name AS triggered_by_name, \
      se.external_id::uuid AS source_entity_id, j.max_attempts, j.created_at, \
+     j.requested_priority::smallint AS requested_priority, \
+     j.effective_priority::smallint AS effective_priority, \
+     j.forced_priority::smallint AS forced_priority, \
      parent_rt.type_key AS parent_runner_type \
      FROM jobs j \
      JOIN runner_types rt ON rt.id = j.runner_type_id \
@@ -29,8 +32,16 @@ const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
      WHERE j.id = ANY($1)";
 
 const RUNS_SQL: &str = "SELECT id::uuid AS id, job_id::uuid AS job_id, attempt_number, \
-     dispatched_at, automatic_retry_schedule_id::uuid AS automatic_retry_schedule_id \
+     dispatched_at, automatic_retry_schedule_id::uuid AS automatic_retry_schedule_id, \
+     max_run_duration_seconds \
      FROM runs WHERE job_id = ANY($1) ORDER BY job_id, attempt_number";
+
+const RESERVATIONS_SQL: &str = "SELECT rr.run_id::uuid AS run_id, rr.reserved_at, rr.claim_id, \
+     rt.type_key, ri.instance_key FROM run_reservations rr \
+     JOIN runs r ON r.id = rr.run_id \
+     JOIN runner_instances ri ON ri.id = rr.instance_id \
+     JOIN runner_types rt ON rt.id = ri.runner_type_id \
+     WHERE r.job_id = ANY($1)";
 
 const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rt.type_key, \
      ri.instance_key FROM run_starts rs \
@@ -89,6 +100,7 @@ const MANUAL_RETRIES_SQL: &str = "SELECT m.id::uuid AS id, \
 
 #[derive(Default)]
 struct RunParts {
+    reservations: HashMap<RunId, bc_jobs::domain::run::parts::RunReservation>,
     starts: HashMap<RunId, bc_jobs::domain::run::parts::RunStart>,
     terminals: HashMap<RunId, bc_jobs::domain::run::parts::RunTerminal>,
     schedules: HashMap<RunId, bc_jobs::domain::run::parts::RetrySchedule>,
@@ -126,6 +138,8 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
             attempt_number: rows::attempt(&row, "attempt_number")?,
             dispatched_at: row.get("dispatched_at"),
             automatic_retry_schedule_id: schedule_id,
+            max_duration: rows::max_run_duration(row.get("max_run_duration_seconds"))?,
+            reservation: parts.reservations.get(&id).cloned(),
             start: parts.starts.get(&id).cloned(),
             terminal: parts.terminals.get(&id).cloned(),
             plan: parts.plans.get(&id).cloned(),
@@ -191,6 +205,7 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
             )?,
             source_entity_id: rows::source_entity(row.get("source_entity_id"))?,
             max_attempts: rows::max_attempts(row.get("max_attempts"))?,
+            priority: rows::job_priority(&row)?,
             created_at: row.get("created_at"),
             owner,
             runs: runs.remove(&id).unwrap_or_default(),
@@ -204,6 +219,10 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
 
 async fn load_run_parts(executor: &mut PgConnection, ids: &[Uuid]) -> Result<RunParts, PortError> {
     let mut parts = RunParts::default();
+    for row in fetch(&mut *executor, RESERVATIONS_SQL, ids).await? {
+        let (run_id, reservation) = rows::reservation(&row)?;
+        parts.reservations.insert(run_id, reservation);
+    }
     for row in fetch(&mut *executor, STARTS_SQL, ids).await? {
         let (run_id, start) = rows::start(&row)?;
         parts.starts.insert(run_id, start);

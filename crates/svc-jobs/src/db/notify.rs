@@ -1,6 +1,7 @@
 use bc_jobs::domain::ids::{EventId, JobId, RunId, RunLogId};
 use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::event::job::JobEvent;
+use bc_jobs::event::user::UserEvent;
 use bc_jobs::ports::PortError;
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
@@ -57,6 +58,24 @@ pub async fn fleet_event(
             aggregate_type: bc_jobs::event::fleet::RUNNER_TYPE_AGGREGATE_TYPE.to_owned(),
             event_type: event.event_type().to_owned(),
             aggregate_id: event.runner_type_id().as_uuid(),
+        },
+    )
+    .await
+}
+
+pub async fn user_event(
+    tx: &mut PgConnection,
+    event_id: EventId,
+    event: &UserEvent,
+) -> Result<(), PortError> {
+    send(
+        tx,
+        DOMAIN_EVENT_CHANNEL,
+        &DomainEventSignal {
+            event_id: event_id.as_uuid(),
+            aggregate_type: bc_jobs::event::user::KNOWN_USER_AGGREGATE_TYPE.to_owned(),
+            event_type: event.event_type().to_owned(),
+            aggregate_id: event.user_id().as_uuid(),
         },
     )
     .await

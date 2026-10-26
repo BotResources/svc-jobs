@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Result};
+use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::keys::DisplayName;
 use bc_jobs::domain::references::KnownUser;
 use br_core_auth::Passport;
 use br_core_events::UserId;
 use br_util_graphql::EdgeError;
 
+use super::access::principal_of;
+use super::error::of_domain;
 use crate::app::Jobs;
 use crate::db::PgStore;
 use crate::stream::Hub;
@@ -18,17 +21,42 @@ pub struct EdgeState {
     pub hub: Hub,
 }
 
+fn passport<'a>(ctx: &'a Context<'_>) -> Result<&'a Passport> {
+    ctx.data_opt::<Passport>()
+        .ok_or_else(|| async_graphql::Error::from(EdgeError::unauthenticated()))
+}
+
+pub fn principal(ctx: &Context<'_>) -> Result<PrincipalFacts> {
+    Ok(principal_of(passport(ctx)?))
+}
+
 pub fn administrator(ctx: &Context<'_>) -> Result<KnownUser> {
-    let passport = ctx
-        .data_opt::<Passport>()
-        .ok_or_else(|| async_graphql::Error::from(EdgeError::unauthenticated()))?;
-    known_administrator(passport)
+    known_administrator(passport(ctx)?)
+}
+
+/// The human acting, as the actions it takes are recorded under. Whether it
+/// may act is the domain's decision, taken on [`principal`].
+pub fn actor(ctx: &Context<'_>) -> Result<KnownUser> {
+    known_user(passport(ctx)?)
+}
+
+/// The caller of the user surface: an active human, reading their own data.
+pub fn own_user(ctx: &Context<'_>) -> Result<uuid::Uuid> {
+    let passport = passport(ctx)?;
+    principal_of(passport)
+        .guard_reads_own_max_priority()
+        .map_err(|refusal| async_graphql::Error::from(of_domain(&refusal)))?;
+    Ok(passport.actor_id())
 }
 
 pub fn known_administrator(passport: &Passport) -> Result<KnownUser> {
     if !is_platform_administrator(passport) {
         return Err(EdgeError::forbidden().into());
     }
+    known_user(passport)
+}
+
+fn known_user(passport: &Passport) -> Result<KnownUser> {
     let display_name = passport
         .claim::<String>("display_name")
         .filter(|claimed| !claimed.trim().is_empty())
@@ -42,5 +70,7 @@ pub fn known_administrator(passport: &Passport) -> Result<KnownUser> {
 }
 
 pub fn is_platform_administrator(passport: &Passport) -> bool {
-    matches!(passport, Passport::Human { .. }) && passport.is_super_admin() && passport.is_active()
+    principal_of(passport)
+        .guard_platform_administrator()
+        .is_ok()
 }

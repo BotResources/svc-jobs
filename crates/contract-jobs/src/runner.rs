@@ -9,6 +9,8 @@ pub const TRIGGER_STREAM: &str = "JOBS_TRIGGER";
 pub const STATUS_STREAM: &str = "JOBS_STATUS";
 pub const LOG_STREAM: &str = "JOBS_LOG";
 pub const TRIGGER_FILTER: &str = "jobs.trigger.>";
+/// Every claim subject: one segment per runner type.
+pub const CLAIM_FILTER: &str = "jobs.claim.*";
 pub const STATUS_FILTER: &str = "jobs.status.>";
 pub const LOG_FILTER: &str = "jobs.log.>";
 pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
@@ -200,4 +202,67 @@ pub struct Presence {
     pub runner_version: String,
     pub status: RunnerStatus,
     pub capacity: Capacity,
+}
+
+/// The reasons a claim reply carries, alongside an absent `run`, when the
+/// claim was refused rather than answered empty at the end of its wait.
+pub const CLAIM_REASON_INSTANCE_UNKNOWN: &str = "instance_unknown";
+pub const CLAIM_REASON_NOT_CLAIM_MODE: &str = "not_claim_mode";
+/// The reason a reserved Run its Instance never started fails with.
+pub const RUN_FAILURE_CLAIM_LOST: &str = "claim_lost";
+
+/// An Instance of a `CLAIM` runner type asking for its next Run, on
+/// `jobs.claim.{runner_type}` (core NATS request/reply).
+///
+/// `claim_id` identifies one free slot of the Instance: repeating a claim
+/// under the same `claim_id` — because its reply was lost — returns the Run
+/// already reserved to it, never a second one. A different `claim_id` from the
+/// same Instance is another slot. `wait_ms` is the longest the Instance waits
+/// for the reply; Jobs holds the claim at most that long, within its own bound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claim {
+    #[serde(default = "wire_version")]
+    pub version: u8,
+    pub instance_key: String,
+    pub claim_id: Uuid,
+    pub wait_ms: u64,
+}
+
+/// The answer to a [`Claim`]. `run` carries exactly what a trigger carries;
+/// absent, it means nothing was waiting during the wait — or, with a `reason`,
+/// that the claim was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimReply {
+    #[serde(default = "wire_version")]
+    pub version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Trigger>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl ClaimReply {
+    pub fn served(run: Trigger) -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: Some(run),
+            reason: None,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: None,
+            reason: None,
+        }
+    }
+
+    pub fn refused(reason: impl Into<String>) -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: None,
+            reason: Some(reason.into()),
+        }
+    }
 }

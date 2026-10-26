@@ -4,6 +4,7 @@ const SUBJECTS: &[(&str, &str)] = &[
     ("CMD_JOB_CANCEL_V1", CMD_JOB_CANCEL_V1),
     ("CMD_JOB_CANCEL_V2", CMD_JOB_CANCEL_V2),
     ("CMD_JOB_CREATE_V1", CMD_JOB_CREATE_V1),
+    ("CMD_JOB_CREATE_V2", CMD_JOB_CREATE_V2),
     ("CMD_JOB_FAIL_V1", CMD_JOB_FAIL_V1),
     ("CMD_JOB_FAIL_V2", CMD_JOB_FAIL_V2),
     ("CMD_JOB_FINISH_V1", CMD_JOB_FINISH_V1),
@@ -38,6 +39,7 @@ const SUBJECTS: &[(&str, &str)] = &[
         EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED,
     ),
     ("CMD_JOBS_TRIGGER_RUNNER_TYPE", CMD_JOBS_TRIGGER_RUNNER_TYPE),
+    ("CMD_JOBS_CLAIM_RUNNER_TYPE", CMD_JOBS_CLAIM_RUNNER_TYPE),
     ("KV_RUN_ID", KV_RUN_ID),
     ("KV_RUNNER_TYPE_INSTANCE_KEY", KV_RUNNER_TYPE_INSTANCE_KEY),
 ];
@@ -257,4 +259,82 @@ fn a_presence_entry_without_a_usable_capacity_is_refused_never_defaulted() {
         "status": "READY",
     });
     assert!(serde_json::from_value::<runner::Presence>(absent).is_err());
+}
+
+#[test]
+fn a_v2_creation_without_a_priority_is_the_v1_declaration() {
+    // Given: a v2 creation that names no priority
+    let job_id = uuid::Uuid::now_v7();
+    let wire = serde_json::json!({
+        "job_id": job_id,
+        "runner_type": "analyst",
+        "producer": "projects",
+    });
+    // When: it is read through the published contract
+    let creation: command::CreateJobV2 = serde_json::from_value(wire).unwrap();
+    // Then: no priority is carried, and the v1 fields read as a v1 creation would
+    assert_eq!(creation.priority, None);
+    assert_eq!(creation.declaration().job_id, job_id);
+    assert!(
+        serde_json::to_value(&creation)
+            .unwrap()
+            .get("priority")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_v2_priority_outside_the_scale_still_parses_so_it_can_be_rejected_by_code() {
+    // Given: a v2 creation naming priority 9
+    let wire = serde_json::json!({
+        "job_id": uuid::Uuid::now_v7(),
+        "runner_type": "analyst",
+        "producer": "projects",
+        "priority": 9,
+    });
+    // When/Then: it parses — the receiver answers invalid_priority, not malformed_payload
+    let creation: command::CreateJobV2 = serde_json::from_value(wire).unwrap();
+    assert_eq!(creation.priority, Some(9));
+}
+
+#[test]
+fn a_claim_names_its_instance_its_slot_and_its_wait() {
+    // Given: a claim as a runner writes it, without a version
+    let claim_id = uuid::Uuid::now_v7();
+    let wire = serde_json::json!({
+        "instance_key": "pod-7",
+        "claim_id": claim_id,
+        "wait_ms": 20_000,
+    });
+    // When: it is read through the published contract
+    let claim: runner::Claim = serde_json::from_value(wire).unwrap();
+    // Then: it is wire v1 and carries the slot identity
+    assert_eq!(claim.version, runner::WIRE_VERSION);
+    assert_eq!(claim.claim_id, claim_id);
+    assert_eq!(claim.wait_ms, 20_000);
+}
+
+#[test]
+fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
+    // Given: a trigger, a reply serving it, an empty reply and a refusal
+    let trigger = runner::Trigger {
+        version: runner::WIRE_VERSION,
+        run_id: uuid::Uuid::now_v7(),
+        job_id: uuid::Uuid::now_v7(),
+        config: None,
+        attempt: 1,
+        triggered_by: None,
+    };
+    let served = serde_json::to_value(runner::ClaimReply::served(trigger.clone())).unwrap();
+    let empty = serde_json::to_value(runner::ClaimReply::empty()).unwrap();
+    let refused = serde_json::to_value(runner::ClaimReply::refused(
+        runner::CLAIM_REASON_NOT_CLAIM_MODE,
+    ))
+    .unwrap();
+    // When/Then: the served run is the trigger itself, the empty reply carries neither run nor
+    // reason, and a refusal carries its reason alone
+    assert_eq!(served["run"], serde_json::to_value(&trigger).unwrap());
+    assert!(empty.get("run").is_none() && empty.get("reason").is_none());
+    assert!(refused.get("run").is_none());
+    assert_eq!(refused["reason"], "not_claim_mode");
 }

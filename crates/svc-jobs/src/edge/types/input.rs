@@ -1,7 +1,7 @@
 use async_graphql::InputObject;
 use uuid::Uuid;
 
-use super::enums::{GqlDeletedFilter, GqlJobStatus};
+use super::enums::{GqlDeletedFilter, GqlDispatchMode, GqlJobStatus};
 use crate::db::list::JobFilter;
 
 #[derive(InputObject, Clone, Default)]
@@ -77,4 +77,38 @@ pub struct GqlDeleteJobInput {
 #[graphql(name = "JobsRunnerTypeInput")]
 pub struct GqlRunnerTypeInput {
     pub runner_type: String,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "JobsSetUserMaxPriorityInput")]
+pub struct GqlSetUserMaxPriorityInput {
+    pub user_id: Uuid,
+    pub max_priority: i32,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "JobsClearUserMaxPriorityInput")]
+pub struct GqlClearUserMaxPriorityInput {
+    pub user_id: Uuid,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "JobsForceJobPriorityInput")]
+pub struct GqlForceJobPriorityInput {
+    pub job_id: Uuid,
+    pub priority: i32,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "JobsSetRunnerTypeDispatchModeInput")]
+pub struct GqlSetRunnerTypeDispatchModeInput {
+    pub runner_type: String,
+    pub dispatch_mode: GqlDispatchMode,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "JobsSetRunnerTypeMaxRunDurationInput")]
+pub struct GqlSetRunnerTypeMaxRunDurationInput {
+    pub runner_type: String,
+    pub max_run_duration_seconds: i32,
 }

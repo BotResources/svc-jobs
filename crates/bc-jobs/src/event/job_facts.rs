@@ -3,12 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::attempts::{AttemptNumber, MaxAttempts};
 use crate::domain::config::RunnerConfig;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::ids::{
-    JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
+    ClaimId, JobId, KnownUserId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId,
+    RunId,
 };
 use crate::domain::job::resolution::JobFailureCause;
 use crate::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
+use crate::domain::priority::Priority;
 use crate::domain::references::{KnownUser, SourceReference};
 use crate::domain::run::failure::RunFailureReport;
 use crate::domain::run::origin::RunOrigin;
@@ -27,6 +30,16 @@ pub struct JobQueued {
     pub triggered_by: Option<KnownUser>,
     pub source: Option<SourceReference>,
     pub max_attempts: Option<MaxAttempts>,
+    #[serde(default = "default_priority")]
+    pub requested_priority: Priority,
+    #[serde(default = "default_priority")]
+    pub effective_priority: Priority,
+}
+
+/// What a fact recorded before priorities existed reads as: the default level,
+/// requested and effective.
+fn default_priority() -> Priority {
+    Priority::DEFAULT
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +51,19 @@ pub struct RunDispatched {
     pub origin: RunOrigin,
     pub automatic_retry_schedule_id: Option<RetryScheduleId>,
     pub automatic_retry_of_run_id: Option<RunId>,
+    /// The maximum duration the Run is dispatched with, from its RunnerType.
+    #[serde(default)]
+    pub max_run_duration: Option<MaxRunDuration>,
+    /// The claim the Run was reserved to, when an Instance claimed it rather
+    /// than finding it on the trigger stream.
+    #[serde(default)]
+    pub claimed_by: Option<RunClaim>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunClaim {
+    pub instance_key: InstanceKey,
+    pub claim_id: ClaimId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +161,9 @@ pub struct ManualRetryStarted {
     pub failed_resolution_id: ResolutionId,
     pub successor_job_id: JobId,
     pub requested_by: KnownUser,
-    pub run_id: RunId,
+    /// The successor's first Run, dispatched with the intervention. Absent for
+    /// a `CLAIM` RunnerType: the successor waits to be claimed like any Job.
+    pub run_id: Option<RunId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,4 +176,32 @@ pub struct JobDeleted {
 pub struct JobAffordancesChanged {
     pub job_id: JobId,
     pub caused_by_job_id: Option<JobId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobPriorityForced {
+    pub job_id: JobId,
+    pub priority: Priority,
+    pub forced_by: KnownUser,
+    /// The Job a super user forced, when this one was forced as its waiting
+    /// descendant.
+    pub originating_job_id: Option<JobId>,
+    /// The request an inheriting descendant now records: the level it
+    /// inherits, as at admission. Absent for the Job a super user forced, whose
+    /// own request stands.
+    #[serde(default)]
+    pub requested_priority: Option<Priority>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobPriorityRecalculated {
+    pub job_id: JobId,
+    pub effective_priority: Priority,
+    pub previous_priority: Priority,
+    /// The user whose maximum changed.
+    pub user_id: KnownUserId,
+    /// The request an inheriting descendant now records: its new level, as at
+    /// admission. Absent for a root, whose own request stands.
+    #[serde(default)]
+    pub requested_priority: Option<Priority>,
 }

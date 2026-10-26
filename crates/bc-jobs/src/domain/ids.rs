@@ -57,6 +57,41 @@ uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
 
+/// The identity an Instance gives one claim — one free slot. The runner mints
+/// it; any non-nil UUID. Repeating a claim under the same identity is the same
+/// claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "Uuid", into = "Uuid")]
+pub struct ClaimId(Uuid);
+
+impl ClaimId {
+    pub fn new(value: Uuid) -> Result<Self, JobsError> {
+        if value.is_nil() {
+            Err(JobsError::BlankValue { field: "claim_id" })
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+impl From<ClaimId> for Uuid {
+    fn from(value: ClaimId) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<Uuid> for ClaimId {
+    type Error = JobsError;
+
+    fn try_from(value: Uuid) -> Result<Self, JobsError> {
+        Self::new(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +132,17 @@ mod tests {
         let result = serde_json::from_value::<RunId>(v4);
         // Then: hydration fails rather than admitting an illegal id
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_claim_identity_is_any_uuid_but_the_nil_one() {
+        // Given: a v4 uuid a runner minted, and the nil uuid
+        let v4 = Uuid::parse_str("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e").unwrap();
+        // When/Then: the first names a claim, the second names nothing
+        assert_eq!(ClaimId::new(v4).unwrap().as_uuid(), v4);
+        assert_eq!(
+            ClaimId::new(Uuid::nil()),
+            Err(JobsError::BlankValue { field: "claim_id" })
+        );
     }
 }

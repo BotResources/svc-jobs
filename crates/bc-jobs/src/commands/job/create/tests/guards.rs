@@ -11,6 +11,7 @@ fn a_job_loaded_under_another_id_never_absorbs_a_creation() {
         Some(&stranger),
         None,
         None,
+        None,
         &ServiceLimits::default(),
     );
     // Then: the mismatch fails loud rather than swallowing a legitimate creation
@@ -35,6 +36,7 @@ fn a_live_job_holding_another_source_never_blocks_a_creation() {
         command,
         None,
         Some(&unrelated),
+        None,
         None,
         &ServiceLimits::default(),
     );

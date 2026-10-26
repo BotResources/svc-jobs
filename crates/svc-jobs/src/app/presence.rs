@@ -1,6 +1,8 @@
 use bc_jobs::JobsError;
 use bc_jobs::commands::fleet::{ObserveLoss, ObservePresence, observe_loss, observe_presence};
 use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
+use bc_jobs::domain::fleet::settings::RunnerTypeSettings;
 use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
 use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
@@ -25,6 +27,9 @@ async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceE
     let version = RunnerVersion::new(&presence.runner_version)?;
     let reported_status = ReportedStatus::new(presence.status.as_str())?;
     let capacity = Capacity::new(presence.capacity.get())?;
+    let registration_settings = RunnerTypeSettings::registered_with(MaxRunDuration::from_delta(
+        jobs.limits.max_run_duration(),
+    )?);
     for _ in 0..PRESENCE_DECISION_ATTEMPTS {
         let known = FleetReader::load(&jobs.store, &key).await?;
         let runner_type_id = match &known {
@@ -46,6 +51,7 @@ async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceE
                 version: version.clone(),
                 reported_status,
                 capacity,
+                registration_settings,
             },
         )?;
         if result.events.is_empty() {
@@ -117,6 +123,7 @@ pub async fn drained(
                 version: live.version().clone(),
                 reported_status: ReportedStatus::Draining,
                 capacity: live.capacity(),
+                registration_settings: known.settings(),
             },
         )?;
         if result.events.is_empty() {

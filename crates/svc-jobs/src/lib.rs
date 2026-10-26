@@ -111,6 +111,7 @@ async fn boot(
         limits: settings.limits,
         retry: settings.retry_policy,
         catalog,
+        claims: settings.claims,
     });
     app::runner_type_catalog::reconcile(&jobs).await?;
 

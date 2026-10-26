@@ -1,4 +1,5 @@
 use async_graphql::Enum;
+use bc_jobs::domain::fleet::dispatch_mode::DispatchMode;
 use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolutionKind};
 use bc_jobs::domain::job::status::JobStatus;
@@ -178,6 +179,8 @@ pub enum GqlFleetEventKind {
     RunnerTypeReactivated,
     RunnerTypeRetired,
     RunnerTypeBecameRetirable,
+    RunnerTypeDispatchModeChanged,
+    RunnerTypeMaxRunDurationChanged,
     InstanceConnected,
     InstanceStatusReported,
     InstanceDisconnected,
@@ -212,6 +215,31 @@ impl From<FleetSignal> for GqlFleetEventKind {
             FleetSignal::JobStoppedWaiting => Self::JobStoppedWaiting,
             FleetSignal::JobBeganExecuting => Self::JobBeganExecuting,
             FleetSignal::JobStoppedExecuting => Self::JobStoppedExecuting,
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "JobsDispatchMode")]
+pub enum GqlDispatchMode {
+    Push,
+    Claim,
+}
+
+impl From<DispatchMode> for GqlDispatchMode {
+    fn from(mode: DispatchMode) -> Self {
+        match mode {
+            DispatchMode::Push => Self::Push,
+            DispatchMode::Claim => Self::Claim,
+        }
+    }
+}
+
+impl From<GqlDispatchMode> for DispatchMode {
+    fn from(mode: GqlDispatchMode) -> Self {
+        match mode {
+            GqlDispatchMode::Push => Self::Push,
+            GqlDispatchMode::Claim => Self::Claim,
         }
     }
 }

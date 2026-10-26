@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::config::RunnerConfig;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::job::resolution::{JobFailureCause, JobResolution};
 use crate::domain::run::failure::RunFailureKind;
 use crate::fixtures::{
@@ -8,6 +9,7 @@ use crate::fixtures::{
 };
 use serde_json::json;
 
+mod priority;
 mod redelivery;
 mod successor;
 
@@ -37,8 +39,12 @@ fn command(failed_resolution_id: ResolutionId) -> ManualRetryJob {
         manual_retry_id: manual_retry_id(),
         failed_resolution_id,
         successor_job_id: job_id(),
-        first_run_id: run_id(),
+        dispatch: SuccessorDispatch::Push {
+            first_run_id: run_id(),
+            max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
+        },
         requested_by: user(),
+        applicable_maximum: Priority::HIGHEST,
     }
 }
 

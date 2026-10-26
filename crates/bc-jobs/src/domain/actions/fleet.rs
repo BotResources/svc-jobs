@@ -2,14 +2,18 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::fleet::RunnerType;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
+use crate::domain::fleet::instance::RunnerInstance;
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
-use crate::domain::keys::RunnerTypeKey;
+use crate::domain::keys::{InstanceKey, RunnerTypeKey};
 use crate::error::JobsError;
 
 pub const DISPATCH: &str = "dispatch";
 pub const DEPRECATE: &str = "deprecate";
 pub const REACTIVATE: &str = "reactivate";
 pub const RETIRE: &str = "retire";
+pub const SET_DISPATCH_MODE: &str = "set_dispatch_mode";
+pub const SET_MAX_RUN_DURATION: &str = "set_max_run_duration";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetirementWindow {
@@ -58,6 +62,50 @@ impl RunnerType {
 
     pub fn can_dispatch(&self) -> Availability {
         Availability::from_guard(self.guard_dispatch())
+    }
+
+    /// Publishing the trigger of a waiting Job: the type is available and its
+    /// Instances are pushed to.
+    pub fn guard_push_dispatch(&self) -> Result<(), JobsError> {
+        self.guard_dispatch()?;
+        match self.dispatch_mode() {
+            DispatchMode::Push => Ok(()),
+            DispatchMode::Claim => Err(JobsError::NotPushMode {
+                runner_type: self.key().as_str().to_owned(),
+            }),
+        }
+    }
+
+    /// Serving the claim of one Instance: the type accepts Jobs and is claimed
+    /// from, and the Instance is live and taking new work.
+    pub fn guard_claim(&self, instance_key: &InstanceKey) -> Result<&RunnerInstance, JobsError> {
+        self.guard_accept_job()?;
+        if self.dispatch_mode() != DispatchMode::Claim {
+            return Err(JobsError::NotClaimMode {
+                runner_type: self.key().as_str().to_owned(),
+            });
+        }
+        let live = self
+            .instance(instance_key)
+            .ok_or_else(|| JobsError::InstanceUnknown {
+                instance_key: instance_key.as_str().to_owned(),
+            })?;
+        if !live.accepts_new_work() {
+            return Err(JobsError::InstanceDraining {
+                instance_key: instance_key.as_str().to_owned(),
+            });
+        }
+        Ok(live)
+    }
+
+    /// The dispatch mode and the maximum Run duration are set at any time,
+    /// whatever the lifecycle: a change applies to Runs dispatched afterwards.
+    pub fn guard_configure(&self) -> Result<(), JobsError> {
+        Ok(())
+    }
+
+    pub fn can_configure(&self) -> Availability {
+        Availability::from_guard(self.guard_configure())
     }
 
     pub fn guard_deprecate(&self) -> Result<(), JobsError> {
@@ -118,6 +166,8 @@ impl RunnerType {
             Affordance::new(DEPRECATE, self.can_deprecate()),
             Affordance::new(REACTIVATE, self.can_reactivate()),
             Affordance::new(RETIRE, self.can_retire(facts)),
+            Affordance::new(SET_DISPATCH_MODE, self.can_configure()),
+            Affordance::new(SET_MAX_RUN_DURATION, self.can_configure()),
         ]
     }
 }

@@ -1,4 +1,6 @@
 pub mod apply;
+pub mod claim;
+pub mod dispatch_order;
 pub mod fleet;
 pub mod hydrate;
 pub mod impacts;
@@ -7,6 +9,7 @@ pub mod list;
 pub mod logs;
 pub mod notify;
 pub mod partitions;
+pub mod priority;
 pub mod rows;
 
 use sqlx::PgPool;

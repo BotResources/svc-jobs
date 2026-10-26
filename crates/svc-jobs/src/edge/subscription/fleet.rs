@@ -47,7 +47,7 @@ pub fn fleet_stream(
                     )
                     .await
                 }
-                Fact::Log { .. } => Ok(vec![]),
+                Fact::Log { .. } | Fact::User { .. } => Ok(vec![]),
             };
             match messages {
                 Ok(messages) => {
@@ -85,6 +85,12 @@ async fn fleet_deltas(
         FleetEvent::RunnerTypeReactivated(_) => GqlFleetEventKind::RunnerTypeReactivated,
         FleetEvent::RunnerTypeRetired(_) => GqlFleetEventKind::RunnerTypeRetired,
         FleetEvent::RunnerTypeBecameRetirable(_) => GqlFleetEventKind::RunnerTypeBecameRetirable,
+        FleetEvent::RunnerTypeDispatchModeChanged(_) => {
+            GqlFleetEventKind::RunnerTypeDispatchModeChanged
+        }
+        FleetEvent::RunnerTypeMaxRunDurationChanged(_) => {
+            GqlFleetEventKind::RunnerTypeMaxRunDurationChanged
+        }
         FleetEvent::InstanceConnected(_) => GqlFleetEventKind::InstanceConnected,
         FleetEvent::InstanceStatusReported(_) => GqlFleetEventKind::InstanceStatusReported,
         FleetEvent::InstanceDisconnected(_) => GqlFleetEventKind::InstanceDisconnected,

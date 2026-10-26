@@ -63,6 +63,12 @@ spec:
               value: {{ .Values.runnerTypes.impactSweepIntervalSeconds | quote }}
             - name: JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS
               value: {{ .Values.runnerTypes.catalogReconcileIntervalSeconds | quote }}
+            - name: JOBS_DEFAULT_MAX_PRIORITY
+              value: {{ .Values.priorities.defaultMaxPriority | quote }}
+            - name: JOBS_CLAIM_MAX_WAIT_SECONDS
+              value: {{ .Values.claims.maxWaitSeconds | quote }}
+            - name: JOBS_CLAIM_RESERVATION_SECONDS
+              value: {{ .Values.claims.reservationSeconds | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

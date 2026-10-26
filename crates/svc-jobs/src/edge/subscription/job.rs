@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_graphql::Result;
+use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::event::job::JobEvent;
 use br_util_graphql::Affordance;
@@ -23,10 +24,11 @@ use super::{cursor, next_unbroken_fact};
 pub fn job_stream(
     state: EdgeState,
     job_id: JobId,
+    principal: PrincipalFacts,
 ) -> impl Stream<Item = GqlJobStreamMessage> + Send {
     let mut facts = state.hub.subscribe();
     async_stream::stream! {
-        let mut descendants = match snapshot(&state, job_id).await {
+        let mut descendants = match snapshot(&state, job_id, &principal).await {
             Ok(Some((message, descendants))) => {
                 yield message;
                 descendants
@@ -44,7 +46,7 @@ pub fn job_stream(
             if !concerns_the_tree(&event, carried, job_id, &descendants) {
                 continue;
             }
-            match delta(&state, job_id, event_id, occurred_at, &event).await {
+            match delta(&state, job_id, &principal, event_id, occurred_at, &event).await {
                 Ok(Some((message, refreshed))) => {
                     descendants = refreshed;
                     yield message;
@@ -79,8 +81,9 @@ fn joins_the_tree(event: &JobEvent, root: JobId, descendants: &HashSet<Uuid>) ->
 async fn snapshot(
     state: &EdgeState,
     job_id: JobId,
+    principal: &PrincipalFacts,
 ) -> Result<Option<(GqlJobStreamMessage, HashSet<Uuid>)>> {
-    let Some(projected) = projection(state, job_id).await? else {
+    let Some(projected) = projection(state, job_id, principal).await? else {
         return Ok(None);
     };
     let descendants = projected.tree.descendant_ids();
@@ -100,6 +103,7 @@ async fn snapshot(
 async fn delta(
     state: &EdgeState,
     job_id: JobId,
+    principal: &PrincipalFacts,
     event_id: Uuid,
     occurred_at: DateTime<Utc>,
     event: &JobEvent,
@@ -107,7 +111,7 @@ async fn delta(
     let Some(carried) = of_domain(event_id, occurred_at, event) else {
         return Ok(None);
     };
-    let Some(projected) = projection(state, job_id).await? else {
+    let Some(projected) = projection(state, job_id, principal).await? else {
         return Ok(None);
     };
     let descendants = projected.tree.descendant_ids();
@@ -131,12 +135,16 @@ struct Projection {
     affordances: Vec<Affordance>,
 }
 
-async fn projection(state: &EdgeState, job_id: JobId) -> Result<Option<Projection>> {
+async fn projection(
+    state: &EdgeState,
+    job_id: JobId,
+    principal: &PrincipalFacts,
+) -> Result<Option<Projection>> {
     let Some(job) = state.jobs.load(job_id).await.map_err(edge_error)? else {
         return Ok(None);
     };
     let parent = project::parent_of(&state.store, &job).await?;
-    let affordances = project::affordances_of(&job, parent.as_deref())?;
+    let affordances = project::affordances_of(&job, parent.as_deref(), principal)?;
     let tree = JobTree::rooted_at(&state.store, job_id)
         .await
         .map_err(edge_error)?;

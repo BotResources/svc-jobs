@@ -58,13 +58,14 @@ async fn dispatch_one(
     job: &Job,
     runner_type: Option<&RunnerType>,
 ) -> Result<Outcome, ServiceError> {
-    if runner_type.is_none_or(|known| known.guard_dispatch().is_err()) {
+    let Some(runner_type) = runner_type.filter(|known| known.guard_push_dispatch().is_ok()) else {
         return Ok(Outcome::NobodyWouldTakeIt);
-    }
+    };
     let result = job.dispatch_run(
         DispatchRun {
             run_id: RunId::new(jobs.ids.next())?,
             at: jobs.clock.now(),
+            max_run_duration: runner_type.max_run_duration(),
         },
         &jobs.limits,
     )?;

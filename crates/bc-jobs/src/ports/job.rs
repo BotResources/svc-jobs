@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use br_core_events::EventMetadata;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::ids::JobId;
 use crate::domain::job::Job;
@@ -35,9 +35,20 @@ pub const DUE_WORK_BATCH: usize = 200;
 
 #[async_trait]
 pub trait DueWorkReader: Send + Sync {
+    /// The Jobs of `PUSH` runner types waiting at `at`, in dispatch order.
     async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 
-    async fn jobs_with_outrun_runs(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
+    /// Jobs whose started Run is past its maximum duration at `now`: the one
+    /// it was dispatched with, `service_default` for a Run that carries none.
+    async fn jobs_with_outrun_runs(
+        &self,
+        now: DateTime<Utc>,
+        service_default: TimeDelta,
+    ) -> Result<Vec<Job>, PortError>;
+
+    /// Jobs whose Run was reserved by a claim before `cutoff` and never
+    /// started.
+    async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 
     async fn jobs_idle_since(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 }

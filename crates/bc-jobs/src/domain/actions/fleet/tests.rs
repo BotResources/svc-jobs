@@ -1,8 +1,10 @@
 use super::*;
 use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::keys::{InstanceKey, RunnerTypeKey, RunnerVersion};
@@ -15,6 +17,7 @@ fn runner_type(instances: Vec<RunnerInstance>) -> RunnerType {
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
         lifecycle: RunnerTypeLifecycle::Active,
+        settings: RunnerTypeSettings::default(),
         instances,
     })
     .unwrap()
@@ -107,6 +110,7 @@ fn retirement_is_the_same_decision_used_by_the_affordance() {
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
         lifecycle: RunnerTypeLifecycle::Deprecated,
+        settings: RunnerTypeSettings::default(),
         instances: vec![],
     };
     let facts = RunnerTypeDecisionFacts {
@@ -152,6 +156,7 @@ fn the_retirement_quiet_period_is_the_configured_one() {
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
         lifecycle: RunnerTypeLifecycle::Deprecated,
+        settings: RunnerTypeSettings::default(),
         instances: vec![],
     })
     .unwrap();
@@ -172,4 +177,101 @@ fn the_retirement_quiet_period_is_the_configured_one() {
             eligible_at: ts(7_200)
         })
     );
+}
+
+fn claimed(instances: Vec<RunnerInstance>) -> RunnerType {
+    RunnerType::hydrate(RunnerTypeState {
+        id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+        key: RunnerTypeKey::new("analyst").unwrap(),
+        registered_at: ts(0),
+        lifecycle: RunnerTypeLifecycle::Active,
+        settings: RunnerTypeSettings {
+            dispatch_mode: DispatchMode::Claim,
+            ..RunnerTypeSettings::default()
+        },
+        instances,
+    })
+    .unwrap()
+}
+
+fn pod(key: &str) -> InstanceKey {
+    InstanceKey::new(key).unwrap()
+}
+
+#[test]
+fn a_live_ready_instance_of_a_claim_type_may_claim() {
+    // Given: a CLAIM type with pod-7 live and ready
+    let runner_type = claimed(vec![live()]);
+    // When/Then: pod-7's claim is served
+    assert_eq!(
+        runner_type
+            .guard_claim(&pod("pod-7"))
+            .map(|live| live.key().clone()),
+        Ok(pod("pod-7"))
+    );
+}
+
+#[test]
+fn a_claim_on_a_type_pushed_to_is_refused_as_not_claim_mode() {
+    // Given: a PUSH type with pod-7 live
+    let runner_type = runner_type(vec![live()]);
+    // When/Then: the claim is refused with the published code
+    let refusal = runner_type.guard_claim(&pod("pod-7")).unwrap_err();
+    assert_eq!(refusal.code(), "not_claim_mode");
+}
+
+#[test]
+fn a_claim_from_an_instance_without_live_presence_is_refused_as_unknown() {
+    // Given: a CLAIM type where only pod-7 is live
+    let runner_type = claimed(vec![live()]);
+    // When/Then: pod-9's claim is refused with the published code
+    assert_eq!(
+        runner_type.guard_claim(&pod("pod-9")).unwrap_err(),
+        JobsError::InstanceUnknown {
+            instance_key: "pod-9".to_owned()
+        }
+    );
+}
+
+#[test]
+fn a_draining_instance_is_handed_no_new_run() {
+    // Given: a CLAIM type whose only instance is draining
+    let runner_type = claimed(vec![reporting("pod-7", ReportedStatus::Draining)]);
+    // When/Then: its claim is refused — draining means finishing what it holds
+    assert_eq!(
+        runner_type.guard_claim(&pod("pod-7")).unwrap_err().code(),
+        "instance_draining"
+    );
+}
+
+#[test]
+fn a_claim_type_is_never_pushed_to() {
+    // Given: an available CLAIM type
+    let runner_type = claimed(vec![live()]);
+    // When/Then: dispatch is available, but publishing a trigger is not
+    assert_eq!(runner_type.guard_dispatch(), Ok(()));
+    assert_eq!(
+        runner_type.guard_push_dispatch().unwrap_err().code(),
+        "not_push_mode"
+    );
+    assert_eq!(
+        self::runner_type(vec![live()]).guard_push_dispatch(),
+        Ok(())
+    );
+}
+
+#[test]
+fn the_settings_affordances_are_open_whatever_the_lifecycle() {
+    // Given: a type with no live instance
+    let runner_type = runner_type(vec![]);
+    // When: its affordances are projected
+    let affordances = runner_type.affordances(RunnerTypeDecisionFacts::unused(window(ts(10))));
+    // Then: both settings may be changed
+    for action in [SET_DISPATCH_MODE, SET_MAX_RUN_DURATION] {
+        let entry = affordances
+            .iter()
+            .find(|entry| entry.action() == action)
+            .unwrap_or_else(|| panic!("{action} is projected"));
+        assert!(entry.allowed(), "{action} is open");
+    }
 }

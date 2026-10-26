@@ -1,8 +1,9 @@
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 
-use bc_jobs::domain::ids::{JobId, RunId, RunLogId};
+use bc_jobs::domain::ids::{JobId, KnownUserId, RunId, RunLogId};
 use bc_jobs::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};
 use bc_jobs::event::job::JobEvent;
+use bc_jobs::event::user::{KNOWN_USER_AGGREGATE_TYPE, UserEvent};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgListener;
 use sqlx::{PgPool, Row};
@@ -32,6 +33,11 @@ pub enum Fact {
         log_id: RunLogId,
         job_id: JobId,
         run_id: RunId,
+    },
+    User {
+        event_id: Uuid,
+        user_id: KnownUserId,
+        event: Arc<UserEvent>,
     },
 }
 
@@ -109,7 +115,14 @@ async fn domain_event(pool: &PgPool, hub: &Hub, payload: &str) -> Result<(), Ser
     };
     let stored: serde_json::Value = row.get("payload");
     let occurred_at: DateTime<Utc> = row.get("occurred_at");
-    if signal.aggregate_type == RUNNER_TYPE_AGGREGATE_TYPE {
+    if signal.aggregate_type == KNOWN_USER_AGGREGATE_TYPE {
+        let event = UserEvent::decode(&signal.event_type, stored)?;
+        hub.publish(Fact::User {
+            event_id: signal.event_id,
+            user_id: KnownUserId::new(signal.aggregate_id)?,
+            event: Arc::new(event),
+        });
+    } else if signal.aggregate_type == RUNNER_TYPE_AGGREGATE_TYPE {
         let event = FleetEvent::decode(&signal.event_type, stored)?;
         hub.publish(Fact::Fleet {
             event_id: signal.event_id,

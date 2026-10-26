@@ -44,6 +44,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::NotAJsonObject { .. }
         | JobsError::EmptyPlan
         | JobsError::DuplicatePlanStepIndex { .. }
+        | JobsError::InvalidPriority { .. }
         | JobsError::MaxAttemptsAboveCeiling { .. } => EdgeError::bad_user_input(),
 
         JobsError::JobIdConflict { .. }
@@ -80,13 +81,23 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunnerTypeHasNoLiveInstances
         | JobsError::RunnerTypeMismatch { .. }
         | JobsError::InstanceNotLive { .. }
+        | JobsError::InstanceUnknown { .. }
+        | JobsError::InstanceDraining { .. }
+        | JobsError::NotClaimMode { .. }
+        | JobsError::NotPushMode { .. }
+        | JobsError::RunNotReserved { .. }
+        | JobsError::RunReservedElsewhere { .. }
+        | JobsError::ReservationWithinDelay { .. }
         | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),
 
         JobsError::RunNotFound { .. } | JobsError::ParentJobUnknown { .. } => {
             EdgeError::not_found()
         }
 
-        JobsError::NotOwner => EdgeError::forbidden(),
+        JobsError::NotOwner
+        | JobsError::NotPlatformAdministrator
+        | JobsError::NotSuperUser
+        | JobsError::NotActiveHuman => EdgeError::forbidden(),
 
         JobsError::CorruptState { .. }
         | JobsError::UnknownEnumValue { .. }

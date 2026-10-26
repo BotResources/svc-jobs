@@ -2,6 +2,7 @@ pub mod fleet;
 pub mod job;
 pub mod list;
 pub mod logs;
+pub mod priority;
 
 use async_graphql::{Context, Result, Subscription};
 use bc_jobs::domain::ids::{JobId, RunId};
@@ -11,8 +12,9 @@ use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use super::error::edge_error;
-use super::state::{EdgeState, administrator};
+use super::state::{EdgeState, administrator, own_user, principal};
 use super::types::input::{GqlConnectionWindowInput, GqlJobFilterInput, GqlLogTailWindowInput};
+use super::types::priority::GqlMyMaxPriorityStreamMessage;
 use super::types::stream::{
     GqlFleetStreamMessage, GqlJobLogStreamMessage, GqlJobStreamMessage, GqlJobsStreamMessage,
 };
@@ -50,6 +52,7 @@ impl SubscriptionRoot {
         Ok(job::job_stream(
             state,
             JobId::new(job_id).map_err(edge_error)?,
+            principal(ctx)?,
         ))
     }
 
@@ -79,6 +82,17 @@ impl SubscriptionRoot {
         administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?.clone();
         Ok(fleet::fleet_stream(state, runner_type))
+    }
+
+    /// The caller's own maximum priority: a snapshot, then every change. Open
+    /// to any active human; nothing else of Jobs is readable this way.
+    async fn jobs_my_max_priority_changed(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<impl Stream<Item = GqlMyMaxPriorityStreamMessage>> {
+        let user_id = own_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?.clone();
+        Ok(priority::my_max_priority_stream(state, user_id))
     }
 }
 

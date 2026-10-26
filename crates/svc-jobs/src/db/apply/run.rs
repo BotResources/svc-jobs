@@ -16,17 +16,33 @@ pub async fn dispatched(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     sqlx::query(
-        "INSERT INTO runs (id, job_id, attempt_number, dispatched_at, automatic_retry_schedule_id) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO runs (id, job_id, attempt_number, dispatched_at, automatic_retry_schedule_id, \
+         max_run_duration_seconds) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(fact.run_id.as_uuid())
     .bind(fact.job_id.as_uuid())
     .bind(i32::try_from(fact.attempt_number.get()).unwrap_or(i32::MAX))
     .bind(at)
     .bind(fact.automatic_retry_schedule_id.map(|id| id.as_uuid()))
+    .bind(fact.max_run_duration.map(|duration| duration.seconds()))
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    if let Some(claim) = &fact.claimed_by {
+        let runner_type = refs::runner_type_id(tx, &fact.runner_type).await?;
+        let instance = refs::runner_instance_id(tx, runner_type, &claim.instance_key).await?;
+        sqlx::query(
+            "INSERT INTO run_reservations (run_id, instance_id, claim_id, reserved_at) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(fact.run_id.as_uuid())
+        .bind(instance)
+        .bind(claim.claim_id.as_uuid())
+        .bind(at)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    }
     Ok(())
 }
 

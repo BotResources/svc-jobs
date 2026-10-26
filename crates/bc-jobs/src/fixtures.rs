@@ -4,17 +4,22 @@ use uuid::Uuid;
 
 use crate::domain::attempts::{AttemptNumber, MaxAttempts};
 use crate::domain::config::RunnerConfig;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::ids::{
-    JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId, SourceEntityId,
+    ClaimId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
+    SourceEntityId,
 };
 use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
 use crate::domain::job::{Job, JobState};
 use crate::domain::keys::{DisplayName, InstanceKey, ProducerKey, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
+use crate::domain::priority::{JobPriority, Priority};
 use crate::domain::references::KnownUser;
 use crate::domain::run::failure::{RunFailureKind, RunFailureReport};
-use crate::domain::run::parts::{RetrySchedule, RunStart, RunTerminal, RunnerInstanceReference};
+use crate::domain::run::parts::{
+    RetrySchedule, RunReservation, RunStart, RunTerminal, RunnerInstanceReference,
+};
 use crate::domain::run::plan::{DeclarationNumber, RunPlan, RunPlanItem};
 use crate::domain::run::step::{Step, StepIndex};
 use crate::domain::run::{Run, RunState};
@@ -41,6 +46,10 @@ pub fn schedule_id() -> RetryScheduleId {
 
 pub fn manual_retry_id() -> ManualRetryId {
     ManualRetryId::new(Uuid::now_v7()).expect("uuid v7")
+}
+
+pub fn claim_id() -> ClaimId {
+    ClaimId::new(Uuid::now_v7()).expect("not nil")
 }
 
 pub fn declaration_id() -> PlanDeclarationId {
@@ -102,6 +111,8 @@ impl RunBuilder {
                 attempt_number,
                 dispatched_at: ts(0),
                 automatic_retry_schedule_id: (!attempt_number.is_first()).then(schedule_id),
+                max_duration: None,
+                reservation: None,
                 start: None,
                 terminal: None,
                 plan: None,
@@ -119,6 +130,21 @@ impl RunBuilder {
 
     pub fn started(self, at: DateTime<Utc>) -> Self {
         self.started_on(instance(), at)
+    }
+
+    pub fn reserved(self, at: DateTime<Utc>) -> Self {
+        self.reserved_on(instance(), at)
+    }
+
+    pub fn reserved_on(mut self, instance: RunnerInstanceReference, at: DateTime<Utc>) -> Self {
+        self.state.reservation = Some(RunReservation::new(instance, claim_id(), at));
+        self
+    }
+
+    pub fn with_max_duration(mut self, seconds: i64) -> Self {
+        self.state.max_duration =
+            Some(MaxRunDuration::from_seconds(seconds).expect("positive duration"));
+        self
     }
 
     pub fn started_on(mut self, instance: RunnerInstanceReference, at: DateTime<Utc>) -> Self {
@@ -192,6 +218,7 @@ impl JobBuilder {
                 triggered_by: None,
                 source_entity_id: None,
                 max_attempts: None,
+                priority: JobPriority::default(),
                 created_at: ts(0),
                 owner: JobOwner::Producer(producer()),
                 runs: vec![],
@@ -233,6 +260,22 @@ impl JobBuilder {
 
     pub fn with_max_attempts(mut self, value: u32) -> Self {
         self.state.max_attempts = Some(MaxAttempts::new(value).expect("positive budget"));
+        self
+    }
+
+    pub fn with_priority(
+        mut self,
+        requested: Priority,
+        effective: Priority,
+        forced: Option<Priority>,
+    ) -> Self {
+        self.state.priority =
+            JobPriority::hydrate(requested, effective, forced).expect("valid fixture priority");
+        self
+    }
+
+    pub fn with_triggered_by(mut self, user: KnownUser) -> Self {
+        self.state.triggered_by = Some(user);
         self
     }
 

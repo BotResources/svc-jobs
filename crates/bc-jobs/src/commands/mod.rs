@@ -1,11 +1,13 @@
 pub mod fleet;
 pub mod job;
 pub mod log;
+pub mod user;
 
 use serde_json::{Value, json};
 
 use crate::event::fleet::FleetEvent;
 use crate::event::job::JobEvent;
+use crate::event::user::UserEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandResult<E> {
@@ -15,6 +17,7 @@ pub struct CommandResult<E> {
 
 pub type JobCommandResult = CommandResult<JobEvent>;
 pub type FleetCommandResult = CommandResult<FleetEvent>;
+pub type UserCommandResult = CommandResult<UserEvent>;
 
 impl<E> CommandResult<E> {
     pub fn new(events: Vec<E>) -> Self {

@@ -2,14 +2,18 @@ use crate::commands::{CommandResult, CommandWarning, FleetCommandResult};
 use crate::domain::actions::fleet::RunnerTypeDecisionFacts;
 use crate::domain::fleet::RunnerType;
 use crate::domain::fleet::capacity::Capacity;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::fleet::instance::RunnerInstance;
+use crate::domain::fleet::run_duration::MaxRunDuration;
+use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use crate::error::JobsError;
 use crate::event::fleet::{
     FleetEvent, InstanceConnected, InstanceDisconnected, InstanceStatusReported,
-    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeReactivated, RunnerTypeRegistered,
+    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeDispatchModeChanged,
+    RunnerTypeMaxRunDurationChanged, RunnerTypeReactivated, RunnerTypeRegistered,
     RunnerTypeRetired,
 };
 
@@ -25,6 +29,9 @@ pub struct ObservePresence {
     pub version: RunnerVersion,
     pub reported_status: ReportedStatus,
     pub capacity: Capacity,
+    /// The settings the RunnerType is registered with, when this presence is
+    /// the first of its type.
+    pub registration_settings: RunnerTypeSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +50,8 @@ pub fn observe_presence(
             FleetEvent::RunnerTypeRegistered(RunnerTypeRegistered {
                 runner_type_id: command.runner_type_id,
                 runner_type: command.runner_type.clone(),
+                dispatch_mode: command.registration_settings.dispatch_mode,
+                max_run_duration: command.registration_settings.max_run_duration,
             }),
             connected(
                 command.runner_type_id,
@@ -138,6 +147,48 @@ pub fn retire(
             runner_type: runner_type.key().clone(),
         },
     )))
+}
+
+pub fn set_dispatch_mode(
+    runner_type: &RunnerType,
+    dispatch_mode: DispatchMode,
+) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_configure()?;
+    if runner_type.dispatch_mode() == dispatch_mode {
+        return Ok(CommandResult::nothing_happened(
+            CommandWarning::CommandAlreadyApplied {
+                command: "set_dispatch_mode",
+            },
+        ));
+    }
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeDispatchModeChanged(RunnerTypeDispatchModeChanged {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+            dispatch_mode,
+        }),
+    ))
+}
+
+pub fn set_max_run_duration(
+    runner_type: &RunnerType,
+    max_run_duration: MaxRunDuration,
+) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_configure()?;
+    if runner_type.max_run_duration() == max_run_duration {
+        return Ok(CommandResult::nothing_happened(
+            CommandWarning::CommandAlreadyApplied {
+                command: "set_max_run_duration",
+            },
+        ));
+    }
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeMaxRunDurationChanged(RunnerTypeMaxRunDurationChanged {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+            max_run_duration,
+        }),
+    ))
 }
 
 pub fn became_retirable(

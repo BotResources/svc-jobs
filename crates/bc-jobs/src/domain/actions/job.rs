@@ -1,3 +1,4 @@
+use crate::domain::access::PrincipalFacts;
 use crate::domain::actions::{Affordance, Availability};
 use crate::domain::job::Job;
 use crate::domain::job::parenting::{ParentContext, guard_admits_work};
@@ -7,6 +8,7 @@ use crate::error::JobsError;
 pub const CANCEL: &str = "cancel";
 pub const MANUAL_RETRY: &str = "manual_retry";
 pub const DELETE: &str = "delete";
+pub const FORCE_PRIORITY: &str = "force_priority";
 
 impl Job {
     pub fn guard_cancel(&self) -> Result<(), JobsError> {
@@ -47,6 +49,19 @@ impl Job {
         }
     }
 
+    /// Forcing the priority of a Job: a super user, on a Job that is neither
+    /// terminal nor deleted. The forced level only matters while the Job waits;
+    /// forcing a running Job prepares the retry it may wait for.
+    pub fn guard_force_priority(&self, principal: &PrincipalFacts) -> Result<(), JobsError> {
+        principal.guard_super_user()?;
+        self.guard_not_deleted()?;
+        self.guard_not_terminal()
+    }
+
+    pub fn can_force_priority(&self, principal: &PrincipalFacts) -> Availability {
+        Availability::from_guard(self.guard_force_priority(principal))
+    }
+
     pub fn can_cancel(&self) -> Availability {
         Availability::from_guard(self.guard_cancel())
     }
@@ -62,11 +77,16 @@ impl Job {
         Availability::from_guard(self.guard_delete())
     }
 
-    pub fn affordances(&self, parent: ParentContext<'_>) -> Result<Vec<Affordance>, JobsError> {
+    pub fn affordances(
+        &self,
+        parent: ParentContext<'_>,
+        principal: &PrincipalFacts,
+    ) -> Result<Vec<Affordance>, JobsError> {
         Ok(vec![
             Affordance::new(CANCEL, self.can_cancel()),
             Affordance::new(MANUAL_RETRY, self.can_manual_retry(parent)?),
             Affordance::new(DELETE, self.can_delete()),
+            Affordance::new(FORCE_PRIORITY, self.can_force_priority(principal)),
         ])
     }
 }
@@ -74,10 +94,19 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::access::PrincipalKind;
     use crate::domain::job::resolution::{JobFailureCause, JobResolution};
     use crate::domain::run::failure::RunFailureKind;
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
     use serde_json::json;
+
+    fn super_user() -> PrincipalFacts {
+        PrincipalFacts::new(PrincipalKind::Human, true, true)
+    }
+
+    fn member() -> PrincipalFacts {
+        PrincipalFacts::new(PrincipalKind::Human, true, false)
+    }
 
     fn failed_job() -> JobBuilder {
         JobBuilder::new()
@@ -165,7 +194,7 @@ mod tests {
         // Given: a failed child job whose parent was not loaded with it
         let child = failed_job().with_parent(job_id()).build();
         // When: the affordance surface is asked for anyway
-        let result = child.affordances(ParentContext::Root);
+        let result = child.affordances(ParentContext::Root, &super_user());
         // Then: it fails loud instead of publishing a corruption code as a business reason
         assert_eq!(
             result.err(),
@@ -222,7 +251,7 @@ mod tests {
         // Given: an already soft-deleted job
         let job = failed_job().deleted(ts(90)).build();
         // When: the affordance surface is projected
-        let affordances = job.affordances(ParentContext::Root).unwrap();
+        let affordances = job.affordances(ParentContext::Root, &super_user()).unwrap();
         // Then: every action is blocked, each with its own code
         assert_eq!(
             affordances
@@ -233,6 +262,7 @@ mod tests {
                 (CANCEL, Some("job_deleted")),
                 (MANUAL_RETRY, Some("job_deleted")),
                 (DELETE, Some("job_already_deleted")),
+                (FORCE_PRIORITY, Some("job_deleted")),
             ]
         );
     }
@@ -243,13 +273,13 @@ mod tests {
         let job = JobBuilder::new().build();
         // When: the surface is projected for a snapshot or an event
         let actions: Vec<&str> = job
-            .affordances(ParentContext::Root)
+            .affordances(ParentContext::Root, &super_user())
             .unwrap()
             .iter()
             .map(|entry| entry.action())
             .collect();
-        // Then: the three administrator mutations are always present
-        assert_eq!(actions, vec![CANCEL, MANUAL_RETRY, DELETE]);
+        // Then: the administrator mutations on a job are always present
+        assert_eq!(actions, vec![CANCEL, MANUAL_RETRY, DELETE, FORCE_PRIORITY]);
     }
 
     #[test]
@@ -260,5 +290,65 @@ mod tests {
         let refusal = job.guard_delete().unwrap_err();
         // Then: the client sees exactly the code the mutation would return
         assert_eq!(job.can_delete().reason_code(), Some(refusal.code()));
+    }
+
+    #[test]
+    fn a_super_user_may_force_a_live_job_whatever_it_is_doing() {
+        // Given: a waiting job and a running one
+        let waiting = JobBuilder::new().build();
+        let running = JobBuilder::new()
+            .with_run(RunBuilder::new(1).started(ts(5)).build())
+            .build();
+        // When/Then: both may be forced by a super user
+        assert_eq!(
+            waiting.can_force_priority(&super_user()),
+            Availability::Available
+        );
+        assert_eq!(
+            running.can_force_priority(&super_user()),
+            Availability::Available
+        );
+    }
+
+    #[test]
+    fn a_principal_who_is_not_a_super_user_may_not_force_a_priority() {
+        // Given: a waiting job, an ordinary member and a service account
+        let job = JobBuilder::new().build();
+        for principal in [
+            member(),
+            PrincipalFacts::new(PrincipalKind::Service, true, true),
+        ] {
+            // When/Then: the decision refuses with the super-user code
+            assert_eq!(
+                job.can_force_priority(&principal).reason_code(),
+                Some("not_super_user")
+            );
+        }
+    }
+
+    #[test]
+    fn a_terminal_job_has_no_priority_left_to_force() {
+        // Given: a failed job
+        let job = failed_job().build();
+        // When/Then: forcing is closed with the lifecycle code, even for a super user
+        assert_eq!(
+            job.can_force_priority(&super_user()).reason_code(),
+            Some("job_already_terminal")
+        );
+    }
+
+    #[test]
+    fn the_force_affordance_and_the_force_guard_are_the_same_verdict() {
+        // Given: a terminal job and a member
+        let job = failed_job().build();
+        for principal in [super_user(), member()] {
+            // When: the guard and the affordance are both consulted
+            let refusal = job.guard_force_priority(&principal).unwrap_err();
+            // Then: the client sees exactly the code the mutation would return
+            assert_eq!(
+                job.can_force_priority(&principal).reason_code(),
+                Some(refusal.code())
+            );
+        }
     }
 }

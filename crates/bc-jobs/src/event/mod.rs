@@ -1,6 +1,7 @@
 pub mod fleet;
 pub mod job;
 pub mod job_facts;
+pub mod user;
 
 use br_core_events::{DomainEvent, EventMetadata};
 use chrono::{DateTime, Utc};
@@ -9,6 +10,7 @@ use crate::domain::ids::EventId;
 use crate::error::JobsError;
 use crate::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};
 use crate::event::job::{JOB_AGGREGATE_TYPE, JobEvent};
+use crate::event::user::{KNOWN_USER_AGGREGATE_TYPE, UserEvent};
 
 #[derive(Debug, Clone)]
 pub struct Recorded<E> {
@@ -37,6 +39,20 @@ impl Recorded<FleetEvent> {
             self.id.as_uuid(),
             self.event.runner_type_id().as_uuid(),
             RUNNER_TYPE_AGGREGATE_TYPE,
+            self.event.event_type(),
+            self.event.payload()?,
+            metadata,
+            self.occurred_at,
+        ))
+    }
+}
+
+impl Recorded<UserEvent> {
+    pub fn into_envelope(self, metadata: EventMetadata) -> Result<DomainEvent, JobsError> {
+        Ok(DomainEvent::new(
+            self.id.as_uuid(),
+            self.event.user_id().as_uuid(),
+            KNOWN_USER_AGGREGATE_TYPE,
             self.event.event_type(),
             self.event.payload()?,
             metadata,

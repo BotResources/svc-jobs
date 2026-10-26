@@ -19,22 +19,26 @@ fn segment(runner_type: &RunnerTypeKey) -> Result<SubjectSegment, PortError> {
     SubjectSegment::runner_type(runner_type.as_str()).map_err(transport_error)
 }
 
+/// What a trigger carries — on the trigger stream, and in a claim reply alike.
+pub fn wire_trigger(trigger: &RunTrigger) -> wire::Trigger {
+    wire::Trigger {
+        version: wire::WIRE_VERSION,
+        run_id: trigger.run_id.as_uuid(),
+        job_id: trigger.job_id.as_uuid(),
+        config: trigger
+            .config
+            .as_ref()
+            .map(|config| config.as_value().clone()),
+        attempt: trigger.attempt.get(),
+        triggered_by: trigger.triggered_by.as_ref().map(|user| user.id().0),
+    }
+}
+
 #[async_trait]
 impl RunnerTransport for RunnerChannels {
     async fn dispatch(&self, trigger: &RunTrigger) -> Result<(), PortError> {
         let subject = trigger_subject(&segment(&trigger.runner_type)?);
-        let payload = wire::Trigger {
-            version: wire::WIRE_VERSION,
-            run_id: trigger.run_id.as_uuid(),
-            job_id: trigger.job_id.as_uuid(),
-            config: trigger
-                .config
-                .as_ref()
-                .map(|config| config.as_value().clone()),
-            attempt: trigger.attempt.get(),
-            triggered_by: trigger.triggered_by.as_ref().map(|user| user.id().0),
-        };
-        let bytes = serde_json::to_vec(&payload).map_err(transport_error)?;
+        let bytes = serde_json::to_vec(&wire_trigger(trigger)).map_err(transport_error)?;
         self.context()
             .publish(subject, bytes.into())
             .await

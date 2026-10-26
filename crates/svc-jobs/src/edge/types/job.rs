@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_graphql::{Json, Object, Result, SimpleObject};
+use async_graphql::{Context, Json, Object, Result, SimpleObject};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::KnownUser;
 use br_util_graphql::Affordance;
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::enums::{GqlJobFailureCause, GqlJobResolutionKind, GqlJobStatus};
 use super::run::{GqlRun, GqlRunProgression, run_of};
 use crate::edge::project;
+use crate::edge::state::principal;
 use crate::edge::tree::JobTree;
 
 #[derive(SimpleObject, Clone)]
@@ -76,6 +77,9 @@ pub struct GqlJobSummary {
     pub successor_job_id: Option<Uuid>,
     pub triggered_by: Option<GqlKnownUser>,
     pub status: GqlJobStatus,
+    pub requested_priority: i32,
+    pub effective_priority: i32,
+    pub forced_priority: Option<i32>,
     pub attempt_count: i32,
     pub active_run_id: Option<Uuid>,
     pub progression: Option<GqlRunProgression>,
@@ -130,6 +134,24 @@ impl GqlJobDetail {
 
     async fn status(&self) -> GqlJobStatus {
         self.job.status().into()
+    }
+
+    /// The level the producer requested — for a child, its parent's level.
+    async fn requested_priority(&self) -> i32 {
+        i32::from(self.job.priority().requested().get())
+    }
+
+    /// The level the Job waits at.
+    async fn effective_priority(&self) -> i32 {
+        i32::from(self.job.priority().effective().get())
+    }
+
+    /// The level a super user forced, when one did.
+    async fn forced_priority(&self) -> Option<i32> {
+        self.job
+            .priority()
+            .forced()
+            .map(|level| i32::from(level.get()))
     }
 
     async fn attempt_count(&self) -> i32 {
@@ -207,8 +229,8 @@ impl GqlJobView {
         }
     }
 
-    async fn affordances(&self) -> Result<Vec<Affordance>> {
-        project::affordances_of(&self.job, self.parent.as_deref())
+    async fn affordances(&self, ctx: &Context<'_>) -> Result<Vec<Affordance>> {
+        project::affordances_of(&self.job, self.parent.as_deref(), &principal(ctx)?)
     }
 }
 
@@ -223,8 +245,8 @@ impl GqlJobSummaryView {
         summary_of(&self.job)
     }
 
-    async fn affordances(&self) -> Result<Vec<Affordance>> {
-        project::affordances_of(&self.job, self.parent.as_deref())
+    async fn affordances(&self, ctx: &Context<'_>) -> Result<Vec<Affordance>> {
+        project::affordances_of(&self.job, self.parent.as_deref(), &principal(ctx)?)
     }
 }
 
@@ -269,6 +291,9 @@ pub fn summary_of(job: &Job) -> GqlJobSummary {
             .map(|record| record.successor_job_id().as_uuid()),
         triggered_by: job.triggered_by().map(GqlKnownUser::from),
         status: job.status().into(),
+        requested_priority: i32::from(job.priority().requested().get()),
+        effective_priority: i32::from(job.priority().effective().get()),
+        forced_priority: job.priority().forced().map(|level| i32::from(level.get())),
         attempt_count: i32::try_from(job.attempt_count()).unwrap_or(i32::MAX),
         active_run_id: job.active_run().map(|run| run.id().as_uuid()),
         progression: job.progression().map(GqlRunProgression::from),

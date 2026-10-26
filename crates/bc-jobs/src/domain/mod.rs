@@ -1,3 +1,4 @@
+pub mod access;
 pub mod actions;
 pub mod attempts;
 pub mod config;
@@ -8,6 +9,7 @@ pub mod keys;
 pub mod log;
 pub mod ownership;
 pub mod policy;
+pub mod priority;
 pub mod references;
 pub mod run;
 mod wire;

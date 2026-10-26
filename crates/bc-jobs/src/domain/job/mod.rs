@@ -13,6 +13,7 @@ use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
+use crate::domain::priority::JobPriority;
 use crate::domain::references::KnownUser;
 use crate::domain::run::Run;
 use crate::error::JobsError;
@@ -28,6 +29,7 @@ pub struct JobState {
     pub triggered_by: Option<KnownUser>,
     pub source_entity_id: Option<SourceEntityId>,
     pub max_attempts: Option<MaxAttempts>,
+    pub priority: JobPriority,
     pub created_at: DateTime<Utc>,
     pub owner: JobOwner,
     pub runs: Vec<Run>,
@@ -47,6 +49,7 @@ pub struct Job {
     triggered_by: Option<KnownUser>,
     source_entity_id: Option<SourceEntityId>,
     max_attempts: Option<MaxAttempts>,
+    priority: JobPriority,
     created_at: DateTime<Utc>,
     owner: JobOwner,
     runs: Vec<Run>,
@@ -126,6 +129,7 @@ impl Job {
             triggered_by: state.triggered_by,
             source_entity_id: state.source_entity_id,
             max_attempts: state.max_attempts,
+            priority: state.priority,
             created_at: state.created_at,
             owner: state.owner,
             runs,
@@ -169,6 +173,10 @@ impl Job {
 
     pub fn max_attempts(&self) -> Option<MaxAttempts> {
         self.max_attempts
+    }
+
+    pub fn priority(&self) -> &JobPriority {
+        &self.priority
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {

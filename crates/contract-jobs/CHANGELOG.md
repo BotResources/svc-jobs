@@ -5,6 +5,26 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.6.0 - 2026-10-26
+
+Additive: every 0.5 subject, payload and constant is unchanged.
+
+- `integration.cmd.jobs.job.create.v2`: `CMD_JOB_CREATE_V2`,
+  `cmd_job_create_v2_coords()`, and the payload `command::CreateJobV2` — the
+  v1 fields plus an optional `priority` (an integer, 1–5, 3 when absent,
+  ignored for a child job; out of range is rejected as `invalid_priority`).
+  `command::CreateJob` (v1) is untouched and requests 3.
+- Claims for `CLAIM` runner types: `CMD_JOBS_CLAIM_RUNNER_TYPE`
+  (`jobs.claim.{runner_type}`), `runner_transport::claim_subject`,
+  `runner::CLAIM_FILTER`, `runner::Claim { version, instance_key, claim_id,
+  wait_ms }` and `runner::ClaimReply { version, run, reason }` with
+  `served` / `empty` / `refused`. A served `run` is exactly a `Trigger`.
+  Reasons `CLAIM_REASON_INSTANCE_UNKNOWN` (`instance_unknown`),
+  `CLAIM_REASON_NOT_CLAIM_MODE` (`not_claim_mode`), and the run failure
+  `RUN_FAILURE_CLAIM_LOST` (`claim_lost`).
+- `jobs.trigger.{runner_type}` carries a deprecation intent: it serves `PUSH`
+  types only, and goes once every type claims. No deletion version is set.
+
 ## 0.5.1 - 2026-10-17
 
 - Dependency re-pin only. The contract is unchanged: subjects, KV prefixes,

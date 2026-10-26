@@ -4,9 +4,10 @@ use serde_json::Value;
 use crate::domain::ids::JobId;
 use crate::error::JobsError;
 use crate::event::job_facts::{
-    JobAffordancesChanged, JobCancelled, JobCompleted, JobDeleted, JobFailed, JobQueued,
-    ManualRetryStarted, RetryScheduled, RunCancellationRequested, RunCancelled, RunCompleted,
-    RunDispatched, RunFailed, RunPlanDeclared, RunStarted, RunStepStarted,
+    JobAffordancesChanged, JobCancelled, JobCompleted, JobDeleted, JobFailed, JobPriorityForced,
+    JobPriorityRecalculated, JobQueued, ManualRetryStarted, RetryScheduled,
+    RunCancellationRequested, RunCancelled, RunCompleted, RunDispatched, RunFailed,
+    RunPlanDeclared, RunStarted, RunStepStarted,
 };
 
 pub const JOB_AGGREGATE_TYPE: &str = "Job";
@@ -29,6 +30,8 @@ pub enum JobEvent {
     ManualRetryStarted(ManualRetryStarted),
     JobDeleted(JobDeleted),
     JobAffordancesChanged(JobAffordancesChanged),
+    JobPriorityForced(JobPriorityForced),
+    JobPriorityRecalculated(JobPriorityRecalculated),
 }
 
 fn payload_of<T: Serialize>(fact: &T) -> Result<Value, JobsError> {
@@ -58,6 +61,8 @@ impl JobEvent {
             Self::ManualRetryStarted(_) => "ManualRetryStarted",
             Self::JobDeleted(_) => "JobDeleted",
             Self::JobAffordancesChanged(_) => "JobAffordancesChanged",
+            Self::JobPriorityForced(_) => "JobPriorityForced",
+            Self::JobPriorityRecalculated(_) => "JobPriorityRecalculated",
         }
     }
 
@@ -79,6 +84,8 @@ impl JobEvent {
             Self::ManualRetryStarted(fact) => fact.job_id,
             Self::JobDeleted(fact) => fact.job_id,
             Self::JobAffordancesChanged(fact) => fact.job_id,
+            Self::JobPriorityForced(fact) => fact.job_id,
+            Self::JobPriorityRecalculated(fact) => fact.job_id,
         }
     }
 
@@ -100,6 +107,8 @@ impl JobEvent {
             Self::ManualRetryStarted(fact) => payload_of(fact),
             Self::JobDeleted(fact) => payload_of(fact),
             Self::JobAffordancesChanged(fact) => payload_of(fact),
+            Self::JobPriorityForced(fact) => payload_of(fact),
+            Self::JobPriorityRecalculated(fact) => payload_of(fact),
         }
     }
 
@@ -121,6 +130,8 @@ impl JobEvent {
             "ManualRetryStarted" => Ok(Self::ManualRetryStarted(fact_of(payload)?)),
             "JobDeleted" => Ok(Self::JobDeleted(fact_of(payload)?)),
             "JobAffordancesChanged" => Ok(Self::JobAffordancesChanged(fact_of(payload)?)),
+            "JobPriorityForced" => Ok(Self::JobPriorityForced(fact_of(payload)?)),
+            "JobPriorityRecalculated" => Ok(Self::JobPriorityRecalculated(fact_of(payload)?)),
             other => Err(JobsError::UnknownEnumValue {
                 field: "job_event_type",
                 value: other.to_owned(),
@@ -148,7 +159,9 @@ impl JobEvent {
             | Self::JobCancelled(_)
             | Self::ManualRetryStarted(_)
             | Self::JobDeleted(_)
-            | Self::JobAffordancesChanged(_) => true,
+            | Self::JobAffordancesChanged(_)
+            | Self::JobPriorityForced(_)
+            | Self::JobPriorityRecalculated(_) => true,
             Self::RunCancellationRequested(_) => false,
         }
     }

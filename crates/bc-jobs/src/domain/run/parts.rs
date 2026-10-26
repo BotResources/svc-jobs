@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{JobId, RetryScheduleId};
+use crate::domain::ids::{ClaimId, JobId, RetryScheduleId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::references::KnownUser;
 use crate::domain::run::failure::RunFailureReport;
@@ -51,6 +51,42 @@ impl RunStart {
 
     pub fn started_at(&self) -> DateTime<Utc> {
         self.started_at
+    }
+}
+
+/// A Run handed to the Instance that claimed it. The Run is created reserved:
+/// no other Instance may start it, and it fails with `claim_lost` when its
+/// Instance never starts it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunReservation {
+    instance: RunnerInstanceReference,
+    claim_id: ClaimId,
+    reserved_at: DateTime<Utc>,
+}
+
+impl RunReservation {
+    pub fn new(
+        instance: RunnerInstanceReference,
+        claim_id: ClaimId,
+        reserved_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            instance,
+            claim_id,
+            reserved_at,
+        }
+    }
+
+    pub fn instance(&self) -> &RunnerInstanceReference {
+        &self.instance
+    }
+
+    pub fn claim_id(&self) -> ClaimId {
+        self.claim_id
+    }
+
+    pub fn reserved_at(&self) -> DateTime<Utc> {
+        self.reserved_at
     }
 }
 
