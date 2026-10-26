@@ -1,0 +1,77 @@
+# TEMPORARY — delete before merging the PR that adds it (squash-merge keeps it
+# off main either way).
+#
+# Proves cd.yml's `publish` build path with Zig copied out of
+# `ghcr.io/botresources/br-arc-runner:latest` instead of mlugg/setup-zig, on
+# the bare GitHub-hosted VM: the copied toolchain must find its own lib/
+# (musl sysroot) for both targets, and registry-docs.sh's `--pg docker`
+# Postgres on the VM's 127.0.0.1 must keep working. Nothing is pushed,
+# tagged, or posed to the registry (`--print-only`).
+name: zig-copyout-smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cd.yml
+      - .github/workflows/zig-copyout-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      # Same step as cd.yml.
+      - name: zig (from br-arc-runner)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${RUNNER_TEMP}:/out" ghcr.io/botresources/br-arc-runner:latest \
+            sh -c 'cp -a "$(dirname "$(readlink -f "$(command -v zig)")")" /out/zig'
+          echo "${RUNNER_TEMP}/zig" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/zig/zig" version
+
+      - name: zig resolves from PATH in later steps
+        run: command -v zig && zig version && zig env | grep -E '"(lib_dir|zig_exe)"'
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install sqlx-cli (pinned to Cargo.lock's sqlx)
+        run: >
+          cargo install sqlx-cli
+          --version 0.8.6
+          --locked
+          --no-default-features
+          --features rustls,postgres
+
+      - name: Build amd64 binary
+        run: cargo zigbuild --release --locked -p svc-jobs --target x86_64-unknown-linux-musl
+
+      - name: Build arm64 binary (what publish.sh does next)
+        run: cargo zigbuild --release --locked -p svc-jobs --target aarch64-unknown-linux-musl
+
+      - name: Registry docs (--pg docker, --print-only, no registry call)
+        run: >
+          scripts/registry-docs.sh
+          svc-jobs
+          0.0.0-smoke
+          --pg docker
+          --binary target/x86_64-unknown-linux-musl/release/svc-jobs
+          --print-only
