@@ -575,6 +575,21 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         Some(1),
         "the second force replaces the first",
     );
+    let relisted = stream::await_delta_of(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_PRIORITY_FORCED,
+        child_two.job_id,
+        LONG,
+    )
+    .await;
+    priority::assert_priorities(
+        &delta::assert_upserted_summary(&relisted, child_two.job_id, "PENDING")["job"],
+        5,
+        1,
+        Some(1),
+        "the list row follows the second force",
+    );
 
     // Then: the forced job runs first, its forced descendants next, the competitor, then the
     // child forced down
