@@ -110,7 +110,7 @@ pub const JOB_PRIORITY: &str = r#"
 query($id: UUID!) {
   jobsJob(id: $id) {
     job {
-      id status attemptCount activeRunId nextAttemptAt parentJobId predecessorJobId
+      id status attemptCount activeRunId nextAttemptAt parentJobId
       requestedPriority effectivePriority forcedPriority
       triggeredBy { id }
       resolution { id kind failureCause }
