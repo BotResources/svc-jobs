@@ -105,3 +105,76 @@ mutation($input: JobsRunnerTypeInput!) { jobsReactivateRunnerType(input: $input)
 pub const RETIRE_RUNNER_TYPE: &str = r#"
 mutation($input: JobsRunnerTypeInput!) { jobsRetireRunnerType(input: $input) { success } }
 "#;
+
+pub const JOB_PRIORITY: &str = r#"
+query($id: UUID!) {
+  jobsJob(id: $id) {
+    job {
+      id status attemptCount activeRunId nextAttemptAt parentJobId
+      requestedPriority effectivePriority forcedPriority
+      triggeredBy { id }
+      resolution { id kind failureCause }
+      runs { id attemptNumber status origin failureReport { kind reasonCode params } }
+    }
+    affordances { action allowed reasonCode params }
+  }
+}
+"#;
+
+pub const JOBS_LIST_PRIORITY: &str = r#"
+query($filter: JobsJobFilterInput, $first: Int!) {
+  jobs(filter: $filter, first: $first) {
+    edges {
+      node {
+        job { id status requestedPriority effectivePriority forcedPriority }
+        affordances { action allowed reasonCode params }
+      }
+    }
+  }
+}
+"#;
+
+pub const MY_MAX_PRIORITY: &str = r#"
+query { jobsMyMaxPriority { maxPriority } }
+"#;
+
+pub const MY_MAX_PRIORITY_FOR_SUPPLIED_USER: &str = r#"
+query($userId: UUID!) { jobsMyMaxPriority(userId: $userId) { maxPriority } }
+"#;
+
+pub const SET_USER_MAX_PRIORITY: &str = r#"
+mutation($input: JobsSetUserMaxPriorityInput!) { jobsSetUserMaxPriority(input: $input) { success } }
+"#;
+
+pub const CLEAR_USER_MAX_PRIORITY: &str = r#"
+mutation($input: JobsClearUserMaxPriorityInput!) { jobsClearUserMaxPriority(input: $input) { success } }
+"#;
+
+pub const FORCE_JOB_PRIORITY: &str = r#"
+mutation($input: JobsForceJobPriorityInput!) { jobsForceJobPriority(input: $input) { success } }
+"#;
+
+pub const FLEET_DISPATCH: &str = r#"
+query($runnerType: String) {
+  jobsFleet(runnerType: $runnerType) {
+    runnerType {
+      typeKey lifecycle isAvailable dispatchMode maxRunDurationSeconds
+      waitingJobCount executingJobCount
+      instances { instanceKey reportedStatus isBusy currentRunIds }
+    }
+    affordances { action allowed reasonCode params }
+  }
+}
+"#;
+
+pub const SET_RUNNER_TYPE_DISPATCH_MODE: &str = r#"
+mutation($input: JobsSetRunnerTypeDispatchModeInput!) {
+  jobsSetRunnerTypeDispatchMode(input: $input) { success }
+}
+"#;
+
+pub const SET_RUNNER_TYPE_MAX_RUN_DURATION: &str = r#"
+mutation($input: JobsSetRunnerTypeMaxRunDurationInput!) {
+  jobsSetRunnerTypeMaxRunDuration(input: $input) { success }
+}
+"#;

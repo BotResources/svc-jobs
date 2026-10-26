@@ -2,16 +2,19 @@
 
 pub mod adversary;
 pub mod catalog;
+pub mod claim;
 pub mod clock;
 pub mod codes;
 pub mod contention;
 pub mod db;
 pub mod delta;
+pub mod dispatch;
 pub mod docs;
 pub mod events;
 pub mod fixture;
 pub mod gql;
 pub mod infra;
+pub mod priority;
 pub mod producer;
 pub mod runner;
 pub mod stream;
@@ -29,3 +32,4 @@ pub const JOB_CHANGED: &str = "jobsJobChanged";
 pub const JOBS_CHANGED: &str = "jobsChanged";
 pub const LOG_TAIL: &str = "jobsJobLogTail";
 pub const FLEET_CHANGED: &str = "jobsFleetChanged";
+pub const MY_MAX_PRIORITY_CHANGED: &str = "jobsMyMaxPriorityChanged";
