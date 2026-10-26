@@ -36,6 +36,7 @@ pub struct JobDeclaration {
     pub triggered_by: Option<TriggeringUser>,
     pub source: Option<(String, Uuid)>,
     pub max_attempts: Option<i64>,
+    pub priority: Option<i64>,
 }
 
 impl JobDeclaration {
@@ -48,6 +49,7 @@ impl JobDeclaration {
             triggered_by: None,
             source: None,
             max_attempts: None,
+            priority: None,
         }
     }
 
@@ -86,6 +88,11 @@ impl JobDeclaration {
         self
     }
 
+    pub fn with_priority(mut self, priority: i64) -> Self {
+        self.priority = Some(priority);
+        self
+    }
+
     pub fn payload(&self, producer: &str) -> Value {
         let mut fields = Map::new();
         fields.insert("job_id".to_owned(), json!(self.job_id.to_string()));
@@ -106,6 +113,9 @@ impl JobDeclaration {
         if let Some((bc, entity_id)) = &self.source {
             fields.insert("source_bc".to_owned(), json!(bc));
             fields.insert("source_entity_id".to_owned(), json!(entity_id.to_string()));
+        }
+        if let Some(priority) = self.priority {
+            fields.insert("priority".to_owned(), json!(priority));
         }
         Value::Object(fields)
     }
@@ -153,6 +163,20 @@ impl<'a> Producer<'a> {
     pub async fn declare(&self, declaration: &JobDeclaration) -> IntegrationCommand<Value> {
         let command = self.create_command(declaration);
         self.send(wire::VERB_CREATE, &command).await;
+        command
+    }
+
+    pub async fn declare_v2(&self, declaration: &JobDeclaration) -> IntegrationCommand<Value> {
+        let command = wire::command_envelope_at(
+            Uuid::now_v7(),
+            wire::VERB_CREATE,
+            wire::CONTRACT_V2,
+            Uuid::now_v7(),
+            self.account_id,
+            declaration.payload(&self.bc),
+        );
+        self.send_at(wire::VERB_CREATE, wire::CONTRACT_V2, &command)
+            .await;
         command
     }
 

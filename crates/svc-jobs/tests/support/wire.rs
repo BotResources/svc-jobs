@@ -96,6 +96,43 @@ pub const FIELD_DEPRECATE_RUNNER_TYPE: &str = "jobsDeprecateRunnerType";
 pub const FIELD_REACTIVATE_RUNNER_TYPE: &str = "jobsReactivateRunnerType";
 pub const FIELD_RETIRE_RUNNER_TYPE: &str = "jobsRetireRunnerType";
 
+pub const ACTION_FORCE_PRIORITY: &str = "force_priority";
+
+pub const EVT_PRIORITY_FORCED: &str = "JobsJobPriorityForcedEvent";
+pub const EVT_PRIORITY_RECALCULATED: &str = "JobsJobPriorityRecalculatedEvent";
+
+pub const KIND_TYPE_DISPATCH_MODE_CHANGED: &str = "RUNNER_TYPE_DISPATCH_MODE_CHANGED";
+pub const KIND_TYPE_MAX_RUN_DURATION_CHANGED: &str = "RUNNER_TYPE_MAX_RUN_DURATION_CHANGED";
+
+pub const MODE_PUSH: &str = "PUSH";
+pub const MODE_CLAIM: &str = "CLAIM";
+
+pub const DEFAULT_REQUESTED_PRIORITY: i64 = 3;
+pub const LOWEST_PRIORITY: i64 = 1;
+pub const HIGHEST_PRIORITY: i64 = 5;
+
+pub const REASON_CLAIM_LOST: &str = "claim_lost";
+pub const REASON_INSTANCE_UNKNOWN: &str = "instance_unknown";
+pub const REASON_NOT_CLAIM_MODE: &str = "not_claim_mode";
+pub const REASON_INVALID_PRIORITY: &str = "invalid_priority";
+pub const REASON_JOB_ALREADY_TERMINAL: &str = "job_already_terminal";
+pub const REASON_JOB_NOT_FOUND: &str = "job_not_found";
+pub const REASON_RUNNER_TYPE_NOT_FOUND: &str = "runner_type_not_found";
+pub const REASON_INVALID_DURATION: &str = "invalid_duration";
+
+pub const FIELD_SET_USER_MAX_PRIORITY: &str = "jobsSetUserMaxPriority";
+pub const FIELD_CLEAR_USER_MAX_PRIORITY: &str = "jobsClearUserMaxPriority";
+pub const FIELD_FORCE_JOB_PRIORITY: &str = "jobsForceJobPriority";
+pub const FIELD_SET_DISPATCH_MODE: &str = "jobsSetRunnerTypeDispatchMode";
+pub const FIELD_SET_MAX_RUN_DURATION: &str = "jobsSetRunnerTypeMaxRunDuration";
+pub const FIELD_MY_MAX_PRIORITY: &str = "jobsMyMaxPriority";
+
+pub const CLAIM_PREFIX: &str = "jobs.claim.";
+
+pub fn claim_subject(runner_type: &str) -> String {
+    format!("{CLAIM_PREFIX}{runner_type}")
+}
+
 pub const RUNNER_TYPE_CATALOG_PREFIX: &str = "jobs.runner_type.";
 
 pub fn runner_type_catalog_key(runner_type: &str) -> String {
