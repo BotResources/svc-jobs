@@ -71,7 +71,7 @@ jobs:
         run: >
           scripts/registry-docs.sh
           svc-jobs
-          0.0.0-smoke
+          0.0.0
           --pg docker
           --binary target/x86_64-unknown-linux-musl/release/svc-jobs
           --print-only
