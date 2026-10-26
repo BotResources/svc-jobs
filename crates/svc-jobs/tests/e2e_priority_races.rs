@@ -149,7 +149,7 @@ async fn a_cap_change_racing_admissions_reaches_every_waiting_job_of_the_user() 
     let in_window = JobDeclaration::new(&runner_type)
         .triggered_by_user(user.actor_id())
         .with_priority(5);
-    let (raised, ()) = tokio::join!(
+    let (raised, _) = tokio::join!(
         priority::set_user_max_priority(&client, admin, user.actor_id(), 4),
         producer.declare_v2(&in_window)
     );
