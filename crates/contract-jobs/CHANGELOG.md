@@ -5,6 +5,19 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.5.1 - 2026-10-17
+
+- Dependency re-pin only. The contract is unchanged: subjects, KV prefixes,
+  payload shapes and the runner-transport wire are byte-identical.
+- The `integration` feature now returns `CommandCoords` / `EventCoords` /
+  `CoordError` of `br-core-integration/v0.1.0` (and `br-util-nats-fabric` at
+  `br-util-nats-fabric/v0.1.0`), pinned at the per-crate tags instead of the
+  legacy workspace tag `v1.3.0`. A platform consumer on `br-service-engine`
+  0.4.2 pins `contract-jobs/v0.5.1` together with the per-crate tags and
+  resolves one copy of each type.
+- Consumers still on the `v1.3.0` pin keep `contract-jobs/v0.5.0`. The default
+  runner footprint pulls no BotResources library and is byte-identical.
+
 ## 0.5.0 - 2026-09-08
 
 - Rebuilt on `br-rust-common` v1.3.0 (from v1.2.0). No change to the published

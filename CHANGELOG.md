@@ -9,6 +9,64 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.3.4 - 2026-10-17
+
+Dependency re-pin maintenance release. No wire, schema, migration or
+configuration change for consumers.
+
+- Every `br-rust-common` dependency moves from the legacy workspace tag
+  `v1.3.0` to the per-crate tags `{crate}/v{version}`: `br-core-auth`,
+  `br-core-events`, `br-core-integration`, `br-util-axum-readiness`,
+  `br-util-graphql`, `br-util-observability` and `br-util-nats-fabric` at
+  `0.1.0`, `br-util-postgres` at `0.1.1`. `br-test-harness` moves from
+  `v1.2.0` to `br-test-harness/v0.1.1` (same features: `e2e-db`, `server`,
+  `spawned-nats`). The workspace resolves one copy of each `br-*` crate.
+- Why: a service built on `br-service-engine` 0.4.2 (svc-threads) names the
+  `br-rust-common` types at per-crate tags. `contract-jobs` 0.5.0 pinned
+  `br-core-integration` at `v1.3.0`, so such a service resolved two copies of
+  `CommandCoords` / `EventCoords`. `contract-jobs` 0.5.1 carries the per-crate
+  pins; consume it at the git tag `contract-jobs/v0.5.1`.
+- `bc-jobs` and `contract-jobs` move to 0.5.1 (patch): public API and wire are
+  unchanged.
+- `br-util-postgres` 0.1.1 validates the database URL from the authority only
+  and refuses a URL with no scheme, a foreign scheme or no explicit host. Its
+  `ensure_app_role` refuses an empty password (it used to clear the role
+  password silently), stores a SCRAM-SHA-256 verifier computed in the process
+  instead of sending the clear password, and both `ensure_app_role` and
+  `grant_app_access` run under advisory locks so replicas starting together no
+  longer race. The DSNs the e2e fixtures build name an explicit host, so
+  nothing is refused there. A deployed `DATABASE_URL` / `DATABASE_URL_OWNER`
+  must name its host explicitly, and a `JOBS_APP_PASSWORD` that is set but
+  empty now fails the boot instead of clearing the `jobs_app` password.
+- Lockfile: `rustls` 0.23.45 -> 0.23.46 (RUSTSEC-2026-0346 to -0349) and
+  `quinn-proto` 0.11.16 -> 0.11.19 (RUSTSEC-2026-0338 to -0342, listed in
+  `Cargo.lock` only and not compiled). New transitive crates come from
+  `br-util-postgres` 0.1.1 (`postgres-protocol` and its digest stack).
+- The lockstep publish republishes chart `br-svc-jobs` at 0.3.4;
+  `charts/br-svc-jobs/Chart.yaml` is not edited, `scripts/publish.sh` stamps it.
+
+## 0.3.3 - 2026-09-28
+
+Security release, lockfile bump only. No source, wire, schema, migration or
+configuration change for consumers.
+
+### Security
+
+- `cargo update -p rustls-webpki -p rustls`: rustls 0.23.43 → 0.23.45,
+  rustls-webpki 0.103.14 → 0.103.15 (RUSTSEC-2026-0285, CVSS 5.3: TLS 1.3
+  handshake messages accepted across encryption-level boundaries). Every
+  rustls path in svc-jobs is a TLS client: `sqlx-core (tls-rustls)` to
+  Postgres and `async-nats → rustls` to NATS.
+- chacha20 0.10.2, spin 0.9.9 and event-listener 5.4.2 are already clean. The
+  only advisory left in `cargo audit` is RUSTSEC-2023-0071 (rsa): it is listed
+  in `Cargo.lock` only and not compiled. Its ignore in `deny.toml` now records
+  the upstream status with the date it was checked (2026-09-28: no fixed rsa
+  version), as the file's own policy requires.
+- The lockstep publish republishes chart `br-svc-jobs` at 0.3.3 with unchanged
+  templates and values. `charts/br-svc-jobs/Chart.yaml` is not edited:
+  `scripts/publish.sh` stamps `version` and `appVersion` from the crate version
+  when it packages the chart.
+
 ## 0.3.2 - 2026-09-08
 
 Dependency-bump maintenance release. No wire, schema or behaviour change for
