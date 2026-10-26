@@ -23,8 +23,8 @@ const UNAUTHENTICATED: &str = "UNAUTHENTICATED";
 
 #[tokio::test]
 async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only() {
-    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (service default 3), a CLAIM type, a user Jobs
-    // knows capped at 2, and another user without a maximum
+    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (service default 3), a CLAIM type, a user capped
+    // at 2, and another user without a maximum
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
@@ -38,7 +38,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
     dispatch::switch_to_claim(&client, admin, &runner_type).await;
 
-    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -175,15 +174,18 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "the list row",
     );
 
-    // Then: the recalculation cascades to the waiting, unforced child that inherits from it
-    priority::assert_effective(
+    // Then: the recalculation cascades to the waiting, unforced child that inherits from it —
+    // requested and effective both take the root's new effective priority
+    priority::assert_priorities(
         &delta::assert_upserted_summary(&listed[1], inheriting.job_id, "PENDING")["job"],
+        4,
         4,
         None,
         "a waiting, non-forced descendant follows its recalculated root",
     );
-    priority::assert_effective(
+    priority::assert_priorities(
         &priority::job(&client, admin, inheriting.job_id).await,
+        4,
         4,
         None,
         "a waiting, non-forced descendant follows its recalculated root",
@@ -274,8 +276,9 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     );
     let cleared_rows =
         await_recalculations(&mut listing, &[raised.job_id, inheriting.job_id]).await;
-    priority::assert_effective(
+    priority::assert_priorities(
         &delta::assert_upserted_summary(&cleared_rows[1], inheriting.job_id, "PENDING")["job"],
+        3,
         3,
         None,
         "the cascade follows the cleared maximum too",
@@ -290,7 +293,7 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a forced job still keeps its forced level",
     );
 
-    // When: the super user sets a maximum outside 1..=5, or for a user Jobs does not know
+    // When: the super user sets a maximum outside 1..=5
     for level in [0, 6] {
         let refused =
             priority::set_user_max_priority(&client, admin, capped.actor_id(), level).await;
@@ -299,11 +302,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
             wire::REASON_INVALID_PRIORITY,
         );
     }
-    let stranger = priority::set_user_max_priority(&client, admin, Uuid::now_v7(), 4).await;
-    assert_eq!(
-        gql::mutation_error_reason(&stranger, "a maximum for a user unknown to Jobs"),
-        wire::REASON_USER_NOT_FOUND,
-    );
 
     // Then: nothing moved
     stream::expect_total_silence(&mut capped_own, "a refused maximum changes nothing", QUIET).await;
@@ -315,6 +313,45 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     )
     .await;
     assert_eq!(priority::my_max_priority(&client, &capped).await, 3);
+
+    // When: the super user caps a user no job has ever named, then that user's first job arrives
+    let newcomer = Uuid::now_v7();
+    gql::expect_success(
+        &priority::set_user_max_priority(&client, admin, newcomer, 2).await,
+        wire::FIELD_SET_USER_MAX_PRIORITY,
+        "a super user caps a user Jobs has never observed",
+    );
+    let first_of_newcomer = JobDeclaration::new(&runner_type)
+        .triggered_by_user(newcomer)
+        .with_priority(5);
+    producer.declare_v2(&first_of_newcomer).await;
+    events
+        .expect_one(wire::FACT_QUEUED, first_of_newcomer.job_id, LONG)
+        .await;
+
+    // Then: the cap set in advance applies to that first job
+    let arrived = stream::await_delta_of(
+        &mut listing,
+        JOBS_CHANGED,
+        wire::EVT_QUEUED,
+        first_of_newcomer.job_id,
+        LONG,
+    )
+    .await;
+    priority::assert_priorities(
+        &delta::assert_upserted_summary(&arrived, first_of_newcomer.job_id, "PENDING")["job"],
+        5,
+        2,
+        None,
+        "a cap set on a never-seen user applies to their first job",
+    );
+    priority::assert_priorities(
+        &priority::job(&client, admin, first_of_newcomer.job_id).await,
+        5,
+        2,
+        None,
+        "a cap set on a never-seen user applies to their first job",
+    );
 
     events.stop().await;
     fixture.shutdown().await;
@@ -346,7 +383,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
     dispatch::await_live_instances(&client, admin, &side_type, 1, LONG).await;
     dispatch::switch_to_claim(&client, admin, &side_type).await;
 
-    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -619,7 +655,6 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
     let runner_type = wire::unique_runner_type("guarded");
     let producer = Producer::new(fixture.fabric(), "projects");
 
-    priority::introduce(&producer, &events, member.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, member.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,

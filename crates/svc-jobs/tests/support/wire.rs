@@ -122,7 +122,6 @@ pub const REASON_JOB_ALREADY_TERMINAL: &str = "job_already_terminal";
 pub const REASON_JOB_NOT_FOUND: &str = "job_not_found";
 pub const REASON_RUNNER_TYPE_NOT_FOUND: &str = "runner_type_not_found";
 pub const REASON_INVALID_DURATION: &str = "invalid_duration";
-pub const REASON_USER_NOT_FOUND: &str = "user_not_found";
 
 pub const FIELD_SET_USER_MAX_PRIORITY: &str = "jobsSetUserMaxPriority";
 pub const FIELD_CLEAR_USER_MAX_PRIORITY: &str = "jobsClearUserMaxPriority";

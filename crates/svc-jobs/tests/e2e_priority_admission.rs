@@ -20,8 +20,8 @@ const CLAIM_WAIT: Duration = Duration::from_secs(4);
 
 #[tokio::test]
 async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
-    // Given: a service default maximum of 5, and a super user capping a user Jobs knows at 3, the
-    // user watching their own maximum
+    // Given: a service default maximum of 5, and a super user capping a user at 3, the user
+    // watching their own maximum
     let fixture = JobsFixture::start_with(Knobs {
         default_max_priority: Some(5),
         ..Knobs::default()
@@ -43,7 +43,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         5,
         "a user without a maximum of their own has the service default",
     );
-    priority::introduce(&producer, &events, user_id).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, user_id, 3).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
@@ -347,7 +346,6 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     let child_type = wire::unique_runner_type("pages");
     let producer = Producer::new(fixture.fabric(), "projects");
 
-    priority::introduce(&producer, &events, capped.actor_id()).await;
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
