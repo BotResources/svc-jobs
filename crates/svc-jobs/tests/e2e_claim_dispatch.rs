@@ -3,6 +3,7 @@ mod support;
 use std::time::Duration;
 
 use br_test_harness::SseSubscription;
+use futures::future::join_all;
 use serde_json::json;
 use support::claim;
 use support::db::{self, Durable};
@@ -20,6 +21,7 @@ const LONG_POLL: Duration = Duration::from_secs(6);
 const SHORT_POLL: Duration = Duration::from_secs(3);
 const ARRIVAL_DELAY: Duration = Duration::from_secs(1);
 const RESERVATION_SECONDS: u64 = 3;
+const HELD_CLAIMS_PER_POD: u64 = 2;
 
 #[tokio::test]
 async fn a_claim_waiting_for_work_is_served_the_moment_a_job_arrives() {
@@ -542,6 +544,75 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
         .await;
 
     durable.close().await;
+    events.stop().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn claims_beyond_the_per_pod_cap_are_answered_empty_at_once() {
+    // Given: a pod holding at most two unanswered claims, a CLAIM type with four idle instances
+    // and nothing waiting
+    let fixture = JobsFixture::start_with(Knobs {
+        claim_max_held: Some(HELD_CLAIMS_PER_POD),
+        ..Knobs::default()
+    })
+    .await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("capped_claims");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut slots = Vec::new();
+    for index in 1..=4 {
+        let mut slot = FakeRunner::new(fixture.nats(), &runner_type, &format!("slot-{index}"));
+        slot.connect().await;
+        slots.push(slot);
+    }
+    dispatch::await_live_instances(&client, admin, &runner_type, 4, LONG).await;
+    dispatch::switch_to_claim(&client, admin, &runner_type).await;
+    let declaration = JobDeclaration::new(&runner_type);
+
+    // When: the four instances claim at once with a long wait, and one job arrives a second later
+    let (answers, ()) = tokio::join!(
+        join_all(
+            slots
+                .iter()
+                .map(|slot| claim::claim(fixture.nats(), slot, LONG_POLL))
+        ),
+        async {
+            tokio::time::sleep(ARRIVAL_DELAY).await;
+            producer.declare_v2(&declaration).await;
+        }
+    );
+
+    // Then: the claims beyond the cap were answered empty before the job arrived; of the two the
+    // pod held, one is served the job and the other expires empty
+    let mut refused_at_once = 0;
+    let mut served = Vec::new();
+    let mut expired = 0;
+    for answer in &answers {
+        if answer.reply["run"].is_object() {
+            served.push(runner::job_id(&answer.expect_run("a held claim")));
+        } else if answer.elapsed < ARRIVAL_DELAY {
+            answer.expect_empty("a claim beyond the per-pod cap");
+            refused_at_once += 1;
+        } else {
+            answer.expect_empty("a held claim nothing served");
+            answer.expect_held_for_the_wait(LONG_POLL, "a held claim nothing served");
+            expired += 1;
+        }
+    }
+    assert_eq!(
+        refused_at_once,
+        4 - HELD_CLAIMS_PER_POD as usize,
+        "every claim beyond JOBS_CLAIM_MAX_HELD is answered empty at once, never held",
+    );
+    assert_eq!(served, vec![declaration.job_id]);
+    assert_eq!(expired, 1);
+    events
+        .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+        .await;
+
     events.stop().await;
     fixture.shutdown().await;
 }

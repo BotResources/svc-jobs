@@ -115,6 +115,22 @@ pub const LOWEST_PRIORITY: i64 = 1;
 pub const HIGHEST_PRIORITY: i64 = 5;
 
 pub const REASON_CLAIM_LOST: &str = "claim_lost";
+pub const REASON_TRIGGER_STRANDED: &str = "trigger_stranded";
+pub const REASON_CLAIM_SPENT: &str = "claim_spent";
+pub const REASON_MALFORMED_CLAIM: &str = "malformed_claim";
+pub const REASON_INSTANCE_DRAINING: &str = "instance_draining";
+pub const REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
+pub const REASON_PARENT_JOB_TERMINAL: &str = "parent_job_terminal";
+
+/// The closed vocabulary a refused claim may answer with — nothing else.
+pub const CLAIM_REFUSALS: [&str; 6] = [
+    REASON_INSTANCE_UNKNOWN,
+    REASON_NOT_CLAIM_MODE,
+    REASON_CLAIM_SPENT,
+    REASON_MALFORMED_CLAIM,
+    REASON_INSTANCE_DRAINING,
+    REASON_RUNNER_TYPE_RETIRED,
+];
 pub const REASON_INSTANCE_UNKNOWN: &str = "instance_unknown";
 pub const REASON_NOT_CLAIM_MODE: &str = "not_claim_mode";
 pub const REASON_INVALID_PRIORITY: &str = "invalid_priority";

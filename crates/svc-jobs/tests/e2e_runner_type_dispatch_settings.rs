@@ -19,6 +19,7 @@ const DEFAULT_MAX_RUN_SECONDS: u64 = 3;
 const NINETY_SIX_HOURS_SECONDS: i64 = 96 * 3_600;
 const PAST_THE_DEFAULT: Duration = Duration::from_secs(9);
 const FORBIDDEN: &str = "FORBIDDEN";
+const STRANDED_AFTER_SECONDS: u64 = 3;
 
 #[tokio::test]
 async fn switching_a_runner_type_to_claim_moves_its_new_runs_off_the_trigger_stream() {
@@ -361,4 +362,88 @@ fn assert_settings_offered(view: &serde_json::Value, what: &str) {
             "{what}: a platform administrator may set '{action}' at any time: {entry}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_trigger_stranded_by_a_switch_to_claim_is_reclaimed_and_retried_by_a_claim() {
+    // Given: a reservation delay of three seconds, a PUSH type whose only instance never consumes
+    // its trigger stream, and a job with two attempts whose trigger is already published
+    let fixture = JobsFixture::start_with(Knobs {
+        claim_reservation_seconds: STRANDED_AFTER_SECONDS,
+        backstop_interval_seconds: 1,
+        retry_base_delay_seconds: 1,
+        ..Knobs::default()
+    })
+    .await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("stranded");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    instance.connect().await;
+    dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
+    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(2);
+    let job_id = declaration.job_id;
+    producer.declare_v2(&declaration).await;
+    let published = instance.next_trigger(LONG).await;
+    let stranded_run = runner::run_id(&published);
+    assert_eq!(runner::job_id(&published), job_id);
+    let mut watch = SseSubscription::open(
+        fixture.url(),
+        admin,
+        &subs::job_changed_with_priority(job_id),
+    )
+    .await;
+    stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+
+    // When: the type is switched to CLAIM with that trigger still unconsumed
+    dispatch::switch_to_claim(&client, admin, &runner_type).await;
+
+    // Then: after the reservation delay the stranded run fails as transient, reason
+    // trigger_stranded, and a retry is scheduled
+    let failed =
+        stream::await_delta_of(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, job_id, LONG).await;
+    let event = delta::event_of(&failed, wire::EVT_RUN_FAILED, job_id);
+    assert_eq!(event["runId"], json!(stranded_run.to_string()));
+    assert_eq!(event["failureKind"], json!("TRANSIENT"));
+    assert_eq!(event["reasonCode"], json!(wire::REASON_TRIGGER_STRANDED));
+    let scheduled = stream::await_delta_of(
+        &mut watch,
+        JOB_CHANGED,
+        wire::EVT_RETRY_SCHEDULED,
+        job_id,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::event_of(&scheduled, wire::EVT_RETRY_SCHEDULED, job_id)["failedRunId"],
+        json!(stranded_run.to_string())
+    );
+    events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
+    events.expect_none(wire::FACT_STARTED, job_id, QUIET).await;
+
+    // When: the instance claims
+    let retried = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
+        .await
+        .expect_run("a claim after the stranded trigger was reclaimed");
+
+    // Then: the retry is served by the claim, never published as a new trigger
+    assert_eq!(runner::job_id(&retried), job_id);
+    assert_eq!(runner::attempt_number(&retried), 2);
+    assert_ne!(runner::run_id(&retried), stranded_run);
+    instance.expect_no_trigger(QUIET).await;
+    let job = gql::job(&client, admin, job_id).await;
+    assert_eq!(job["runs"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        gql::run_by_id(&job, stranded_run)["failureReport"]["reasonCode"],
+        json!(wire::REASON_TRIGGER_STRANDED)
+    );
+    instance.start_run(&retried).await;
+    instance.complete_run(&retried).await;
+    producer.finish(job_id).await;
+    events.expect_one(wire::FACT_COMPLETED, job_id, LONG).await;
+
+    events.stop().await;
+    fixture.shutdown().await;
 }

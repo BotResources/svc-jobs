@@ -251,3 +251,93 @@ async fn claims_alternate_between_root_jobs_of_equal_priority() {
     events.stop().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_dispatch_on_another_runner_type_never_costs_a_root_its_turn() {
+    // Given: two roots at the same priority waiting on a type nobody serves, and two CLAIM types
+    // their trees fan out to, each with one instance with room for several slots
+    let fixture = JobsFixture::start().await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let root_type = wire::unique_runner_type("roots");
+    let pages_type = wire::unique_runner_type("pages");
+    let summaries_type = wire::unique_runner_type("summaries");
+    let producer = Producer::new(fixture.fabric(), "projects");
+
+    let first_root = JobDeclaration::new(&root_type);
+    let second_root = JobDeclaration::new(&root_type);
+    for declaration in [&first_root, &second_root] {
+        producer.declare_v2(declaration).await;
+        events
+            .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+            .await;
+    }
+    let mut pages = FakeRunner::new(fixture.nats(), &pages_type, "pages-a").declaring_capacity(8);
+    let mut summaries =
+        FakeRunner::new(fixture.nats(), &summaries_type, "summaries-a").declaring_capacity(8);
+    pages.connect().await;
+    summaries.connect().await;
+    for runner_type in [&pages_type, &summaries_type] {
+        dispatch::await_live_instances(&client, admin, runner_type, 1, LONG).await;
+        dispatch::switch_to_claim(&client, admin, runner_type).await;
+    }
+
+    // Given: in creation order, two pages of the first root, two pages of the second root, and
+    // one summary of the first root
+    let mut declared = Vec::new();
+    for (runner_type, root) in [
+        (&pages_type, first_root.job_id),
+        (&pages_type, first_root.job_id),
+        (&pages_type, second_root.job_id),
+        (&pages_type, second_root.job_id),
+        (&summaries_type, first_root.job_id),
+    ] {
+        let job = JobDeclaration::new(runner_type).with_parent(root);
+        producer.declare_v2(&job).await;
+        events.expect_one(wire::FACT_QUEUED, job.job_id, LONG).await;
+        declared.push(job.job_id);
+    }
+    let (first_pages, second_pages, first_summary) = (
+        [declared[0], declared[1]],
+        [declared[2], declared[3]],
+        declared[4],
+    );
+
+    // When: pages are claimed twice, the summary once, then pages twice more
+    let mut served_pages = Vec::new();
+    for _ in 0..2 {
+        served_pages.push(runner::job_id(
+            &claim::claim(fixture.nats(), &pages, CLAIM_WAIT)
+                .await
+                .expect_run("a pages slot"),
+        ));
+    }
+    let summary = claim::claim(fixture.nats(), &summaries, CLAIM_WAIT)
+        .await
+        .expect_run("a summaries slot");
+    for _ in 0..2 {
+        served_pages.push(runner::job_id(
+            &claim::claim(fixture.nats(), &pages, CLAIM_WAIT)
+                .await
+                .expect_run("a pages slot"),
+        ));
+    }
+
+    // Then: the summary of the first root never cost it its turn on pages — alternation is kept
+    // per runner type
+    assert_eq!(runner::job_id(&summary), first_summary);
+    assert_eq!(
+        served_pages,
+        vec![
+            first_pages[0],
+            second_pages[0],
+            first_pages[1],
+            second_pages[1]
+        ],
+        "the alternation between roots on one runner type ignores dispatches on another type",
+    );
+
+    events.stop().await;
+    fixture.shutdown().await;
+}

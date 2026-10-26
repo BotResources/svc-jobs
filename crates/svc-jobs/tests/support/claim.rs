@@ -154,6 +154,43 @@ pub async fn claim_as(
     claim_id: Uuid,
     wait: Duration,
 ) -> ClaimAnswer {
+    exchange(
+        nats,
+        runner_type,
+        &format!("instance '{instance_key}'"),
+        claim_id,
+        request(instance_key, claim_id, wait),
+        wait,
+    )
+    .await
+}
+
+/// Sends bytes that are not a well-formed claim, as a buggy runner harness would.
+pub async fn claim_raw(
+    nats: &TestNats,
+    runner_type: &str,
+    payload: Vec<u8>,
+    wait: Duration,
+) -> ClaimAnswer {
+    exchange(
+        nats,
+        runner_type,
+        "a malformed request",
+        Uuid::nil(),
+        payload,
+        wait,
+    )
+    .await
+}
+
+async fn exchange(
+    nats: &TestNats,
+    runner_type: &str,
+    who: &str,
+    claim_id: Uuid,
+    payload: Vec<u8>,
+    wait: Duration,
+) -> ClaimAnswer {
     let bound = wait + REPLY_MARGIN;
     assert!(
         bound < CLIENT_REQUEST_CEILING,
@@ -162,23 +199,19 @@ pub async fn claim_as(
     let started = Instant::now();
     let answered = tokio::time::timeout(
         bound,
-        nats.client().request(
-            subject(runner_type),
-            request(instance_key, claim_id, wait).into(),
-        ),
+        nats.client().request(subject(runner_type), payload.into()),
     )
     .await;
     let elapsed = started.elapsed();
     let message = match answered {
         Ok(Ok(message)) => message,
-        Ok(Err(error)) => panic!(
-            "the claim of instance '{instance_key}' on '{runner_type}' found no answering Jobs: \
-             {error}"
-        ),
+        Ok(Err(error)) => {
+            panic!("the claim of {who} on '{runner_type}' found no answering Jobs: {error}")
+        }
         Err(_) => panic!(
-            "the claim of instance '{instance_key}' on '{runner_type}' was never answered within \
-             {bound:?} — a claim is answered with a run or, at the end of its wait, empty; silence \
-             leaves the instance unable to tell a lost reply from a lost request"
+            "the claim of {who} on '{runner_type}' was never answered within {bound:?} — a claim \
+             is answered with a run or, at the end of its wait, empty; silence leaves the instance \
+             unable to tell a lost reply from a lost request"
         ),
     };
     let reply: Value = serde_json::from_slice(&message.payload)

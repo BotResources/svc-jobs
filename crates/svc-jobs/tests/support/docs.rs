@@ -160,7 +160,7 @@ query($runnerType: String) {
     runnerType {
       typeKey lifecycle isAvailable dispatchMode maxRunDurationSeconds
       waitingJobCount executingJobCount
-      instances { instanceKey isBusy currentRunIds }
+      instances { instanceKey reportedStatus isBusy currentRunIds }
     }
     affordances { action allowed reasonCode params }
   }
