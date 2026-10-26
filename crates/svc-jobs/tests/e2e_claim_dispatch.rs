@@ -404,8 +404,8 @@ async fn a_repeated_claim_receives_the_run_already_reserved_to_it() {
     assert_eq!(started["event"]["runId"], reserved_run);
     let after_start = claim::claim_again(fixture.nats(), &instance, first_slot, SHORT_POLL).await;
 
-    // Then: a started run is never handed out again
-    after_start.expect_empty("a claim repeated after its reserved run started");
+    // Then: a started run is never handed out again, and the spent claim id is refused
+    after_start.expect_refused("claim_spent", "a claim repeated after its reserved run started");
     events
         .expect_exactly(wire::FACT_STARTED, first_job.job_id, 1, QUIET)
         .await;
