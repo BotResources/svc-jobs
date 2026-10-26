@@ -92,7 +92,19 @@ async fn a_claim_waiting_for_work_is_served_the_moment_a_job_arrives() {
     events.expect_none(wire::FACT_STARTED, job_id, QUIET).await;
     let queued =
         stream::await_delta_of(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, job_id, LONG).await;
-    delta::assert_upserted_summary(&queued, job_id, "PENDING");
+    // The upsert is rebuilt from current state, and the waiting claim may reserve the job before
+    // it is rendered: it shows PENDING or the later IN_PROGRESS, never anything else
+    let queued_row = gql::listed_row(
+        queued["upserted"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list delta carries an upsert list: {queued}")),
+        job_id,
+    );
+    assert!(
+        ["PENDING", "IN_PROGRESS"].contains(&queued_row["job"]["status"].as_str().unwrap_or("")),
+        "the queued upsert shows the job waiting, or already reserved by the claim: {queued}",
+    );
+    delta::assert_page_info(&queued);
     let dispatched = stream::await_delta_of(
         &mut listing,
         JOBS_CHANGED,
