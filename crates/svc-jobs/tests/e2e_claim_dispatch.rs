@@ -614,6 +614,12 @@ async fn claims_beyond_the_per_pod_cap_are_refused_busy_at_once() {
         } else if answer.reply["run"].is_object() {
             served.push(runner::job_id(&answer.expect_run("a held claim")));
         } else {
+            assert!(
+                answer.elapsed >= ARRIVAL_DELAY,
+                "a claim beyond the cap is refused busy, never answered empty: {} after {:?}",
+                answer.reply,
+                answer.elapsed
+            );
             answer.expect_empty("a held claim nothing served");
             answer.expect_held_for_the_wait(LONG_POLL, "a held claim nothing served");
             expired += 1;
