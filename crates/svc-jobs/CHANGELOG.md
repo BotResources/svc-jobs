@@ -16,6 +16,12 @@ Priorities and claim-based dispatch. Every 0.3 behaviour of a `PUSH` runner
 type is kept; what changes for it is the order its waiting jobs are published
 in.
 
+### Deprecated
+
+- The `PUSH` dispatch mode and the `jobs.trigger.{runner_type}` stream: kept
+  while runners migrate to the claiming toolkit, removed in a later minor. The
+  GraphQL value `JobsDispatchMode.PUSH` carries the deprecation.
+
 ### Added
 
 - **Priorities.** A job requests a level from 1 (lowest) to 5 (highest), 3 by

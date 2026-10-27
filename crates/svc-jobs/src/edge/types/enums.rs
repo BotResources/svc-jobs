@@ -222,6 +222,9 @@ impl From<FleetSignal> for GqlFleetEventKind {
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 #[graphql(name = "JobsDispatchMode")]
 pub enum GqlDispatchMode {
+    #[graphql(
+        deprecation = "PUSH is deprecated: runner types move to CLAIM as their runners adopt the claiming toolkit; the trigger stream will be removed in a later minor."
+    )]
     Push,
     Claim,
 }

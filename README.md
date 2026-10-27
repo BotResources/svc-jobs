@@ -66,6 +66,10 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   is dispatched in one of two modes, set by a platform administrator:
   - `PUSH` (the default, and the only mode before 0.4): the trigger of each
     waiting job is published on the trigger stream while the type is available.
+    **Deprecated:** kept only while runners migrate to the claiming toolkit;
+    priorities are best effort in this mode (a published trigger is consumed
+    in stream order). Switch a type to `CLAIM` only once its runners claim. The
+    trigger stream and `PUSH` are removed in a later minor.
   - `CLAIM`: an instance with a free slot claims its next run on
     `jobs.claim.{runner_type}`. The claim is held open until a job is waiting,
     which is then reserved to that instance — its run created in the
