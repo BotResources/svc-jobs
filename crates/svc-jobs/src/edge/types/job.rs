@@ -155,7 +155,7 @@ impl GqlJobDetail {
     }
 
     async fn attempt_count(&self) -> i32 {
-        i32::try_from(self.job.attempt_count()).unwrap_or(i32::MAX)
+        i32::try_from(self.job.attempts_reached()).unwrap_or(i32::MAX)
     }
 
     async fn active_run_id(&self) -> Option<Uuid> {
@@ -295,7 +295,7 @@ pub fn summary_of(job: &Job) -> GqlJobSummary {
         requested_priority: i32::from(job.priority().requested().get()),
         effective_priority: i32::from(job.priority().effective().get()),
         forced_priority: job.priority().forced().map(|level| i32::from(level.get())),
-        attempt_count: i32::try_from(job.attempt_count()).unwrap_or(i32::MAX),
+        attempt_count: i32::try_from(job.attempts_reached()).unwrap_or(i32::MAX),
         active_run_id: job.active_run().map(|run| run.id().as_uuid()),
         progression: job.progression().map(GqlRunProgression::from),
         next_attempt_at: job.next_attempt_at(),

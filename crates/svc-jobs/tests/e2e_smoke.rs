@@ -29,8 +29,9 @@ const DECLARED_QUERIES: [&str; 6] = [
     "jobsMyMaxPriority",
 ];
 
-const DECLARED_MUTATIONS: [&str; 11] = [
+const DECLARED_MUTATIONS: [&str; 12] = [
     "jobsCancelJob",
+    "jobsClearRunnerTypeMaxRunDuration",
     "jobsClearUserMaxPriority",
     "jobsDeleteJob",
     "jobsDeprecateRunnerType",

@@ -74,7 +74,8 @@ priorities:
 # Claim-based dispatch (runner types set to CLAIM). A claim is held open at most
 # maxWaitSeconds; a run reserved by a claim and not started within
 # reservationSeconds fails as transient with `claim_lost`. A pod holds at most
-# maxHeld claims open at once and answers further claims empty.
+# maxHeld claims open at once and answers further claims `busy`. reservationSeconds
+# must exceed maxWaitSeconds, or the service refuses to boot.
 claims:
   maxWaitSeconds: 30
   reservationSeconds: 60

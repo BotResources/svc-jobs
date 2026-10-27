@@ -88,11 +88,11 @@ async fn fleet_deltas(
         FleetEvent::RunnerTypeDispatchModeChanged(_) => {
             GqlFleetEventKind::RunnerTypeDispatchModeChanged
         }
-        FleetEvent::RunnerTypeMaxRunDurationChanged(_) => {
+        // Clearing returns the type to the service default: on the wire it is
+        // one more change of its maximum, which the delta's view carries.
+        FleetEvent::RunnerTypeMaxRunDurationChanged(_)
+        | FleetEvent::RunnerTypeMaxRunDurationCleared(_) => {
             GqlFleetEventKind::RunnerTypeMaxRunDurationChanged
-        }
-        FleetEvent::RunnerTypeMaxRunDurationCleared(_) => {
-            GqlFleetEventKind::RunnerTypeMaxRunDurationCleared
         }
         FleetEvent::InstanceConnected(_) => GqlFleetEventKind::InstanceConnected,
         FleetEvent::InstanceStatusReported(_) => GqlFleetEventKind::InstanceStatusReported,

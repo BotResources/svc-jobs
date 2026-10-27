@@ -64,23 +64,46 @@ in.
 - A child admitted under a forced parent is born forced at the parent's forced
   level (requested, effective and forced alike).
 - Each pod holds at most `JOBS_CLAIM_MAX_HELD` (default 1024) claims open and
-  answers further claims empty at once. A waiting job wakes one held claim of
-  its type; a due retry wakes the held claims of its type.
-- A closed set of claim refusals: `instance_unknown`, `not_claim_mode`,
+  answers a claim beyond that `busy` with `retry_after_ms`. A queued job wakes
+  one held claim of its type; the pod keeps one retry timer per type, which
+  wakes one held claim when the earliest retry falls due.
+- A closed set of seven claim refusals: `instance_unknown`, `not_claim_mode`,
   `instance_draining`, `runner_type_retired`, `claim_spent`,
-  `malformed_claim` (a nil `claim_id` is malformed).
-- Backstop `trigger_stranded`: a run of a `CLAIM` type published as a trigger
-  before the switch, neither started nor reserved after
-  `JOBS_CLAIM_RESERVATION_SECONDS`, fails as transient; its retry is claimed.
+  `malformed_claim` (a nil `claim_id` is malformed) and `busy` (the pod could
+  not hold the claim, or its store failed: repeat the same claim after
+  `retry_after_ms`). An infrastructure error on the claim path is answered
+  `busy`, never with an empty reply and never `instance_unknown`.
+- Backstop `trigger_stranded`: a run published as a trigger, neither started
+  nor reserved `JOBS_CLAIM_RESERVATION_SECONDS` after its type switched to
+  `CLAIM`, is cancelled without counting as an attempt — its job waits to be
+  claimed, the claimed run takes the same attempt number, no retry is
+  scheduled. `JobsRun.cancellationReason` names the reason.
+- `jobsClearRunnerTypeMaxRunDuration` returns a type to the service default,
+  with the `clear_max_run_duration` affordance (blocked with
+  `no_max_run_duration_set` while the type has none of its own) and the
+  `RUNNER_TYPE_MAX_RUN_DURATION_CLEARED` fleet event kind.
+- The KV offer `jobs.dispatch_mode.{runner_type}`
+  (`{version, runner_type, dispatch_mode}`) for every active or deprecated
+  type, written after each switch and reconciled at boot and periodically. The
+  `jobs.runner_type.` entry is unchanged.
+- A job that goes back to waiting (a retry, a withdrawn trigger) re-derives its
+  effective priority from the current cap or its parent; a forced job keeps
+  its force. A change of `JOBS_DEFAULT_MAX_PRIORITY` applies to new admissions
+  and to these re-derivations only.
 - Migration `0003_priority_and_claim.sql`. Existing jobs read as requesting
   and waiting at 3 (column defaults, no table rewrite: checks and the root
   foreign key are added `NOT VALID`, then validated). Existing runner types
   read as `PUSH` and store no maximum duration of their own: they show and
   apply `JOBS_RUN_MAX_DURATION_SECONDS`. Existing runs answer to the service
   default. New tables `user_max_priorities`, `run_reservations`,
-  `waiting_jobs` and `root_dispatch_turns`; `waiting_jobs` is filled once from
-  the jobs waiting at migration time (a derived access path, not a rewrite of
-  ledger data).
+  `waiting_jobs`, `root_dispatch_turns` and `unstarted_pushed_runs`. The
+  uniqueness of a job's attempt numbers and of a retry schedule's consumer now
+  holds among the runs that count (partial unique indexes), and `job_states`
+  counts those runs only.
+- The access paths `waiting_jobs` and `unstarted_pushed_runs` are filled and
+  repaired from the ledger at boot and on every backstop sweep, which covers
+  the facts a 0.3 pod records during a rolling update. Pre-0.4 lineages find
+  their root by walking their parents; `jobs.root_job_id` is not rewritten.
 
 ### Changed
 
@@ -101,15 +124,27 @@ in.
 - A cancellation re-reads, under its locks, the descendants it decided on and
   starts over when the tree grew meanwhile.
 - Admission re-checks the priority facts it decided on under a shared lock on
-  the user or on the parent and its root (id order); a parent settled in the
-  meantime refuses the child with `parent_job_terminal`. Forcing and a change
-  of maximum lock what they reach before deciding each row.
+  the user or on the root of the parent's tree and then the parent; a parent
+  settled in the meantime refuses the child with `parent_job_terminal`.
+  Forcing and a change of maximum lock what they reach before deciding each
+  row. Every writer locks the root of what it touches first, then the rest by
+  id.
+- Claims consider only the head of each (root, level) and lock the waiting
+  row, then the job row, with `SKIP LOCKED`; claim timing uses the database
+  clock. The push pass reads the same index in order.
+- The list and job subscriptions take facts in batches (one store read per
+  batch) and send a fresh snapshot when a batch carries more than 64 facts
+  for them; the job tree reloads only the jobs a batch touched. A
+  fact-triggered push pass waits `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS`
+  after the previous one.
+- Startup refuses `JOBS_CLAIM_RESERVATION_SECONDS` not above
+  `JOBS_CLAIM_MAX_WAIT_SECONDS`.
 
 ### Known limitations
 
 - Switching a runner type from `PUSH` to `CLAIM` does not withdraw triggers
   already published; one consumed by a remaining push instance runs, one left
-  unstarted fails as `trigger_stranded` and its retry is claimed.
+  unstarted is cancelled as `trigger_stranded` and its job is claimed.
 - `jobs.trigger.{runner_type}` carries the deprecation intent of the contract;
   no deletion version is set yet.
 - `contract-jobs` 0.6.0, `bc-jobs` 0.6.0.

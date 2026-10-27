@@ -14,7 +14,7 @@ impl Job {
     pub fn status(&self) -> JobStatus {
         match self.resolution() {
             Some(resolution) => resolution.kind().as_status(),
-            None if self.attempt_count() == 0 => JobStatus::Pending,
+            None if self.runs().is_empty() => JobStatus::Pending,
             None => JobStatus::InProgress,
         }
     }
@@ -25,6 +25,17 @@ impl Job {
 
     pub fn is_deleted(&self) -> bool {
         self.deletion().is_some()
+    }
+
+    /// The attempts the Job has reached: the highest attempt number of its
+    /// Runs. A withdrawn Run and the Run that replaces it share one number —
+    /// the stranded trigger cost no attempt.
+    pub fn attempts_reached(&self) -> u32 {
+        self.runs()
+            .iter()
+            .map(|run| run.attempt_number().get())
+            .max()
+            .unwrap_or(0)
     }
 
     /// The Runs that count as attempts — a Run withdrawn unstarted does not.

@@ -111,7 +111,14 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
         }
         let held = jobs.waiters.hold(&key);
         match reserve(jobs, &runner_type, &instance_key, claim_id, &passed_over).await {
-            Ok(Reservation::Reserved(trigger)) => return Ok(ClaimAnswer::Served(trigger)),
+            Ok(Reservation::Reserved(trigger)) => {
+                // Taking the head of a (root, level) uncovers the next Job of
+                // that pair — a claim parked because every head was held looks
+                // again.
+                drop(held);
+                jobs.waiters.wake_one(&key);
+                return Ok(ClaimAnswer::Served(trigger));
+            }
             Ok(Reservation::PassedOver(job_id)) => {
                 passed_over.push(job_id.as_uuid());
                 continue;

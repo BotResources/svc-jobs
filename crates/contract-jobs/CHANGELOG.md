@@ -22,10 +22,18 @@ Additive: every 0.5 subject, payload and constant is unchanged.
 - The closed refusal set `runner::ClaimRefusal` (`ALL`, `as_str`), each
   variant documenting the runner's reaction: `instance_unknown`,
   `not_claim_mode`, `instance_draining`, `runner_type_retired`,
-  `claim_spent`, `malformed_claim` (a nil `claim_id` is malformed), with the
-  matching `CLAIM_REASON_*` constants.
-- Run failures `RUN_FAILURE_CLAIM_LOST` (`claim_lost`) and
-  `RUN_FAILURE_TRIGGER_STRANDED` (`trigger_stranded`).
+  `claim_spent`, `malformed_claim` (a nil `claim_id` is malformed) and `busy`
+  (wait `ClaimReply::retry_after_ms`, then repeat the same claim under the
+  same `claim_id`), with the matching `CLAIM_REASON_*` constants and
+  `ClaimReply::busy`.
+- The run failure `RUN_FAILURE_CLAIM_LOST` (`claim_lost`) and the run
+  cancellation reason `RUN_CANCELLATION_TRIGGER_STRANDED`
+  (`trigger_stranded`, not counted as an attempt).
+- The KV offer `jobs.dispatch_mode.{runner_type}`: `KV_JOBS_DISPATCH_MODE`,
+  the module `dispatch_mode` with `DISPATCH_MODE_PREFIX`,
+  `dispatch_mode_key`, `DispatchMode` (`PUSH` | `CLAIM`) and the value
+  `RunnerTypeDispatchMode { version, runner_type, dispatch_mode }`. The
+  `jobs.runner_type.` offer is unchanged.
 - `jobs.trigger.{runner_type}` carries a deprecation intent: it serves `PUSH`
   types only, and goes once every type claims. No deletion version is set.
 

@@ -350,10 +350,11 @@ fn a_withdrawn_run_leaves_its_job_waiting_with_no_attempt_spent() {
         .withdrawn(ts(80), "trigger_stranded")
         .build();
     let job = JobBuilder::new().with_run(run).build();
-    // Then: it waits as a fresh job, and its next run is attempt one again
+    // Then: it waits as a fresh job, its next run is attempt one again, and the attempt it
+    // reached is still the first
     assert!(job.is_waiting());
     assert_eq!(job.attempt_count(), 0);
-    assert_eq!(job.status(), crate::domain::job::status::JobStatus::Pending);
+    assert_eq!(job.attempts_reached(), 1);
 }
 
 #[test]

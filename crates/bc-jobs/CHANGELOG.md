@@ -29,7 +29,10 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - Claims: `Job::reserve_run` shares the dispatch decision; `RunReservation`
   and `ClaimId`; `RunnerType::guard_claim` and `guard_push_dispatch`;
   `Job::fail_run_for_lost_claim` (`claim_lost`) and
-  `Job::fail_run_for_stranded_trigger` (`trigger_stranded`); `Job::recall_claim`
+  `Job::withdraw_stranded_trigger` (`trigger_stranded`: the run is cancelled
+  without counting as an attempt — `RunTerminal::withdrawn`,
+  `Run::counts_as_attempt`, `RunCancelled::withdrawn_for`; the delay counts
+  from `RunnerType::claimed_since`); `Job::recall_claim`
   decides whether a repeated claim is answered or spent; a reserved run is
   cancelled through a stop request and reclaimed with its lost instance.
 - Runner-type settings: `DispatchMode`, `MaxRunDuration`,
@@ -38,6 +41,12 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `set_dispatch_mode` / `set_max_run_duration` and their facts, and
   `successor_dispatch` (whether a manual-retry successor is pushed or waits to
   be claimed); a run carries the maximum duration it was dispatched with.
+- `clear_max_run_duration` and `RunnerTypeMaxRunDurationCleared`, the
+  `clear_max_run_duration` affordance (`no_max_run_duration_set`);
+  `RunnerTypeSettings::dispatch_mode_since`; the `DispatchModeOfferWriter`
+  port; `Job::rederive_priority` for a Job back to waiting
+  (`JobPriorityRecalculated::user_id` is optional). The dead
+  `RunnerType::successor_dispatch` copy is gone; the free function stays.
 - Breaking for callers (svc-jobs only): `create_job` takes the user's stored
   maximum, `CreateJob` / `DispatchRun` / `ManualRetryJob` / `RunnerTypeState`
   / `RunState` / `JobState` gain fields,

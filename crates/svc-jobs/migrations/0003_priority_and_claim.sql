@@ -106,7 +106,8 @@ CREATE UNIQUE INDEX runs_counted_retry_schedule
 ALTER TABLE runs DROP CONSTRAINT runs_job_id_attempt_number_key;
 ALTER TABLE runs DROP CONSTRAINT runs_automatic_retry_schedule_id_key;
 
--- The status of a Job counts the Runs that count.
+-- The attempts a Job reached are its highest attempt number: a withdrawn Run
+-- and the Run that replaces it share one.
 CREATE OR REPLACE VIEW job_states AS
 SELECT
     j.id AS job_id,
@@ -132,10 +133,9 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) current_resolution ON true
 LEFT JOIN LATERAL (
-    SELECT count(*)::integer AS attempt_count
+    SELECT coalesce(max(r.attempt_number), 0)::integer AS attempt_count
     FROM runs r
     WHERE r.job_id = j.id
-      AND r.withdrawn_reason IS NULL
 ) run_summary ON true
 LEFT JOIN LATERAL (
     SELECT r.id
