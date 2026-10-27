@@ -24,6 +24,7 @@ use br_util_postgres::{ensure_app_role, grant_app_access, init_migration_pool, i
 
 use app::Jobs;
 use app::environment::{NanosecondJitter, SystemClock, UuidV7Factory};
+use bus::dispatch_mode_offer::PublishedDispatchModes;
 use bus::runner_type_catalog::PublishedRunnerTypeCatalog;
 use config::Settings;
 use db::PgStore;
@@ -100,6 +101,7 @@ async fn boot(
 
     let supervisor = Supervisor::new(readiness.clone(), settings.restart_policy);
     let catalog = Arc::new(PublishedRunnerTypeCatalog::open(&fabric, supervisor.clone()).await?);
+    let dispatch_modes = Arc::new(PublishedDispatchModes::open(&fabric, supervisor.clone()).await?);
 
     let hub = Hub::new();
     let jobs = Arc::new(Jobs {
@@ -111,8 +113,12 @@ async fn boot(
         limits: settings.limits,
         retry: settings.retry_policy,
         catalog,
+        dispatch_modes,
+        claims: settings.claims,
+        waiters: Arc::default(),
     });
     app::runner_type_catalog::reconcile(&jobs).await?;
+    app::backstop::repair_every_access_path(&jobs).await?;
 
     tasks::spawn_supervised(
         &supervisor,

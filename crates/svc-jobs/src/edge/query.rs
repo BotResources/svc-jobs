@@ -9,11 +9,12 @@ use uuid::Uuid;
 
 use super::error::edge_error;
 use super::project;
-use super::state::{EdgeState, administrator};
+use super::state::{EdgeState, administrator, own_user};
 use super::types::fleet::GqlRunnerTypeView;
 use super::types::input::GqlJobFilterInput;
 use super::types::job::{GqlJobSummaryView, GqlJobView};
 use super::types::log::GqlRunLog;
+use super::types::priority::GqlMyMaxPriority;
 use crate::db::list;
 use crate::db::logs::LogWindow;
 use crate::edge::log_page::log_connection;
@@ -127,5 +128,18 @@ impl QueryRoot {
         administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?;
         project::fleet_views(state, runner_type.as_deref()).await
+    }
+
+    /// The maximum priority that applies to the caller: their own, or the
+    /// service default. Open to any active human.
+    async fn jobs_my_max_priority(&self, ctx: &Context<'_>) -> Result<GqlMyMaxPriority> {
+        let user_id = own_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let maximum = crate::app::priority::applicable_max(&state.jobs, user_id)
+            .await
+            .map_err(edge_error)?;
+        Ok(GqlMyMaxPriority {
+            max_priority: i32::from(maximum.get()),
+        })
     }
 }

@@ -2,10 +2,10 @@ use uuid::Uuid;
 
 use crate::segment::SubjectSegment;
 use crate::{
-    CMD_JOBS_TRIGGER_RUNNER_TYPE, EVT_JOBS_LOG_RUNNER_TYPE, EVT_JOBS_STATUS_RUNNER_TYPE_COMPLETED,
-    EVT_JOBS_STATUS_RUNNER_TYPE_FAILED, EVT_JOBS_STATUS_RUNNER_TYPE_PLAN_DECLARED,
-    EVT_JOBS_STATUS_RUNNER_TYPE_STARTED, EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED, KV_RUN_ID,
-    KV_RUNNER_TYPE_INSTANCE_KEY,
+    CMD_JOBS_CLAIM_RUNNER_TYPE, CMD_JOBS_TRIGGER_RUNNER_TYPE, EVT_JOBS_LOG_RUNNER_TYPE,
+    EVT_JOBS_STATUS_RUNNER_TYPE_COMPLETED, EVT_JOBS_STATUS_RUNNER_TYPE_FAILED,
+    EVT_JOBS_STATUS_RUNNER_TYPE_PLAN_DECLARED, EVT_JOBS_STATUS_RUNNER_TYPE_STARTED,
+    EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED, KV_RUN_ID, KV_RUNNER_TYPE_INSTANCE_KEY,
 };
 
 const RUNNER_TYPE: &str = "{runner_type}";
@@ -71,6 +71,15 @@ pub fn trigger_subject(runner_type: &SubjectSegment) -> String {
     )
 }
 
+/// The subject an Instance of a `CLAIM` runner type sends its claims to.
+pub fn claim_subject(runner_type: &SubjectSegment) -> String {
+    render(
+        CMD_JOBS_CLAIM_RUNNER_TYPE,
+        RUNNER_TYPE,
+        runner_type.as_str(),
+    )
+}
+
 pub fn status_subject(runner_type: &SubjectSegment, fact: RunnerStatusFact) -> String {
     render(fact.template(), RUNNER_TYPE, runner_type.as_str())
 }
@@ -125,6 +134,7 @@ mod tests {
         // When: each subject of the proprietary transport is rendered
         // Then: the rendering matches the declared template with no placeholder left
         assert_eq!(trigger_subject(&runner_type), "jobs.trigger.analyst");
+        assert_eq!(claim_subject(&runner_type), "jobs.claim.analyst");
         assert_eq!(log_subject(&runner_type), "jobs.log.analyst");
         for (fact, expected) in FACTS {
             assert_eq!(&status_subject(&runner_type, *fact), expected);
@@ -181,6 +191,7 @@ mod tests {
         // Given: every constructor of the proprietary grammar
         let rendered = [
             trigger_subject(&analyst()),
+            claim_subject(&analyst()),
             log_subject(&analyst()),
             status_subject(&analyst(), RunnerStatusFact::Failed),
             run_cancel_key(Uuid::now_v7()),

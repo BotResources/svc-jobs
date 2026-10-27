@@ -273,3 +273,37 @@ pub async fn expect_no_fleet_event(watch: &mut SseSubscription, kind: &str, quie
     )
     .await;
 }
+
+/// Awaits one `event_type` delta for each of `job_ids`, in whatever order the service commits
+/// them — independent jobs carry no ordering promise between them. Returns the deltas in the
+/// order of `job_ids`.
+pub async fn await_deltas_of_each(
+    watch: &mut SseSubscription,
+    field: &str,
+    event_type: &str,
+    job_ids: &[Uuid],
+    timeout: Duration,
+) -> Vec<Value> {
+    let mut found: Vec<Option<Value>> = vec![None; job_ids.len()];
+    while found.iter().any(Option::is_none) {
+        let message = await_message(
+            watch,
+            field,
+            &format!("{event_type} for each of {job_ids:?}"),
+            |message| {
+                message["event"]["__typename"] == json!(event_type)
+                    && job_ids.iter().zip(&found).any(|(id, seen)| {
+                        seen.is_none() && message["event"]["jobId"] == json!(id.to_string())
+                    })
+            },
+            timeout,
+        )
+        .await;
+        let index = job_ids
+            .iter()
+            .position(|id| message["event"]["jobId"] == json!(id.to_string()))
+            .expect("the predicate matched one of the awaited jobs");
+        found[index] = Some(message);
+    }
+    found.into_iter().flatten().collect()
+}

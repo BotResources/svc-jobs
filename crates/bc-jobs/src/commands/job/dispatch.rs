@@ -2,25 +2,82 @@ use chrono::{DateTime, Utc};
 
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::AttemptNumber;
-use crate::domain::ids::RunId;
+use crate::domain::fleet::run_duration::MaxRunDuration;
+use crate::domain::ids::{ClaimId, RunId};
 use crate::domain::job::Job;
 use crate::domain::policy::ServiceLimits;
 use crate::domain::run::Run;
 use crate::domain::run::origin::RunOrigin;
+use crate::domain::run::parts::RunnerInstanceReference;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
-use crate::event::job_facts::RunDispatched;
+use crate::event::job_facts::{RunClaim, RunDispatched};
 
+/// Publishing the next Run of a waiting Job on the trigger stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchRun {
     pub run_id: RunId,
     pub at: DateTime<Utc>,
+    /// The maximum duration of the Job's RunnerType, carried by the Run.
+    pub max_run_duration: MaxRunDuration,
+}
+
+/// Handing the next Run of a waiting Job to the Instance that claimed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReserveRun {
+    pub run_id: RunId,
+    pub at: DateTime<Utc>,
+    pub max_run_duration: MaxRunDuration,
+    pub instance: RunnerInstanceReference,
+    pub claim_id: ClaimId,
 }
 
 impl Job {
     pub fn dispatch_run(
         &self,
         command: DispatchRun,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        self.next_run(
+            command.run_id,
+            command.at,
+            command.max_run_duration,
+            None,
+            limits,
+        )
+    }
+
+    /// The same decision as a push dispatch, plus the claimant: a claim is
+    /// served from the very Jobs a push would publish, in the same order.
+    pub fn reserve_run(
+        &self,
+        command: ReserveRun,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        if command.instance.runner_type() != self.runner_type() {
+            return Err(JobsError::RunnerTypeMismatch {
+                expected: self.runner_type().as_str().to_owned(),
+                claimed: command.instance.runner_type().as_str().to_owned(),
+            });
+        }
+        self.next_run(
+            command.run_id,
+            command.at,
+            command.max_run_duration,
+            Some(RunClaim {
+                instance_key: command.instance.instance_key().clone(),
+                claim_id: command.claim_id,
+            }),
+            limits,
+        )
+    }
+
+    fn next_run(
+        &self,
+        run_id: RunId,
+        at: DateTime<Utc>,
+        max_run_duration: MaxRunDuration,
+        claimed_by: Option<RunClaim>,
         limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
         self.guard_not_deleted()?;
@@ -38,11 +95,11 @@ impl Job {
                 max_attempts: budget.get(),
             });
         }
-        let retried = self.due_retry(attempt_number, command.at)?;
+        let retried = self.due_retry(attempt_number, at)?;
         Ok(CommandResult::from_event(JobEvent::RunDispatched(
             RunDispatched {
                 job_id: self.id(),
-                run_id: command.run_id,
+                run_id,
                 runner_type: self.runner_type().clone(),
                 attempt_number,
                 origin: RunOrigin::derive(attempt_number.is_first(), self.has_predecessor()),
@@ -50,6 +107,8 @@ impl Job {
                     .and_then(Run::retry_schedule)
                     .map(|schedule| schedule.id()),
                 automatic_retry_of_run_id: retried.map(Run::id),
+                max_run_duration: Some(max_run_duration),
+                claimed_by,
             },
         )))
     }
@@ -111,6 +170,7 @@ mod tests {
                 DispatchRun {
                     run_id: run_id(),
                     at: ts(10),
+                    max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
                 },
                 &ServiceLimits::default(),
             )
@@ -133,6 +193,7 @@ mod tests {
                 DispatchRun {
                     run_id: run_id(),
                     at: ts(10),
+                    max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
                 },
                 &ServiceLimits::default(),
             )
@@ -152,6 +213,7 @@ mod tests {
             DispatchRun {
                 run_id: run_id(),
                 at: ts(10),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &ServiceLimits::default(),
         );
@@ -173,6 +235,7 @@ mod tests {
             DispatchRun {
                 run_id: run_id(),
                 at: ts(50),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &ServiceLimits::default(),
         );
@@ -193,6 +256,7 @@ mod tests {
                 DispatchRun {
                     run_id: run_id(),
                     at: ts(80),
+                    max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
                 },
                 &ServiceLimits::default(),
             )
@@ -202,6 +266,44 @@ mod tests {
         assert_eq!(fact.attempt_number.get(), 2);
         assert_eq!(fact.origin, RunOrigin::AutomaticRetry);
         assert_eq!(fact.automatic_retry_of_run_id, Some(failed_id));
+        assert_eq!(fact.automatic_retry_schedule_id, Some(schedule));
+    }
+
+    #[test]
+    fn a_retry_whose_trigger_was_withdrawn_goes_out_again_as_the_same_attempt() {
+        // Given: attempt one failed with a retry due at ts(80), and the retry's
+        // trigger was withdrawn as stranded
+        let failed = RunBuilder::new(1)
+            .started(ts(5))
+            .failed(ts(20), RunFailureKind::Transient)
+            .retry_due(ts(80))
+            .build();
+        let schedule = failed.retry_schedule().unwrap().id();
+        let withdrawn = RunBuilder::new(2)
+            .retry_of_schedule(schedule)
+            .withdrawn(ts(150), "trigger_stranded")
+            .build();
+        let job = JobBuilder::new()
+            .with_run(failed)
+            .with_run(withdrawn)
+            .build();
+        // Then: the job waits again, one attempt spent
+        assert!(job.is_waiting());
+        assert_eq!(job.attempt_count(), 1);
+        // When: the retry is dispatched again
+        let fact = dispatched(
+            job.dispatch_run(
+                DispatchRun {
+                    run_id: run_id(),
+                    at: ts(160),
+                    max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
+                },
+                &ServiceLimits::default(),
+            )
+            .unwrap(),
+        );
+        // Then: it is attempt two again, consuming the same schedule
+        assert_eq!(fact.attempt_number.get(), 2);
         assert_eq!(fact.automatic_retry_schedule_id, Some(schedule));
     }
 
@@ -221,6 +323,7 @@ mod tests {
             DispatchRun {
                 run_id: run_id(),
                 at: ts(90),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &ServiceLimits::default(),
         );
@@ -237,6 +340,7 @@ mod tests {
             DispatchRun {
                 run_id: run_id(),
                 at: ts(80),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &ServiceLimits::default(),
         );
@@ -261,6 +365,7 @@ mod tests {
             DispatchRun {
                 run_id: run_id(),
                 at: ts(40),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &ServiceLimits::default(),
         );
@@ -269,6 +374,99 @@ mod tests {
             result,
             Err(JobsError::JobAlreadyTerminal {
                 status: "CANCELLED"
+            })
+        );
+    }
+
+    fn reserve(
+        job: &Job,
+        instance: RunnerInstanceReference,
+    ) -> Result<JobCommandResult, JobsError> {
+        job.reserve_run(
+            ReserveRun {
+                run_id: run_id(),
+                at: ts(10),
+                max_run_duration: MaxRunDuration::from_seconds(96 * 3600).unwrap(),
+                instance,
+                claim_id: crate::fixtures::claim_id(),
+            },
+            &ServiceLimits::default(),
+        )
+    }
+
+    #[test]
+    fn a_claim_reserves_the_first_run_to_the_claiming_instance() {
+        // Given: a waiting job of a CLAIM type
+        let job = JobBuilder::new().build();
+        // When: pod-7 claims it
+        let fact = dispatched(reserve(&job, crate::fixtures::instance()).unwrap());
+        // Then: attempt one is created reserved to pod-7, with its type's maximum duration
+        assert_eq!(fact.attempt_number, AttemptNumber::FIRST);
+        assert_eq!(
+            fact.claimed_by.map(|claim| claim.instance_key),
+            Some(crate::fixtures::instance().instance_key().clone())
+        );
+        assert_eq!(
+            fact.max_run_duration,
+            Some(MaxRunDuration::from_seconds(96 * 3600).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_pushed_run_is_reserved_to_nobody_and_carries_its_types_duration() {
+        // Given: a waiting job of a PUSH type
+        let job = JobBuilder::new().build();
+        // When: it is dispatched
+        let fact = dispatched(
+            job.dispatch_run(
+                DispatchRun {
+                    run_id: run_id(),
+                    at: ts(10),
+                    max_run_duration: MaxRunDuration::from_seconds(600).unwrap(),
+                },
+                &ServiceLimits::default(),
+            )
+            .unwrap(),
+        );
+        // Then: no claimant, and the duration the run will be held to
+        assert_eq!(fact.claimed_by, None);
+        assert_eq!(
+            fact.max_run_duration.map(MaxRunDuration::seconds),
+            Some(600)
+        );
+    }
+
+    #[test]
+    fn a_claim_is_refused_whatever_the_push_dispatch_would_refuse() {
+        // Given: a job whose run is already in flight
+        let live = RunBuilder::new(1).reserved(ts(1)).build();
+        let live_id = live.id();
+        let job = JobBuilder::new().with_run(live).build();
+        // When: another claim reaches it
+        let result = reserve(&job, crate::fixtures::instance());
+        // Then: the same refusal as a push dispatch — one decision, two transports
+        assert_eq!(
+            result,
+            Err(JobsError::RunAlreadyInFlight {
+                run_id: live_id.as_uuid()
+            })
+        );
+    }
+
+    #[test]
+    fn an_instance_of_another_type_may_not_claim_the_job() {
+        // Given: an analyst job, and a scribe instance claiming it
+        let job = JobBuilder::new().build();
+        let scribe = RunnerInstanceReference::new(
+            crate::domain::keys::RunnerTypeKey::new("scribe").unwrap(),
+            crate::domain::keys::InstanceKey::new("pod-7").unwrap(),
+        );
+        // When/Then: the claim is refused
+        assert_eq!(
+            reserve(&job, scribe),
+            Err(JobsError::RunnerTypeMismatch {
+                expected: "analyst".to_owned(),
+                claimed: "scribe".to_owned(),
             })
         );
     }

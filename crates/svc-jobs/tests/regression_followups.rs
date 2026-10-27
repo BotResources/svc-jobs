@@ -8,6 +8,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::{ProducerKey, RunnerTypeKey};
 use bc_jobs::domain::ownership::CancelRequester;
 use bc_jobs::domain::policy::ServiceLimits;
+use bc_jobs::domain::priority::Priority;
 use bc_jobs::ports::job::JobReader;
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 use br_test_harness::E2eDatabase;
@@ -86,10 +87,13 @@ fn metadata() -> EventMetadata {
 async fn commit(fixture: &Fixture, changes: Vec<JobChange>) {
     write::commit_job_changes(
         &fixture.store,
-        &UuidV7Factory,
+        write::WriteContext {
+            ids: &UuidV7Factory,
+            metadata: &metadata(),
+            at: clock::now(),
+            limits: &limits(),
+        },
         changes,
-        &metadata(),
-        clock::now(),
     )
     .await
     .expect("the write lands");
@@ -106,9 +110,11 @@ async fn a_queued_job(fixture: &Fixture, parent: Option<&Job>) -> Job {
         triggered_by: None,
         source_entity_id: None,
         max_attempts: None,
+        requested_priority: Priority::DEFAULT,
     };
-    let CreateOutcome::Queued(queued) = create_job(declaration, None, None, parent, &limits())
-        .expect("the declaration is accepted")
+    let CreateOutcome::Queued(queued) =
+        create_job(declaration, None, None, parent, None, &limits())
+            .expect("the declaration is accepted")
     else {
         panic!("a fresh job id is queued, never already queued");
     };

@@ -2,10 +2,13 @@ pub mod fleet;
 pub mod job;
 pub mod refs;
 pub mod run;
+pub mod user;
+pub mod waiting;
 
-use bc_jobs::domain::ids::{EventId, JobId, RunnerTypeId};
+use bc_jobs::domain::ids::{EventId, JobId, KnownUserId, RunnerTypeId};
 use bc_jobs::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};
 use bc_jobs::event::job::{JOB_AGGREGATE_TYPE, JobEvent};
+use bc_jobs::event::user::{KNOWN_USER_AGGREGATE_TYPE, UserEvent};
 use bc_jobs::ports::PortError;
 use br_core_events::EventMetadata;
 use chrono::{DateTime, Utc};
@@ -70,6 +73,33 @@ pub async fn apply_fleet_events(
     Ok(())
 }
 
+pub async fn apply_user_events(
+    tx: &mut PgConnection,
+    user_id: KnownUserId,
+    events: &[(EventId, UserEvent)],
+    metadata: &EventMetadata,
+    occurred_at: DateTime<Utc>,
+) -> Result<(), PortError> {
+    for (event_id, event) in events {
+        user::write(tx, event, occurred_at).await?;
+        let version = next_version(tx, KNOWN_USER_AGGREGATE_TYPE, user_id.as_uuid()).await?;
+        append(
+            tx,
+            *event_id,
+            user_id.as_uuid(),
+            KNOWN_USER_AGGREGATE_TYPE,
+            version,
+            event.event_type(),
+            event.payload()?,
+            metadata,
+            occurred_at,
+        )
+        .await?;
+        notify::user_event(tx, *event_id, event).await?;
+    }
+    Ok(())
+}
+
 async fn write_job_event(
     tx: &mut PgConnection,
     event: &JobEvent,
@@ -92,6 +122,8 @@ async fn write_job_event(
         JobEvent::ManualRetryStarted(fact) => job::manual_retry_started(tx, fact, at).await,
         JobEvent::JobDeleted(fact) => job::deleted(tx, fact, at).await,
         JobEvent::JobAffordancesChanged(_) => Ok(()),
+        JobEvent::JobPriorityForced(fact) => job::priority_forced(tx, fact).await,
+        JobEvent::JobPriorityRecalculated(fact) => job::priority_recalculated(tx, fact).await,
     }
 }
 

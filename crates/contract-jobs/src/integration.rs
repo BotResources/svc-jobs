@@ -27,6 +27,15 @@ pub fn cmd_job_create_v1_coords() -> Result<CommandCoords, CoordError> {
     })
 }
 
+pub fn cmd_job_create_v2_coords() -> Result<CommandCoords, CoordError> {
+    Ok(CommandCoords {
+        receiver: Bc::new("jobs")?,
+        aggregate: Aggregate::new("job")?,
+        verb: Verb::new("create")?,
+        version: 2,
+    })
+}
+
 pub fn cmd_job_fail_v1_coords() -> Result<CommandCoords, CoordError> {
     Ok(CommandCoords {
         receiver: Bc::new("jobs")?,

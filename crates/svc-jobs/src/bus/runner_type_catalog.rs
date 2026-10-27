@@ -120,6 +120,7 @@ mod tests {
             key: RunnerTypeKey::new("analyst").unwrap(),
             registered_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             lifecycle,
+            settings: bc_jobs::domain::fleet::settings::RunnerTypeSettings::default(),
             instances: vec![],
         })
         .unwrap()

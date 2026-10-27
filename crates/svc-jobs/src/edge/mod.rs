@@ -1,3 +1,4 @@
+pub mod access;
 pub mod auth;
 pub mod error;
 pub mod log_page;
@@ -26,7 +27,7 @@ use serde_json::{Value, json};
 
 use mutation::MutationRoot;
 use query::QueryRoot;
-use state::{EdgeState, is_platform_administrator};
+use state::EdgeState;
 use subscription::SubscriptionRoot;
 
 pub type JobsSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -57,8 +58,12 @@ pub async fn graphql_route(
     let Some(Extension(passport)) = passport else {
         return refusal(StatusCode::UNAUTHORIZED, EdgeError::unauthenticated());
     };
-    if !is_platform_administrator(&passport) {
-        return refusal(StatusCode::FORBIDDEN, EdgeError::forbidden());
+    let request = match parse(&body) {
+        Ok(request) => request,
+        Err(response) => return *response,
+    };
+    if let Err((status, error)) = access::admit(&passport, &request.query) {
+        return refusal(status, error);
     }
     let Some(schema) = state.schema.get() else {
         return refusal(
@@ -66,10 +71,7 @@ pub async fn graphql_route(
             EdgeError::internal("not_ready"),
         );
     };
-    let request = match parse(&body) {
-        Ok(request) => request.data(passport),
-        Err(response) => return *response,
-    };
+    let request = request.data(passport);
     if wants_event_stream(&headers) {
         let stream = schema.execute_stream(request).map(|response| {
             let rendered = serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_owned());

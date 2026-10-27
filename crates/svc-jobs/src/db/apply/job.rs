@@ -1,7 +1,8 @@
 use bc_jobs::domain::ids::ResolutionId;
 use bc_jobs::domain::job::resolution::JobFailureCause;
 use bc_jobs::event::job_facts::{
-    JobCancelled, JobCompleted, JobDeleted, JobFailed, JobQueued, ManualRetryStarted,
+    JobCancelled, JobCompleted, JobDeleted, JobFailed, JobPriorityForced, JobPriorityRecalculated,
+    JobQueued, ManualRetryStarted,
 };
 use bc_jobs::ports::PortError;
 use chrono::{DateTime, Utc};
@@ -28,28 +29,73 @@ pub async fn queued(
         Some(user) => Some(refs::observe_known_user(tx, user, at).await?),
         None => None,
     };
-    sqlx::query(
+    let sql = format!(
         "INSERT INTO jobs (id, runner_type_id, config, parent_job_id, predecessor_job_id, \
-         triggered_by_id, producer_id, source_entity_id, max_attempts, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+         triggered_by_id, producer_id, source_entity_id, max_attempts, created_at, \
+         requested_priority, effective_priority, forced_priority, root_job_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
+            coalesce((SELECT {} FROM jobs p WHERE p.id = $4), $1))",
+        crate::db::lineage::root_of("p"),
+    );
+    sqlx::query(&sql)
+        .bind(fact.job_id.as_uuid())
+        .bind(runner_type)
+        .bind(fact.config.as_ref().map(|config| config.as_value().clone()))
+        .bind(fact.parent_job_id.map(|id| id.as_uuid()))
+        .bind(fact.predecessor_job_id.map(|id| id.as_uuid()))
+        .bind(triggered_by)
+        .bind(source.is_none().then_some(producer))
+        .bind(source)
+        .bind(
+            fact.max_attempts
+                .map(|budget| i32::try_from(budget.get()).unwrap_or(i32::MAX)),
+        )
+        .bind(at)
+        .bind(fact.requested_priority.get_i16())
+        .bind(fact.effective_priority.get_i16())
+        .bind(fact.forced_priority.map(|level| level.get_i16()))
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), None).await
+}
+
+pub async fn priority_forced(
+    tx: &mut PgConnection,
+    fact: &JobPriorityForced,
+) -> Result<(), PortError> {
+    sqlx::query(
+        "UPDATE jobs SET forced_priority = $2, effective_priority = $2, \
+         requested_priority = coalesce($3, requested_priority) WHERE id = $1",
     )
     .bind(fact.job_id.as_uuid())
-    .bind(runner_type)
-    .bind(fact.config.as_ref().map(|config| config.as_value().clone()))
-    .bind(fact.parent_job_id.map(|id| id.as_uuid()))
-    .bind(fact.predecessor_job_id.map(|id| id.as_uuid()))
-    .bind(triggered_by)
-    .bind(source.is_none().then_some(producer))
-    .bind(source)
-    .bind(
-        fact.max_attempts
-            .map(|budget| i32::try_from(budget.get()).unwrap_or(i32::MAX)),
-    )
-    .bind(at)
+    .bind(fact.priority.get_i16())
+    .bind(fact.requested_priority.map(|level| level.get_i16()))
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::reprioritize(tx, fact.job_id.as_uuid(), fact.priority.get_i16()).await
+}
+
+pub async fn priority_recalculated(
+    tx: &mut PgConnection,
+    fact: &JobPriorityRecalculated,
+) -> Result<(), PortError> {
+    let updated = sqlx::query(
+        "UPDATE jobs SET effective_priority = $2, \
+         requested_priority = coalesce($3, requested_priority) \
+         WHERE id = $1 AND forced_priority IS NULL",
+    )
+    .bind(fact.job_id.as_uuid())
+    .bind(fact.effective_priority.get_i16())
+    .bind(fact.requested_priority.map(|level| level.get_i16()))
+    .execute(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    if updated.rows_affected() != 1 {
+        return Err(PortError::ConcurrentModification);
+    }
+    super::waiting::reprioritize(tx, fact.job_id.as_uuid(), fact.effective_priority.get_i16()).await
 }
 
 pub async fn completed(
@@ -134,7 +180,7 @@ async fn resolution(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::end_waiting(tx, job_id).await
 }
 
 pub async fn manual_retry_started(

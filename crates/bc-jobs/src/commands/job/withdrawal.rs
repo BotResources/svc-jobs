@@ -34,7 +34,7 @@ impl Job {
             return vec![];
         };
         let mut events = Vec::with_capacity(2);
-        if run.has_started() {
+        if run.is_held_by_an_instance() {
             events.push(JobEvent::RunCancellationRequested(
                 RunCancellationRequested {
                     job_id: self.id(),
@@ -48,6 +48,7 @@ impl Job {
         events.push(JobEvent::RunCancelled(RunCancelled {
             job_id: self.id(),
             run_id: run.id(),
+            withdrawn_for: None,
         }));
         events
     }
@@ -58,7 +59,7 @@ impl Job {
     ) -> Result<JobCommandResult, JobsError> {
         let mut result =
             JobCommandResult::new(self.withdraw_active_run(&RunWithdrawal::for_resolution()?));
-        if self.active_run().is_some_and(Run::has_started) {
+        if self.active_run().is_some_and(Run::is_held_by_an_instance) {
             result = result.with_warning(CommandWarning::CancellationIsBestEffort);
         }
         result.events.push(resolution);

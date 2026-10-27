@@ -1,20 +1,27 @@
+//! Writing the facts of Jobs: every Job a change was decided on is locked
+//! again and compared before its facts are applied, together with the
+//! follow-ups the same transaction owes — the affordances of settled Jobs and
+//! the level of Jobs back to waiting.
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use bc_jobs::domain::actions::fleet::{RetirementWindow, guard_accept_job};
-use bc_jobs::domain::fleet::RunnerType;
+use bc_jobs::domain::actions::fleet::guard_accept_job;
 use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
-use bc_jobs::domain::ids::{EventId, JobId, RunnerTypeId};
+use bc_jobs::domain::ids::{EventId, JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
+use bc_jobs::domain::policy::ServiceLimits;
 use bc_jobs::domain::references::SourceReference;
-use bc_jobs::event::fleet::FleetEvent;
 use bc_jobs::event::job::JobEvent;
+use bc_jobs::event::user::UserEvent;
 use bc_jobs::ports::environment::IdFactory;
 use br_core_events::EventMetadata;
 use br_util_nats_fabric::stage;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use super::premise::{PriorityPremise, guard_priority_premise_still_holds};
+use super::rederive;
 use crate::app::{fingerprint, followups, integration};
 use crate::db::fleet::load;
 use crate::db::{PgStore, apply, hydrate};
@@ -26,6 +33,10 @@ pub struct JobChange {
     pub events: Vec<JobEvent>,
     pub note: Option<String>,
     pub claimed_source: Option<SourceReference>,
+    pub priority_premise: Option<PriorityPremise>,
+    /// The descendants a cascade over this Job was decided on. Re-read under
+    /// the write's locks: a descendant admitted since makes the write a race.
+    pub descendants_premise: Option<Vec<Uuid>>,
 }
 
 impl JobChange {
@@ -36,7 +47,21 @@ impl JobChange {
             events,
             note: None,
             claimed_source: None,
+            priority_premise: None,
+            descendants_premise: None,
         }
+    }
+
+    pub fn over_descendants(mut self, descendants: impl IntoIterator<Item = JobId>) -> Self {
+        let mut ids: Vec<Uuid> = descendants.into_iter().map(|id| id.as_uuid()).collect();
+        ids.sort_unstable();
+        self.descendants_premise = Some(ids);
+        self
+    }
+
+    pub fn on_priority_premise(mut self, premise: Option<PriorityPremise>) -> Self {
+        self.priority_premise = premise;
+        self
     }
 
     pub fn with_note(mut self, note: Option<String>) -> Self {
@@ -50,13 +75,43 @@ impl JobChange {
     }
 }
 
+/// What every Job write needs besides its changes.
+#[derive(Clone, Copy)]
+pub struct WriteContext<'a> {
+    pub ids: &'a dyn IdFactory,
+    pub metadata: &'a EventMetadata,
+    pub at: DateTime<Utc>,
+    pub limits: &'a ServiceLimits,
+}
+
 pub async fn commit_job_changes(
     store: &PgStore,
-    ids: &dyn IdFactory,
+    context: WriteContext<'_>,
     changes: Vec<JobChange>,
-    metadata: &EventMetadata,
-    at: DateTime<Utc>,
 ) -> Result<(), ServiceError> {
+    if changes.iter().all(|change| change.events.is_empty()) {
+        return Ok(());
+    }
+    let mut tx = store.begin().await?;
+    commit_job_changes_in(&mut tx, context, changes).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The same write inside a transaction the caller owns and commits — a claim
+/// that locked its Job with the selection, a change of a user's maximum that
+/// locked the user first.
+pub async fn commit_job_changes_in(
+    tx: &mut sqlx::PgConnection,
+    context: WriteContext<'_>,
+    changes: Vec<JobChange>,
+) -> Result<(), ServiceError> {
+    let WriteContext {
+        ids,
+        metadata,
+        at,
+        limits,
+    } = context;
     let changes: Vec<JobChange> = changes
         .into_iter()
         .filter(|change| !change.events.is_empty())
@@ -64,31 +119,69 @@ pub async fn commit_job_changes(
     if changes.is_empty() {
         return Ok(());
     }
-    let mut tx = store.begin().await?;
-    let held = followups::rows_to_lock(&mut tx, &changes).await?;
-    let locked = lock_in_ascending_order(&mut tx, held.ids()).await?;
+    let held = followups::rows_to_lock(&mut *tx, &changes).await?;
+    // Every writer takes Job rows in one global order: the root of what it
+    // touches first, then the others by id. An admission share-locks its root
+    // then its parent; a cascade locks the Job it starts from, then its
+    // descendants.
+    for change in &changes {
+        guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
+    }
+    let cascade_root = changes
+        .iter()
+        .find(|change| change.descendants_premise.is_some())
+        .map(|change| change.job_id.as_uuid());
+    let locked = lock_root_first(&mut *tx, cascade_root, held.ids()).await?;
     for change in changes.iter().filter(|change| change.before.is_some()) {
         guard_decision_still_holds(change.before.as_ref(), locked.get(&change.job_id.as_uuid()))?;
     }
-    let routed = resolve_runner_type_routes(&mut tx, ids, &changes).await?;
+    for change in &changes {
+        guard_descendants_unchanged(&mut *tx, change).await?;
+    }
+    let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
     for change in &changes {
-        apply_change(&mut tx, ids, change, metadata, at).await?;
+        apply_change(&mut *tx, ids, change, metadata, at).await?;
     }
-    for followup in followups::of_settled_jobs(&mut tx, &changes, &held).await? {
-        apply_change(&mut tx, ids, &followup, metadata, at).await?;
+    for followup in followups::of_settled_jobs(&mut *tx, &changes, &held).await? {
+        apply_change(&mut *tx, ids, &followup, metadata, at).await?;
     }
-    tx.commit().await?;
+    for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
+        apply_change(&mut *tx, ids, &followup, metadata, at).await?;
+    }
     Ok(())
 }
 
-async fn lock_in_ascending_order(
+/// Records the facts of a change of a user's maximum inside the caller's
+/// transaction — the one that locked the user and the Jobs it recalculates.
+pub async fn record_user_events_in(
     tx: &mut sqlx::PgConnection,
+    ids: &dyn IdFactory,
+    user_id: KnownUserId,
+    events: Vec<UserEvent>,
+    metadata: &EventMetadata,
+    at: DateTime<Utc>,
+) -> Result<(), ServiceError> {
+    let mut recorded = Vec::with_capacity(events.len());
+    for event in events {
+        recorded.push((EventId::new(ids.next())?, event));
+    }
+    apply::apply_user_events(tx, user_id, &recorded, metadata, at).await?;
+    Ok(())
+}
+
+async fn lock_root_first(
+    tx: &mut sqlx::PgConnection,
+    root: Option<Uuid>,
     rows: &BTreeSet<Uuid>,
 ) -> Result<HashMap<Uuid, Job>, ServiceError> {
     let mut held = Vec::with_capacity(rows.len());
-    for row in rows {
-        if let Some(locked) = PgStore::lock_job_row(&mut *tx, JobId::new(*row)?).await? {
+    let ordered = root
+        .filter(|root| rows.contains(root))
+        .into_iter()
+        .chain(rows.iter().copied().filter(|row| Some(*row) != root));
+    for row in ordered {
+        if let Some(locked) = PgStore::lock_job_row(&mut *tx, JobId::new(row)?).await? {
             held.push(locked);
         }
     }
@@ -165,6 +258,26 @@ fn guard_runner_types_still_accept_jobs(
     Ok(())
 }
 
+/// A child admission share-locks its parent until it commits, so once the
+/// cascade holds its Jobs for update, every descendant admitted under one of
+/// them is either committed and read here, or waits and then finds its parent
+/// settled.
+async fn guard_descendants_unchanged(
+    tx: &mut sqlx::PgConnection,
+    change: &JobChange,
+) -> Result<(), ServiceError> {
+    let Some(decided_on) = &change.descendants_premise else {
+        return Ok(());
+    };
+    let mut current = PgStore::descendant_ids_in(tx, &[change.job_id.as_uuid()]).await?;
+    current.sort_unstable();
+    if &current == decided_on {
+        Ok(())
+    } else {
+        Err(ServiceError::Contended)
+    }
+}
+
 fn guard_decision_still_holds(
     decided_on: Option<&Job>,
     locked: Option<&Job>,
@@ -193,72 +306,4 @@ async fn claim_source(
         )),
         _ => Ok(()),
     }
-}
-
-pub async fn publish_rejection(
-    store: &PgStore,
-    ids: &dyn IdFactory,
-    job_id: Uuid,
-    reason_code: &str,
-    params: serde_json::Value,
-    metadata: &EventMetadata,
-    at: DateTime<Utc>,
-) -> Result<(), ServiceError> {
-    let published = integration::rejection(job_id, reason_code, params)?;
-    let record = integration::record(published, ids.next(), ids.next(), metadata, at)?;
-    let mut tx = store.begin().await?;
-    stage(&mut *tx, &record)
-        .await
-        .map_err(|error| ServiceError::Infra(error.to_string()))?;
-    tx.commit().await?;
-    Ok(())
-}
-
-pub struct FleetChange<'a> {
-    pub runner_type_id: RunnerTypeId,
-    pub runner_type: &'a RunnerTypeKey,
-    pub decided_on: Option<&'a RunnerType>,
-    pub events: &'a [FleetEvent],
-}
-
-pub async fn commit_fleet_events(
-    store: &PgStore,
-    ids: &dyn IdFactory,
-    change: FleetChange<'_>,
-    metadata: &EventMetadata,
-    at: DateTime<Utc>,
-) -> Result<(), ServiceError> {
-    commit_fleet(store, ids, change, None, metadata, at).await
-}
-
-pub async fn commit_fleet(
-    store: &PgStore,
-    ids: &dyn IdFactory,
-    change: FleetChange<'_>,
-    revalidate_retirement_within: Option<RetirementWindow>,
-    metadata: &EventMetadata,
-    at: DateTime<Utc>,
-) -> Result<(), ServiceError> {
-    if change.events.is_empty() {
-        return Ok(());
-    }
-    let mut tx = store.begin().await?;
-    let locked =
-        PgStore::lock_runner_type(&mut tx, change.runner_type_id, change.runner_type).await?;
-    if fingerprint::of_fleet(change.decided_on) != fingerprint::of_fleet(locked.as_ref()) {
-        return Err(ServiceError::Contended);
-    }
-    if let Some(window) = revalidate_retirement_within {
-        let locked = locked.as_ref().ok_or(ServiceError::Contended)?;
-        let facts =
-            PgStore::runner_type_decision_facts_in(&mut tx, change.runner_type, window).await?;
-        locked.guard_retire(facts)?;
-    }
-    let mut recorded = Vec::with_capacity(change.events.len());
-    for event in change.events {
-        recorded.push((EventId::new(ids.next())?, event.clone()));
-    }
-    apply::apply_fleet_events(&mut tx, change.runner_type_id, &recorded, metadata, at).await?;
-    tx.commit().await?;
-    Ok(())
 }

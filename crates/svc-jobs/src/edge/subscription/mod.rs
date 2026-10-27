@@ -2,6 +2,7 @@ pub mod fleet;
 pub mod job;
 pub mod list;
 pub mod logs;
+pub mod priority;
 
 use async_graphql::{Context, Result, Subscription};
 use bc_jobs::domain::ids::{JobId, RunId};
@@ -11,8 +12,9 @@ use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use super::error::edge_error;
-use super::state::{EdgeState, administrator};
+use super::state::{EdgeState, administrator, own_user, principal};
 use super::types::input::{GqlConnectionWindowInput, GqlJobFilterInput, GqlLogTailWindowInput};
+use super::types::priority::GqlMyMaxPriorityStreamMessage;
 use super::types::stream::{
     GqlFleetStreamMessage, GqlJobLogStreamMessage, GqlJobStreamMessage, GqlJobsStreamMessage,
 };
@@ -50,6 +52,7 @@ impl SubscriptionRoot {
         Ok(job::job_stream(
             state,
             JobId::new(job_id).map_err(edge_error)?,
+            principal(ctx)?,
         ))
     }
 
@@ -80,10 +83,51 @@ impl SubscriptionRoot {
         let state = ctx.data::<EdgeState>()?.clone();
         Ok(fleet::fleet_stream(state, runner_type))
     }
+
+    /// The caller's own maximum priority: a snapshot, then every change. Open
+    /// to any active human; nothing else of Jobs is readable this way.
+    async fn jobs_my_max_priority_changed(
+        &self,
+        ctx: &Context<'_>,
+    ) -> Result<impl Stream<Item = GqlMyMaxPriorityStreamMessage>> {
+        let user_id = own_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?.clone();
+        Ok(priority::my_max_priority_stream(state, user_id))
+    }
 }
 
 pub fn cursor(event_id: Uuid) -> String {
     event_id.to_string()
+}
+
+/// The facts a subscription takes in one go: a burst — a cascade over a whole
+/// tree — is answered with one read of the store per batch, not one per fact.
+pub const FACT_BATCH: usize = 256;
+
+/// Above this many facts concerning a subscription in one batch, it is sent a
+/// fresh snapshot instead of one delta per fact.
+pub const RESET_ABOVE: usize = 64;
+
+/// The next fact, then every fact already waiting behind it, up to `limit`.
+/// `None` ends the subscription, as `next_unbroken_fact` does.
+pub async fn next_fact_batch(facts: &mut Receiver<Fact>, limit: usize) -> Option<Vec<Fact>> {
+    let mut batch = vec![next_unbroken_fact(facts).await?];
+    while batch.len() < limit {
+        match facts.try_recv() {
+            Ok(fact) => batch.push(fact),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                tracing::warn!(
+                    missed,
+                    "a subscriber fell behind the durable fact stream; its subscription ends so \
+                     the client reconnects onto a fresh snapshot"
+                );
+                return None;
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+        }
+    }
+    Some(batch)
 }
 
 pub async fn next_unbroken_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {

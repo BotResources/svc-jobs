@@ -8,6 +8,52 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.6.0 - 2026-10-26
+
+- Priorities: the `Priority` value (1–5), `JobPriority` (requested,
+  effective, forced) on the Job aggregate, `PriorityBasis` (capped by a user's
+  maximum or the service default, or inherited from the parent) and
+  `UserMaxPriority`. `ServiceLimits::with_default_max_priority` (default 3).
+  `PriorityBasis::ForcedByParent`: a child under a forced parent is born
+  forced at that level; `JobQueued::forced_priority` carries it.
+- Commands `Job::force_priority`, `Job::force_priority_as_descendant`,
+  `Job::recalculate_priority`, `set_max_priority` and `clear_max_priority`;
+  facts `JobPriorityForced`, `JobPriorityRecalculated` and the `KnownUser`
+  aggregate's `UserMaxPrioritySet` / `UserMaxPriorityCleared`; policies
+  `forcing_cascade` (every waiting descendant, forced earlier or not) and
+  `recalculate_for_user`. A pushed run failed unstarted as
+  `trigger_stranded` hydrates.
+- `PrincipalFacts`: the trusted facts of the caller and the three decisions
+  taken from them (platform administrator, super user, own maximum).
+  `Job::affordances` takes the principal and carries `force_priority`.
+- Claims: `Job::reserve_run` shares the dispatch decision; `RunReservation`
+  and `ClaimId`; `RunnerType::guard_claim` and `guard_push_dispatch`;
+  `Job::fail_run_for_lost_claim` (`claim_lost`) and
+  `Job::withdraw_stranded_trigger` (`trigger_stranded`: the run is cancelled
+  without counting as an attempt — `RunTerminal::withdrawn`,
+  `Run::counts_as_attempt`, `RunCancelled::withdrawn_for`; the delay counts
+  from `RunnerType::claimed_since`); `Job::recall_claim`
+  decides whether a repeated claim is answered or spent; a reserved run is
+  cancelled through a stop request and reclaimed with its lost instance.
+- Runner-type settings: `DispatchMode`, `MaxRunDuration`,
+  `RunnerTypeSettings` (a type registered before 0.4 has no maximum duration
+  of its own and answers to the service default), commands
+  `set_dispatch_mode` / `set_max_run_duration` and their facts, and
+  `successor_dispatch` (whether a manual-retry successor is pushed or waits to
+  be claimed); a run carries the maximum duration it was dispatched with.
+- `clear_max_run_duration` and `RunnerTypeMaxRunDurationCleared`, the
+  `clear_max_run_duration` affordance (`no_max_run_duration_set`);
+  `RunnerTypeSettings::dispatch_mode_since`; the `DispatchModeOfferWriter`
+  port; `Job::rederive_priority` for a Job back to waiting
+  (`JobPriorityRecalculated::user_id` is optional). The dead
+  `RunnerType::successor_dispatch` copy is gone; the free function stays.
+- Breaking for callers (svc-jobs only): `create_job` takes the user's stored
+  maximum, `CreateJob` / `DispatchRun` / `ManualRetryJob` / `RunnerTypeState`
+  / `RunState` / `JobState` gain fields,
+  `ManualRetryStarted::run_id` is optional, `DueWorkReader` gains
+  `jobs_with_lost_claims` and `jobs_with_stranded_triggers`, and
+  `jobs_with_outrun_runs` takes the service default.
+
 ## 0.5.1 - 2026-10-17
 
 - Rebuilt on the per-crate `br-rust-common` pins (`br-core-events/v0.1.0`) in

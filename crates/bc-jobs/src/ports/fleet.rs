@@ -75,3 +75,13 @@ pub trait RunnerTypeCatalogWriter: Send + Sync {
 
     async fn reconcile(&self, runner_types: &[RunnerType]) -> Result<(), PortError>;
 }
+
+/// The published dispatch mode of each RunnerType Jobs offers: written after
+/// each committed switch, and reconciled against every type at boot and
+/// periodically.
+#[async_trait]
+pub trait DispatchModeOfferWriter: Send + Sync {
+    async fn project_current(&self, runner_type: &RunnerType) -> Result<(), PortError>;
+
+    async fn reconcile(&self, runner_types: &[RunnerType]) -> Result<(), PortError>;
+}

@@ -38,6 +38,9 @@ impl From<PortError> for ServiceError {
 
 impl From<sqlx::Error> for ServiceError {
     fn from(error: sqlx::Error) -> Self {
+        if crate::db::hydrate::is_write_race(&error) {
+            return Self::Contended;
+        }
         Self::Infra(error.to_string())
     }
 }

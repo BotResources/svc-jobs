@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use bc_jobs::domain::attempts::MaxAttempts;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
+use bc_jobs::domain::priority::Priority;
 use chrono::TimeDelta;
 
 use crate::error::ServiceError;
@@ -29,6 +30,10 @@ const DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS: i64 = 180;
 const DEFAULT_RETIREMENT_QUIET_PERIOD_SECONDS: i64 = 86_400;
 const DEFAULT_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS: u64 = 30;
+const DEFAULT_MAX_PRIORITY: i64 = 3;
+const DEFAULT_CLAIM_RESERVATION_SECONDS: i64 = 60;
+const DEFAULT_CLAIM_MAX_WAIT_SECONDS: u64 = 30;
+const DEFAULT_CLAIM_MAX_HELD: usize = 1024;
 
 pub struct Settings {
     pub port: u16,
@@ -45,6 +50,17 @@ pub struct Settings {
     pub consumer_tuning: ConsumerTuning,
     pub restart_policy: RestartPolicy,
     pub log_partition_horizon_warning: TimeDelta,
+    pub claims: ClaimSettings,
+}
+
+/// How long a claim is held open, and how long a Run it reserved may wait for
+/// its Instance to start it before failing with `claim_lost`.
+#[derive(Clone, Copy, Debug)]
+pub struct ClaimSettings {
+    pub max_wait: Duration,
+    pub reservation_delay: TimeDelta,
+    /// The claims one pod holds open at once; a claim beyond is answered empty.
+    pub max_held: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -133,6 +149,23 @@ impl Settings {
             DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS,
         )?;
 
+        let default_max_priority: i64 = read("JOBS_DEFAULT_MAX_PRIORITY", DEFAULT_MAX_PRIORITY)?;
+        let claim_reservation_seconds: i64 = read(
+            "JOBS_CLAIM_RESERVATION_SECONDS",
+            DEFAULT_CLAIM_RESERVATION_SECONDS,
+        )?;
+        let claim_max_wait_seconds: u64 = read(
+            "JOBS_CLAIM_MAX_WAIT_SECONDS",
+            DEFAULT_CLAIM_MAX_WAIT_SECONDS,
+        )?;
+        let claim_max_held: usize = read("JOBS_CLAIM_MAX_HELD", DEFAULT_CLAIM_MAX_HELD)?;
+        if claim_max_held == 0 {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_MAX_HELD",
+                value: claim_max_held.to_string(),
+            });
+        }
+
         let ceiling = MaxAttempts::new(max_attempts_ceiling)?;
         let limits = ServiceLimits::new(
             ceiling,
@@ -140,7 +173,35 @@ impl Settings {
             TimeDelta::seconds(run_max_duration_seconds),
             TimeDelta::seconds(inactivity_timeout_seconds),
             TimeDelta::seconds(retirement_quiet_period_seconds),
+        )?
+        .with_default_max_priority(Priority::new(default_max_priority)?);
+        bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_seconds(
+            run_max_duration_seconds,
         )?;
+        if claim_reservation_seconds <= 0 {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_RESERVATION_SECONDS",
+                value: claim_reservation_seconds.to_string(),
+            });
+        }
+        if claim_max_wait_seconds == 0 {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_MAX_WAIT_SECONDS",
+                value: claim_max_wait_seconds.to_string(),
+            });
+        }
+        // A held claim must be answered well before a reservation made for it
+        // could be judged lost: the reservation delay outlasts the longest
+        // wait a claim may be held.
+        if u64::try_from(claim_reservation_seconds).unwrap_or(0) <= claim_max_wait_seconds {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_RESERVATION_SECONDS",
+                value: format!(
+                    "{claim_reservation_seconds} (must exceed JOBS_CLAIM_MAX_WAIT_SECONDS = \
+                     {claim_max_wait_seconds})"
+                ),
+            });
+        }
         let retry_policy = RetryPolicy::new(
             TimeDelta::seconds(retry_base_delay_seconds),
             retry_factor,
@@ -170,6 +231,11 @@ impl Settings {
                 "JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS",
                 DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS,
             )?),
+            claims: ClaimSettings {
+                max_wait: Duration::from_secs(claim_max_wait_seconds),
+                reservation_delay: TimeDelta::seconds(claim_reservation_seconds),
+                max_held: claim_max_held,
+            },
         })
     }
 }

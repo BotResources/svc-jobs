@@ -20,7 +20,7 @@ pub fn spawn_supervised(
     pool: sqlx::PgPool,
 ) {
     spawn_durable_fanout(supervisor, pool.clone(), fabric.clone(), hub.clone());
-    spawn_transport(supervisor, channels.clone(), Arc::clone(jobs));
+    spawn_transport(supervisor, channels.clone(), Arc::clone(jobs), hub.clone());
     spawn_bus(supervisor, fabric.clone(), Arc::clone(jobs));
     spawn_timers(
         supervisor,
@@ -58,7 +58,7 @@ fn spawn_durable_fanout(supervisor: &Supervisor, pool: sqlx::PgPool, fabric: Fab
     );
 }
 
-fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>) {
+fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>, hub: Hub) {
     // Once, here: the series the transport publishes are described where the
     // transport is composed, not inside a consumer. A supervised consumer
     // restarts, and a describe that rides a restart says the metric depends on
@@ -82,6 +82,21 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
         async move { runner_transport::consume::consume_status(channels, jobs, established).await }
     });
 
+    let claim_channels = channels.clone();
+    let claim_jobs = Arc::clone(&jobs);
+    supervisor.spawn("runner claim responder", move |established| {
+        let channels = claim_channels.clone();
+        let jobs = Arc::clone(&claim_jobs);
+        async move { runner_transport::claim::respond(channels, jobs, established).await }
+    });
+
+    let wake_jobs = Arc::clone(&jobs);
+    supervisor.spawn("held claim wake router", move |established| {
+        let jobs = Arc::clone(&wake_jobs);
+        let hub = hub.clone();
+        async move { crate::app::claim_wakes::route(jobs, hub, established).await }
+    });
+
     supervisor.spawn("runner log consumer", move |established| {
         let channels = channels.clone();
         let jobs = Arc::clone(&jobs);
@@ -95,7 +110,19 @@ fn spawn_bus(supervisor: &Supervisor, fabric: Fabric, jobs: Arc<Jobs>) {
     supervisor.spawn("job-creation consumer", move |established| {
         let fabric = creations.clone();
         let jobs = Arc::clone(&creation_jobs);
-        async move { bus::consume_creations(fabric, jobs, established).await }
+        async move {
+            bus::consume_creations(fabric, jobs, bus::ContractVersion::V1, established).await
+        }
+    });
+
+    let creations_v2 = fabric.clone();
+    let creation_v2_jobs = Arc::clone(&jobs);
+    supervisor.spawn("job-creation-v2 consumer", move |established| {
+        let fabric = creations_v2.clone();
+        let jobs = Arc::clone(&creation_v2_jobs);
+        async move {
+            bus::consume_creations(fabric, jobs, bus::ContractVersion::V2, established).await
+        }
     });
 
     let cancellations_v1 = fabric.clone();

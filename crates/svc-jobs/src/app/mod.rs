@@ -1,5 +1,8 @@
 pub mod admin;
 pub mod backstop;
+pub mod claim;
+pub mod claim_waiters;
+pub mod claim_wakes;
 pub mod create;
 pub mod dispatch;
 pub mod environment;
@@ -9,6 +12,7 @@ pub mod followups;
 pub mod integration;
 pub mod logs;
 pub mod presence;
+pub mod priority;
 pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
@@ -16,6 +20,7 @@ pub mod run_facts;
 pub mod runner_type_catalog;
 pub mod runner_type_impacts;
 pub mod runner_type_lifecycle;
+pub mod runner_type_settings;
 pub mod write;
 
 use std::sync::Arc;
@@ -26,12 +31,13 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::{Clock, IdFactory, JitterSource};
-use bc_jobs::ports::fleet::RunnerTypeCatalogWriter;
+use bc_jobs::ports::fleet::{DispatchModeOfferWriter, RunnerTypeCatalogWriter};
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 use uuid::Uuid;
 
+use crate::config::ClaimSettings;
 use crate::db::PgStore;
 use crate::error::ServiceError;
 use write::JobChange;
@@ -48,6 +54,9 @@ pub struct Jobs {
     pub limits: ServiceLimits,
     pub retry: RetryPolicy,
     pub catalog: Arc<dyn RunnerTypeCatalogWriter>,
+    pub dispatch_modes: Arc<dyn DispatchModeOfferWriter>,
+    pub claims: ClaimSettings,
+    pub waiters: Arc<claim_waiters::ClaimWaiters>,
 }
 
 pub fn service_metadata() -> EventMetadata {
@@ -76,7 +85,17 @@ impl Jobs {
             .iter()
             .map(|change| (change.job_id, change.events.clone()))
             .collect();
-        write::commit_job_changes(&self.store, self.ids.as_ref(), changes, metadata, at).await?;
+        write::commit_job_changes(
+            &self.store,
+            write::WriteContext {
+                ids: self.ids.as_ref(),
+                metadata,
+                at,
+                limits: &self.limits,
+            },
+            changes,
+        )
+        .await?;
         for (job_id, events) in effects {
             self.after_commit(job_id, &events).await?;
         }
@@ -101,6 +120,9 @@ impl Jobs {
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {
         for event in events {
             let outcome = match event {
+                // A claimed Run reaches its Instance in the claim reply, never on
+                // the trigger stream.
+                JobEvent::RunDispatched(fact) if fact.claimed_by.is_some() => Ok(()),
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
                     Ok(run) => {
                         self.transport
@@ -122,7 +144,10 @@ impl Jobs {
                         .await
                 }
                 JobEvent::RunCancelled(fact) => {
-                    match job.find_run(fact.run_id).map(|run| run.has_started()) {
+                    match job
+                        .find_run(fact.run_id)
+                        .map(|run| run.is_held_by_an_instance())
+                    {
                         Ok(false) => {
                             self.transport
                                 .withdraw_trigger(fact.run_id, job.runner_type())

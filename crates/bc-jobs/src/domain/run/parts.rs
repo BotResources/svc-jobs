@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{JobId, RetryScheduleId};
+use crate::domain::ids::{ClaimId, JobId, RetryScheduleId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::references::KnownUser;
 use crate::domain::run::failure::RunFailureReport;
@@ -54,11 +54,51 @@ impl RunStart {
     }
 }
 
+/// A Run handed to the Instance that claimed it. The Run is created reserved:
+/// no other Instance may start it, and it fails with `claim_lost` when its
+/// Instance never starts it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunReservation {
+    instance: RunnerInstanceReference,
+    claim_id: ClaimId,
+    reserved_at: DateTime<Utc>,
+}
+
+impl RunReservation {
+    pub fn new(
+        instance: RunnerInstanceReference,
+        claim_id: ClaimId,
+        reserved_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            instance,
+            claim_id,
+            reserved_at,
+        }
+    }
+
+    pub fn instance(&self) -> &RunnerInstanceReference {
+        &self.instance
+    }
+
+    pub fn claim_id(&self) -> ClaimId {
+        self.claim_id
+    }
+
+    pub fn reserved_at(&self) -> DateTime<Utc> {
+        self.reserved_at
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTerminal {
     kind: RunTerminalKind,
     occurred_at: DateTime<Utc>,
     failure: Option<RunFailureReport>,
+    /// Set on a Run cancelled without counting as an attempt — its trigger was
+    /// stranded by a switch to `CLAIM` and nobody ever took it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    withdrawal: Option<ReasonCode>,
 }
 
 impl RunTerminal {
@@ -67,6 +107,7 @@ impl RunTerminal {
             kind: RunTerminalKind::Completed,
             occurred_at,
             failure: None,
+            withdrawal: None,
         }
     }
 
@@ -75,6 +116,17 @@ impl RunTerminal {
             kind: RunTerminalKind::Cancelled,
             occurred_at,
             failure: None,
+            withdrawal: None,
+        }
+    }
+
+    /// Cancelled without counting as an attempt, for `reason`.
+    pub fn withdrawn(occurred_at: DateTime<Utc>, reason: ReasonCode) -> Self {
+        Self {
+            kind: RunTerminalKind::Cancelled,
+            occurred_at,
+            failure: None,
+            withdrawal: Some(reason),
         }
     }
 
@@ -83,6 +135,7 @@ impl RunTerminal {
             kind: RunTerminalKind::Failed,
             occurred_at,
             failure: Some(failure),
+            withdrawal: None,
         }
     }
 
@@ -90,7 +143,16 @@ impl RunTerminal {
         kind: RunTerminalKind,
         occurred_at: DateTime<Utc>,
         failure: Option<RunFailureReport>,
+        withdrawal: Option<ReasonCode>,
     ) -> Result<Self, JobsError> {
+        if let Some(reason) = withdrawal {
+            return match (kind, failure) {
+                (RunTerminalKind::Cancelled, None) => Ok(Self::withdrawn(occurred_at, reason)),
+                _ => Err(JobsError::CorruptState {
+                    reason_code: "withdrawn_run_not_cancelled",
+                }),
+            };
+        }
         match (kind, failure) {
             (RunTerminalKind::Failed, Some(report)) => Ok(Self::failed(occurred_at, report)),
             (RunTerminalKind::Failed, None) => Err(JobsError::CorruptState {
@@ -114,6 +176,10 @@ impl RunTerminal {
 
     pub fn failure(&self) -> Option<&RunFailureReport> {
         self.failure.as_ref()
+    }
+
+    pub fn withdrawal(&self) -> Option<&ReasonCode> {
+        self.withdrawal.as_ref()
     }
 }
 
@@ -188,7 +254,7 @@ mod tests {
     #[test]
     fn a_failed_terminal_without_its_report_cannot_be_loaded() {
         // Given: a stored FAILED run whose report row is missing
-        let result = RunTerminal::hydrate(RunTerminalKind::Failed, at(), None);
+        let result = RunTerminal::hydrate(RunTerminalKind::Failed, at(), None, None);
         // Then: the run refuses to load rather than serving a reportless failure
         assert_eq!(
             result,
@@ -206,7 +272,7 @@ mod tests {
             "instance_lost",
         )
         .unwrap();
-        let result = RunTerminal::hydrate(RunTerminalKind::Completed, at(), Some(report));
+        let result = RunTerminal::hydrate(RunTerminalKind::Completed, at(), Some(report), None);
         // Then: the contradiction is refused at load time
         assert_eq!(
             result,

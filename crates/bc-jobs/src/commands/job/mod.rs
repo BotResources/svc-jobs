@@ -4,6 +4,7 @@ pub mod create;
 pub mod deletion;
 pub mod dispatch;
 pub mod manual_retry;
+pub mod priority;
 pub mod resolution;
 pub mod run_outcome;
 pub mod run_progress;

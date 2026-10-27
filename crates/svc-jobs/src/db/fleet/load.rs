@@ -1,6 +1,9 @@
 use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::dispatch_mode::DispatchMode;
 use bc_jobs::domain::fleet::instance::{RunnerInstance, RunnerInstanceState};
 use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
+use bc_jobs::domain::fleet::settings::RunnerTypeSettings;
 use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::fleet::{RunnerType, RunnerTypeState};
 use bc_jobs::domain::ids::{PresenceSessionId, RunnerTypeId};
@@ -17,7 +20,9 @@ use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
 
 const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
-     registered.lifecycle::text AS lifecycle, registered.registered_at \
+     registered.lifecycle::text AS lifecycle, registered.registered_at, \
+     registered.dispatch_mode::text AS dispatch_mode, registered.max_run_duration_seconds, \
+     registered.dispatch_mode_since \
      FROM runner_types rt \
      JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
      WHERE $1::text IS NULL OR rt.type_key = $1 \
@@ -133,12 +138,17 @@ pub async fn load_types(
         let key = RunnerTypeKey::new(row.get::<String, _>("type_key"))?;
         let hydrated = match loaded.corrupt.remove(&id) {
             Some(corruption) => Err(corruption),
-            None => RunnerType::hydrate(RunnerTypeState {
-                id: RunnerTypeId::new(id)?,
-                key: key.clone(),
-                registered_at: row.get::<DateTime<Utc>, _>("registered_at"),
-                lifecycle: RunnerTypeLifecycle::from_db_str(&row.get::<String, _>("lifecycle"))?,
-                instances: loaded.healthy.remove(&id).unwrap_or_default(),
+            None => settings_of(&row).and_then(|settings| {
+                RunnerType::hydrate(RunnerTypeState {
+                    id: RunnerTypeId::new(id)?,
+                    key: key.clone(),
+                    registered_at: row.get::<DateTime<Utc>, _>("registered_at"),
+                    lifecycle: RunnerTypeLifecycle::from_db_str(
+                        &row.get::<String, _>("lifecycle"),
+                    )?,
+                    settings,
+                    instances: loaded.healthy.remove(&id).unwrap_or_default(),
+                })
             }),
         };
         match hydrated {
@@ -198,6 +208,17 @@ async fn load_instances(
         }
     }
     Ok(loaded)
+}
+
+fn settings_of(row: &PgRow) -> Result<RunnerTypeSettings, JobsError> {
+    Ok(RunnerTypeSettings {
+        dispatch_mode: DispatchMode::from_db_str(&row.get::<String, _>("dispatch_mode"))?,
+        max_run_duration: row
+            .get::<Option<i64>, _>("max_run_duration_seconds")
+            .map(MaxRunDuration::from_seconds)
+            .transpose()?,
+        dispatch_mode_since: row.get("dispatch_mode_since"),
+    })
 }
 
 fn instance_of(row: &PgRow) -> Result<RunnerInstance, JobsError> {

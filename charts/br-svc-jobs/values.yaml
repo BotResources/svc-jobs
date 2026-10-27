@@ -66,6 +66,21 @@ runnerTypes:
   impactSweepIntervalSeconds: 60
   catalogReconcileIntervalSeconds: 30
 
+# Priorities. A user without a maximum of their own — and a job that runs for
+# nobody — is capped at this level (1 lowest, 5 highest).
+priorities:
+  defaultMaxPriority: 3
+
+# Claim-based dispatch (runner types set to CLAIM). A claim is held open at most
+# maxWaitSeconds; a run reserved by a claim and not started within
+# reservationSeconds fails as transient with `claim_lost`. A pod holds at most
+# maxHeld claims open at once and answers further claims `busy`. reservationSeconds
+# must exceed maxWaitSeconds, or the service refuses to boot.
+claims:
+  maxWaitSeconds: 30
+  reservationSeconds: 60
+  maxHeld: 1024
+
 # Generic escape hatch: extra environment entries rendered verbatim into the
 # container (list of {name, value} or any valid Kubernetes EnvVar). Use it for
 # the optional JOBS_* tuning knobs (retry, backstop, consumer and supervision

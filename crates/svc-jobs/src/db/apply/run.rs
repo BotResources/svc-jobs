@@ -16,14 +16,71 @@ pub async fn dispatched(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     sqlx::query(
-        "INSERT INTO runs (id, job_id, attempt_number, dispatched_at, automatic_retry_schedule_id) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO runs (id, job_id, attempt_number, dispatched_at, automatic_retry_schedule_id, \
+         max_run_duration_seconds) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(fact.run_id.as_uuid())
     .bind(fact.job_id.as_uuid())
     .bind(i32::try_from(fact.attempt_number.get()).unwrap_or(i32::MAX))
     .bind(at)
     .bind(fact.automatic_retry_schedule_id.map(|id| id.as_uuid()))
+    .bind(fact.max_run_duration.map(|duration| duration.seconds()))
+    .execute(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    super::waiting::end_waiting(tx, fact.job_id.as_uuid()).await?;
+    super::waiting::served(tx, fact.job_id.as_uuid(), at).await?;
+    if fact.claimed_by.is_none() {
+        super::waiting::trigger_published(tx, fact.run_id.as_uuid(), fact.job_id.as_uuid(), at)
+            .await?;
+    }
+    if let Some(claim) = &fact.claimed_by {
+        let instance = existing_instance(tx, &fact.runner_type, &claim.instance_key).await?;
+        sqlx::query(
+            "INSERT INTO run_reservations (run_id, instance_id, claim_id, reserved_at) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(fact.run_id.as_uuid())
+        .bind(instance)
+        .bind(claim.claim_id.as_uuid())
+        .bind(at)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    }
+    Ok(())
+}
+
+/// The Instance a claim reserves a Run to has a live presence, so its row
+/// exists: it is read, never created by the reservation.
+async fn existing_instance(
+    tx: &mut PgConnection,
+    runner_type: &bc_jobs::domain::keys::RunnerTypeKey,
+    instance_key: &bc_jobs::domain::keys::InstanceKey,
+) -> Result<Uuid, PortError> {
+    sqlx::query_scalar(
+        "SELECT ri.id::uuid FROM runner_instances ri \
+         JOIN runner_types rt ON rt.id = ri.runner_type_id \
+         WHERE rt.type_key = $1 AND ri.instance_key = $2",
+    )
+    .bind(runner_type.as_str())
+    .bind(instance_key.as_str())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?
+    .ok_or(PortError::ConcurrentModification)
+}
+
+async fn settle_reservation(
+    tx: &mut PgConnection,
+    run_id: Uuid,
+    at: DateTime<Utc>,
+) -> Result<(), PortError> {
+    sqlx::query(
+        "UPDATE run_reservations SET settled_at = $2 WHERE run_id = $1 AND settled_at IS NULL",
+    )
+    .bind(run_id)
+    .bind(at)
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
@@ -47,7 +104,8 @@ pub async fn started(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::waiting::trigger_settled(tx, fact.run_id.as_uuid()).await?;
+    settle_reservation(tx, fact.run_id.as_uuid(), at).await
 }
 
 pub async fn plan_declared(
@@ -108,7 +166,28 @@ pub async fn cancelled(
     fact: &RunCancelled,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await
+    terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await?;
+    let Some(reason) = &fact.withdrawn_for else {
+        return Ok(());
+    };
+    // A withdrawn Run does not count: its Job waits again exactly as before
+    // it — for its first attempt, or for the retry the Run was meant to be,
+    // whose due time has passed.
+    sqlx::query("UPDATE runs SET withdrawn_reason = $2 WHERE id = $1")
+        .bind(fact.run_id.as_uuid())
+        .bind(reason.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    let due_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT s.due_at FROM runs r JOIN run_retry_schedules s \
+            ON s.id = r.automatic_retry_schedule_id WHERE r.id = $1",
+    )
+    .bind(fact.run_id.as_uuid())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), due_at).await
 }
 
 pub async fn failed(
@@ -150,6 +229,8 @@ async fn terminal(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    super::waiting::trigger_settled(tx, run_id).await?;
+    settle_reservation(tx, run_id, at).await?;
     crate::db::impacts::record_terminal(tx, run_id, at).await
 }
 
@@ -189,5 +270,5 @@ pub async fn retry_scheduled(
         .execute(&mut *tx)
         .await
         .map_err(unavailable)?;
-    Ok(())
+    super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), Some(fact.due_at)).await
 }

@@ -4,6 +4,7 @@ use crate::domain::fleet::RunnerTypeState;
 use crate::domain::fleet::capacity::Capacity;
 use crate::domain::fleet::instance::RunnerInstanceState;
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::fixtures::ts;
 use uuid::Uuid;
 
@@ -37,6 +38,7 @@ fn fleet_in(lifecycle: RunnerTypeLifecycle, instances: Vec<RunnerInstance>) -> R
         key: RunnerTypeKey::new("analyst").unwrap(),
         registered_at: ts(0),
         lifecycle,
+        settings: RunnerTypeSettings::default(),
         instances,
     })
     .unwrap()
@@ -343,4 +345,104 @@ fn retired_presence_is_recorded_but_never_reactivates_the_type() {
         retired.guard_dispatch().unwrap_err().code(),
         "runner_type_retired"
     );
+}
+
+fn configured(settings: RunnerTypeSettings) -> RunnerType {
+    RunnerType::hydrate(RunnerTypeState {
+        id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+        key: RunnerTypeKey::new("analyst").unwrap(),
+        registered_at: ts(0),
+        lifecycle: RunnerTypeLifecycle::Active,
+        settings,
+        instances: vec![],
+    })
+    .unwrap()
+}
+
+#[test]
+fn switching_a_type_to_claim_records_the_new_mode() {
+    // Given: a type pushed to
+    let runner_type = configured(RunnerTypeSettings::default());
+    // When: an administrator switches it to CLAIM
+    let result = set_dispatch_mode(&runner_type, DispatchMode::Claim).unwrap();
+    // Then: one granular fact names the type and its new mode
+    assert_eq!(
+        result.events,
+        vec![FleetEvent::RunnerTypeDispatchModeChanged(
+            RunnerTypeDispatchModeChanged {
+                runner_type_id: runner_type.id(),
+                runner_type: runner_type.key().clone(),
+                dispatch_mode: DispatchMode::Claim,
+            }
+        )]
+    );
+}
+
+#[test]
+fn setting_the_mode_a_type_already_has_records_nothing() {
+    // Given: a type pushed to
+    let runner_type = configured(RunnerTypeSettings::default());
+    // When: it is set to PUSH again
+    let result = set_dispatch_mode(&runner_type, DispatchMode::Push).unwrap();
+    // Then: no fact, and the command says it was already applied
+    assert!(result.is_empty());
+    assert_eq!(
+        result.warnings,
+        vec![CommandWarning::CommandAlreadyApplied {
+            command: "set_dispatch_mode"
+        }]
+    );
+}
+
+#[test]
+fn a_retired_type_may_still_be_configured() {
+    // Given: a retired type
+    let mut retired = configured(RunnerTypeSettings::default());
+    retired = RunnerType::hydrate(RunnerTypeState {
+        id: retired.id(),
+        key: retired.key().clone(),
+        registered_at: retired.registered_at(),
+        lifecycle: RunnerTypeLifecycle::Retired,
+        settings: retired.settings(),
+        instances: vec![],
+    })
+    .unwrap();
+    // When: its maximum run duration is changed
+    let duration = MaxRunDuration::from_seconds(96 * 3600).unwrap();
+    let result = set_max_run_duration(&retired, duration).unwrap();
+    // Then: the settings are set at any time, whatever the lifecycle
+    assert_eq!(
+        result.events,
+        vec![FleetEvent::RunnerTypeMaxRunDurationChanged(
+            RunnerTypeMaxRunDurationChanged {
+                runner_type_id: retired.id(),
+                runner_type: retired.key().clone(),
+                max_run_duration: duration,
+            }
+        )]
+    );
+}
+
+#[test]
+fn setting_the_duration_a_type_already_has_records_nothing() {
+    // Given: a type set to 96 hours
+    let duration = MaxRunDuration::from_seconds(96 * 3600).unwrap();
+    let runner_type = configured(RunnerTypeSettings {
+        max_run_duration: Some(duration),
+        ..RunnerTypeSettings::default()
+    });
+    // When: the same maximum is set again
+    let result = set_max_run_duration(&runner_type, duration).unwrap();
+    // Then: nothing is recorded
+    assert!(result.is_empty());
+}
+
+#[test]
+fn setting_the_service_default_on_a_type_that_follows_it_pins_it() {
+    // Given: a type following the service default
+    let runner_type = configured(RunnerTypeSettings::default());
+    // When: the default's value is set explicitly
+    let result = set_max_run_duration(&runner_type, MaxRunDuration::SERVICE_DEFAULT).unwrap();
+    // Then: the type now carries its own maximum, independent of a later default change
+    assert_eq!(result.events.len(), 1);
 }

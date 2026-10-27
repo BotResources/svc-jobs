@@ -23,6 +23,12 @@ pub struct Knobs {
     pub backstop_interval_seconds: u64,
     pub retirement_quiet_period_seconds: u64,
     pub runner_type_impact_interval_seconds: u64,
+    /// `None` leaves JOBS_DEFAULT_MAX_PRIORITY unset, so the service default applies.
+    pub default_max_priority: Option<i64>,
+    pub claim_reservation_seconds: u64,
+    pub claim_max_wait_seconds: u64,
+    /// `None` leaves JOBS_CLAIM_MAX_HELD unset, so the service default applies.
+    pub claim_max_held: Option<u64>,
 }
 
 impl Default for Knobs {
@@ -35,6 +41,10 @@ impl Default for Knobs {
             backstop_interval_seconds: 1,
             retirement_quiet_period_seconds: 86_400,
             runner_type_impact_interval_seconds: 60,
+            default_max_priority: None,
+            claim_reservation_seconds: 600,
+            claim_max_wait_seconds: 30,
+            claim_max_held: None,
         }
     }
 }
@@ -249,8 +259,12 @@ async fn spawn_instance(
     let interval = knobs.backstop_interval_seconds.to_string();
     let quiet_period = knobs.retirement_quiet_period_seconds.to_string();
     let impact_interval = knobs.runner_type_impact_interval_seconds.to_string();
+    let default_max_priority = knobs.default_max_priority.map(|level| level.to_string());
+    let claim_reservation = knobs.claim_reservation_seconds.to_string();
+    let claim_max_wait = knobs.claim_max_wait_seconds.to_string();
+    let claim_max_held = knobs.claim_max_held.map(|held| held.to_string());
 
-    let env: Vec<(&str, &str)> = vec![
+    let mut env: Vec<(&str, &str)> = vec![
         ("DATABASE_URL", app_url.as_str()),
         ("DATABASE_URL_OWNER", owner_url.as_str()),
         ("HOST", "127.0.0.1"),
@@ -271,7 +285,16 @@ async fn spawn_instance(
             "JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS",
             impact_interval.as_str(),
         ),
+        ("JOBS_CLAIM_RESERVATION_SECONDS", claim_reservation.as_str()),
+        ("JOBS_CLAIM_MAX_WAIT_SECONDS", claim_max_wait.as_str()),
     ];
+
+    if let Some(level) = default_max_priority.as_deref() {
+        env.push(("JOBS_DEFAULT_MAX_PRIORITY", level));
+    }
+    if let Some(held) = claim_max_held.as_deref() {
+        env.push(("JOBS_CLAIM_MAX_HELD", held));
+    }
 
     let mut service = SpawnedProcess::spawn(BIN, &[], &env);
     let outcome = service

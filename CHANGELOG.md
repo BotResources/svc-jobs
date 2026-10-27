@@ -9,6 +9,148 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-26
+
+Priorities and claim-based dispatch. Every 0.3 behaviour of a `PUSH` runner
+type is kept; what changes for it is the order its waiting jobs are published
+in.
+
+### Added
+
+- **Priorities.** A job requests a level from 1 (lowest) to 5 (highest), 3 by
+  default, and waits at an effective level capped by the maximum of the user
+  it runs for — or by `JOBS_DEFAULT_MAX_PRIORITY` (default 3) when that user
+  has none or the job runs for nobody. A child job requests and waits at its
+  parent's effective level. A manual-retry successor copies its predecessor's
+  request, capped again (a forced level is not copied).
+- Super-user mutations `jobsSetUserMaxPriority`, `jobsClearUserMaxPriority`
+  and `jobsForceJobPriority`. Setting a maximum accepts any user id, observed
+  by Jobs or not. A change of a user's maximum recalculates their waiting,
+  non-forced root jobs and the waiting, non-forced descendants inheriting from
+  them; forcing a job also forces every waiting descendant, forced earlier or
+  not (the latest force on an ancestor wins). A
+  descendant reached by either cascade records the inherited level as both its
+  request and its effective level. A forced level holds until forced again.
+- The user surface: `jobsMyMaxPriority` and `jobsMyMaxPriorityChanged`
+  (snapshot, then every change), open to any active human and to nothing else.
+- Job views carry `requestedPriority`, `effectivePriority` and
+  `forcedPriority`; job affordances carry `force_priority`; job streams carry
+  `JobsJobPriorityForcedEvent` and `JobsJobPriorityRecalculatedEvent`.
+- **Dispatch order.** Highest effective priority first; within a level, strict
+  round-robin between root jobs (least recently served root first, then the
+  root whose oldest waiting job is oldest); then creation time. Both modes.
+- **`CLAIM` dispatch mode** per runner type: instances claim their next run on
+  `jobs.claim.{runner_type}` (core NATS request/reply, queue group
+  `svc_jobs_claims`, served by every pod). A claim is held open up to
+  `JOBS_CLAIM_MAX_WAIT_SECONDS` (default 30); the job is locked with
+  `FOR UPDATE SKIP LOCKED` and its run created reserved to the claiming
+  instance before the reply leaves. A claim repeated under the same `claim_id`
+  is answered with the run already reserved. A reserved run not started within
+  `JOBS_CLAIM_RESERVATION_SECONDS` (default 60) fails as transient with
+  `claim_lost` and gets a cancel entry. A waiting job of a `CLAIM` type is
+  cancelled in the ledger only; a reserved run is told to stop through the
+  cancel bucket.
+- **Per-runner-type settings**: `jobsSetRunnerTypeDispatchMode` and
+  `jobsSetRunnerTypeMaxRunDuration` (platform administrators), the
+  `dispatchMode` and `maxRunDurationSeconds` fields, the `set_dispatch_mode`
+  and `set_max_run_duration` affordances, and the
+  `RUNNER_TYPE_DISPATCH_MODE_CHANGED` / `RUNNER_TYPE_MAX_RUN_DURATION_CHANGED`
+  fleet event kinds. A change applies to runs dispatched afterwards: a run
+  carries the maximum duration it was dispatched with.
+- `integration.cmd.jobs.job.create.v2` on its own durable
+  (`svc_jobs_job_create_v2`): v1 plus an optional `priority`; out of range is
+  rejected with `invalid_priority`. v1 is unchanged and requests 3.
+- A child admitted under a forced parent is born forced at the parent's forced
+  level (requested, effective and forced alike).
+- Each pod holds at most `JOBS_CLAIM_MAX_HELD` (default 1024) claims open and
+  answers a claim beyond that `busy` with `retry_after_ms`. A queued job wakes
+  one held claim of its type; the pod keeps one retry timer per type, which
+  wakes one held claim when the earliest retry falls due.
+- A closed set of seven claim refusals: `instance_unknown`, `not_claim_mode`,
+  `instance_draining`, `runner_type_retired`, `claim_spent`,
+  `malformed_claim` (a nil `claim_id` is malformed) and `busy` (the pod could
+  not hold the claim, or its store failed: repeat the same claim after
+  `retry_after_ms`). An infrastructure error on the claim path is answered
+  `busy`, never with an empty reply and never `instance_unknown`.
+- Backstop `trigger_stranded`: a run published as a trigger, neither started
+  nor reserved `JOBS_CLAIM_RESERVATION_SECONDS` after its type switched to
+  `CLAIM`, is cancelled without counting as an attempt — its job waits to be
+  claimed, the claimed run takes the same attempt number, no retry is
+  scheduled. `JobsRun.cancellationReason` names the reason.
+- `jobsClearRunnerTypeMaxRunDuration` returns a type to the service default,
+  with the `clear_max_run_duration` affordance (blocked with
+  `no_max_run_duration_set` while the type has none of its own) and the
+  `RUNNER_TYPE_MAX_RUN_DURATION_CLEARED` fleet event kind.
+- The KV offer `jobs.dispatch_mode.{runner_type}`
+  (`{version, runner_type, dispatch_mode}`) for every active or deprecated
+  type, written after each switch and reconciled at boot and periodically. The
+  `jobs.runner_type.` entry is unchanged.
+- A job that goes back to waiting (a retry, a withdrawn trigger) re-derives its
+  effective priority from the current cap or its parent; a forced job keeps
+  its force. A change of `JOBS_DEFAULT_MAX_PRIORITY` applies to new admissions
+  and to these re-derivations only.
+- Migration `0003_priority_and_claim.sql`. Existing jobs read as requesting
+  and waiting at 3 (column defaults, no table rewrite: checks and the root
+  foreign key are added `NOT VALID`, then validated). Existing runner types
+  read as `PUSH` and store no maximum duration of their own: they show and
+  apply `JOBS_RUN_MAX_DURATION_SECONDS`. Existing runs answer to the service
+  default. New tables `user_max_priorities`, `run_reservations`,
+  `waiting_jobs`, `root_dispatch_turns` and `unstarted_pushed_runs`. The
+  uniqueness of a job's attempt numbers and of a retry schedule's consumer now
+  holds among the runs that count (partial unique indexes), and `job_states`
+  counts those runs only.
+- The access paths `waiting_jobs` and `unstarted_pushed_runs` are filled and
+  repaired from the ledger at boot and on every backstop sweep, which covers
+  the facts a 0.3 pod records during a rolling update. The drift is read
+  without locks; only drifted jobs are locked and fixed, so the sweep never
+  makes a claim skip a correct waiting job. Pre-0.4 lineages find
+  their root by walking their parents; `jobs.root_job_id` is not rewritten.
+
+### Changed
+
+- `JOBS_RUN_MAX_DURATION_SECONDS` is the maximum of every runner type that has
+  none of its own, not a single fixed maximum. Keep the `JOBS_CANCEL`
+  bucket TTL above the largest maximum any type is set to.
+- The run-duration backstop holds each run to the maximum it was dispatched
+  with.
+- `JobsManualRetryStartedEvent.runId` is nullable: the successor of a `CLAIM`
+  type has no run until it is claimed. `JobsRun.instance` names the reserving
+  instance of a claimed run before it starts; `JobsRun.reservedAt` and
+  `JobsRun.maxRunDurationSeconds` are new.
+- The GraphQL door admits an active human who is not a platform administrator
+  for the user surface alone; every other request of theirs is still refused
+  `FORBIDDEN` before a resolver runs.
+- `job.queued.v1` is unchanged.
+- No preemption: a started run is never interrupted for a higher priority.
+- A cancellation re-reads, under its locks, the descendants it decided on and
+  starts over when the tree grew meanwhile.
+- Admission re-checks the priority facts it decided on under a shared lock on
+  the user or on the root of the parent's tree and then the parent; a parent
+  settled in the meantime refuses the child with `parent_job_terminal`.
+  Forcing and a change of maximum lock what they reach before deciding each
+  row. Every writer locks the root of what it touches first, then the rest by
+  id.
+- Claims consider only the head of each (root, level) and lock the waiting
+  row, then the job row, with `SKIP LOCKED`; claim timing uses the database
+  clock. The push pass reads the same index in order.
+- The list and job subscriptions take facts in batches (one store read per
+  batch) and send a fresh snapshot when a batch carries more than 64 facts
+  for them; the job tree is read once per batch, whole — never patched from
+  the facts in hand, since one transaction's facts may span two batches. A
+  fact-triggered push pass waits `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS`
+  after the previous one.
+- Startup refuses `JOBS_CLAIM_RESERVATION_SECONDS` not above
+  `JOBS_CLAIM_MAX_WAIT_SECONDS`.
+
+### Known limitations
+
+- Switching a runner type from `PUSH` to `CLAIM` does not withdraw triggers
+  already published; one consumed by a remaining push instance runs, one left
+  unstarted is cancelled as `trigger_stranded` and its job is claimed.
+- `jobs.trigger.{runner_type}` carries the deprecation intent of the contract;
+  no deletion version is set yet.
+- `contract-jobs` 0.6.0, `bc-jobs` 0.6.0.
+
 ## 0.3.4 - 2026-10-17
 
 Dependency re-pin maintenance release. No wire, schema, migration or

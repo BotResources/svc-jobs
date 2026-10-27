@@ -9,6 +9,8 @@ pub const TRIGGER_STREAM: &str = "JOBS_TRIGGER";
 pub const STATUS_STREAM: &str = "JOBS_STATUS";
 pub const LOG_STREAM: &str = "JOBS_LOG";
 pub const TRIGGER_FILTER: &str = "jobs.trigger.>";
+/// Every claim subject: one segment per runner type.
+pub const CLAIM_FILTER: &str = "jobs.claim.*";
 pub const STATUS_FILTER: &str = "jobs.status.>";
 pub const LOG_FILTER: &str = "jobs.log.>";
 pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
@@ -200,4 +202,148 @@ pub struct Presence {
     pub runner_version: String,
     pub status: RunnerStatus,
     pub capacity: Capacity,
+}
+
+pub const CLAIM_REASON_INSTANCE_UNKNOWN: &str = "instance_unknown";
+pub const CLAIM_REASON_NOT_CLAIM_MODE: &str = "not_claim_mode";
+pub const CLAIM_REASON_INSTANCE_DRAINING: &str = "instance_draining";
+pub const CLAIM_REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
+pub const CLAIM_REASON_CLAIM_SPENT: &str = "claim_spent";
+pub const CLAIM_REASON_MALFORMED_CLAIM: &str = "malformed_claim";
+pub const CLAIM_REASON_BUSY: &str = "busy";
+/// The reason a reserved Run its Instance never started fails with.
+pub const RUN_FAILURE_CLAIM_LOST: &str = "claim_lost";
+/// The reason a Run left on the trigger stream of a type switched to `CLAIM`
+/// is cancelled with, once nobody started it within the reservation delay
+/// after the switch. It does not count as an attempt: its Job waits to be
+/// claimed.
+pub const RUN_CANCELLATION_TRIGGER_STRANDED: &str = "trigger_stranded";
+
+/// Why a claim was refused rather than served or answered empty. A closed
+/// vocabulary: a reason outside it does not parse, so a runner compiled
+/// against this contract handles every refusal Jobs can give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimRefusal {
+    /// Jobs has no live presence for this Instance of this type: announce
+    /// presence (or wait for it to be observed), then claim again later.
+    InstanceUnknown,
+    /// The type is dispatched by `PUSH`: stop claiming and consume the trigger
+    /// stream. Claim again only once the type is switched back to `CLAIM`.
+    NotClaimMode,
+    /// The Instance reports `DRAINING`: stop claiming until it reports `READY`.
+    InstanceDraining,
+    /// The type is retired and takes no new Job: stop claiming.
+    RunnerTypeRetired,
+    /// The `claim_id` already served a Run that was started or settled: mint a
+    /// new `claim_id` for a new slot. Never reuse one.
+    ClaimSpent,
+    /// The claim could not be read — an unparseable payload, a nil `claim_id`,
+    /// an invalid subject: fix the claim; repeating it unchanged gets the same
+    /// answer.
+    MalformedClaim,
+    /// The pod that received the claim could not hold it — it holds as many
+    /// claims as it may, or its store is momentarily unavailable. Nothing was
+    /// reserved for this answer: wait `retry_after_ms` (carried by the reply),
+    /// then repeat the SAME claim, under the same `claim_id`.
+    Busy,
+}
+
+impl ClaimRefusal {
+    pub const ALL: [Self; 7] = [
+        Self::InstanceUnknown,
+        Self::NotClaimMode,
+        Self::InstanceDraining,
+        Self::RunnerTypeRetired,
+        Self::ClaimSpent,
+        Self::MalformedClaim,
+        Self::Busy,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InstanceUnknown => CLAIM_REASON_INSTANCE_UNKNOWN,
+            Self::NotClaimMode => CLAIM_REASON_NOT_CLAIM_MODE,
+            Self::InstanceDraining => CLAIM_REASON_INSTANCE_DRAINING,
+            Self::RunnerTypeRetired => CLAIM_REASON_RUNNER_TYPE_RETIRED,
+            Self::ClaimSpent => CLAIM_REASON_CLAIM_SPENT,
+            Self::MalformedClaim => CLAIM_REASON_MALFORMED_CLAIM,
+            Self::Busy => CLAIM_REASON_BUSY,
+        }
+    }
+}
+
+/// An Instance of a `CLAIM` runner type asking for its next Run, on
+/// `jobs.claim.{runner_type}` (core NATS request/reply).
+///
+/// `claim_id` identifies one free slot of the Instance: repeating a claim
+/// under the same `claim_id` — because its reply was lost — returns the Run
+/// already reserved to it, never a second one. A different `claim_id` from the
+/// same Instance is another slot. `wait_ms` is the longest the Instance waits
+/// for the reply; Jobs holds the claim at most that long, within its own bound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claim {
+    #[serde(default = "wire_version")]
+    pub version: u8,
+    pub instance_key: String,
+    pub claim_id: Uuid,
+    pub wait_ms: u64,
+}
+
+/// The answer to a [`Claim`]. `run` carries exactly what a trigger carries;
+/// absent, it means nothing was waiting during the wait — or, with a `reason`,
+/// that the claim was refused. An empty answer is claimed again; a refusal is
+/// handled as its [`ClaimRefusal`] says. `retry_after_ms` comes with `busy`
+/// only: how long to wait before repeating the same claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimReply {
+    #[serde(default = "wire_version")]
+    pub version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<Trigger>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ClaimRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+}
+
+impl ClaimReply {
+    pub fn served(run: Trigger) -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: Some(run),
+            reason: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: None,
+            reason: None,
+            retry_after_ms: None,
+        }
+    }
+
+    /// A refusal other than `busy`, which always names its back-off.
+    pub fn refused(reason: ClaimRefusal) -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: None,
+            reason: Some(reason),
+            retry_after_ms: None,
+        }
+    }
+
+    /// The pod could not hold the claim: repeat the same claim after
+    /// `retry_after_ms`.
+    pub fn busy(retry_after_ms: u64) -> Self {
+        Self {
+            version: WIRE_VERSION,
+            run: None,
+            reason: Some(ClaimRefusal::Busy),
+            retry_after_ms: Some(retry_after_ms),
+        }
+    }
 }

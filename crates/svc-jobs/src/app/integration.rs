@@ -109,7 +109,20 @@ pub fn of_event(
                 job_id: fact.job_id.as_uuid(),
             },
         )?),
-        _ => None,
+        // A later attempt starting is not the Job starting; every other fact
+        // stays inside Jobs — a new fact is decided here, not defaulted away.
+        JobEvent::RunStarted(_)
+        | JobEvent::RunDispatched(_)
+        | JobEvent::RunCompleted(_)
+        | JobEvent::RunFailed(_)
+        | JobEvent::RunCancellationRequested(_)
+        | JobEvent::RunCancelled(_)
+        | JobEvent::RetryScheduled(_)
+        | JobEvent::ManualRetryStarted(_)
+        | JobEvent::JobDeleted(_)
+        | JobEvent::JobAffordancesChanged(_)
+        | JobEvent::JobPriorityForced(_)
+        | JobEvent::JobPriorityRecalculated(_) => None,
     };
     Ok(published)
 }

@@ -1,13 +1,19 @@
 pub mod capacity;
+pub mod dispatch_mode;
 pub mod instance;
 pub mod lifecycle;
+pub mod run_duration;
+pub mod settings;
 pub mod status;
 pub mod view;
 
 use chrono::{DateTime, Utc};
 
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::fleet::instance::RunnerInstance;
 use crate::domain::fleet::lifecycle::RunnerTypeLifecycle;
+use crate::domain::fleet::run_duration::MaxRunDuration;
+use crate::domain::fleet::settings::RunnerTypeSettings;
 use crate::domain::ids::RunnerTypeId;
 use crate::domain::keys::{InstanceKey, RunnerTypeKey};
 use crate::error::JobsError;
@@ -18,6 +24,7 @@ pub struct RunnerTypeState {
     pub key: RunnerTypeKey,
     pub registered_at: DateTime<Utc>,
     pub lifecycle: RunnerTypeLifecycle,
+    pub settings: RunnerTypeSettings,
     pub instances: Vec<RunnerInstance>,
 }
 
@@ -27,6 +34,7 @@ pub struct RunnerType {
     key: RunnerTypeKey,
     registered_at: DateTime<Utc>,
     lifecycle: RunnerTypeLifecycle,
+    settings: RunnerTypeSettings,
     instances: Vec<RunnerInstance>,
 }
 
@@ -53,6 +61,7 @@ impl RunnerType {
             key: state.key,
             registered_at: state.registered_at,
             lifecycle: state.lifecycle,
+            settings: state.settings,
             instances: state.instances,
         })
     }
@@ -75,6 +84,39 @@ impl RunnerType {
 
     pub fn lifecycle(&self) -> RunnerTypeLifecycle {
         self.lifecycle
+    }
+
+    pub fn settings(&self) -> RunnerTypeSettings {
+        self.settings
+    }
+
+    pub fn dispatch_mode(&self) -> DispatchMode {
+        self.settings.dispatch_mode
+    }
+
+    /// Since when the type is claimed from: the switch to `CLAIM`, or its
+    /// registration. `None` while it is pushed to.
+    pub fn claimed_since(&self) -> Option<DateTime<Utc>> {
+        match self.settings.dispatch_mode {
+            DispatchMode::Claim => Some(
+                self.settings
+                    .dispatch_mode_since
+                    .unwrap_or(self.registered_at),
+            ),
+            DispatchMode::Push => None,
+        }
+    }
+
+    /// The maximum set for this type, absent while it follows the service
+    /// default.
+    pub fn own_max_run_duration(&self) -> Option<MaxRunDuration> {
+        self.settings.max_run_duration
+    }
+
+    /// The maximum duration a Run of this type is dispatched with: its own, or
+    /// `service_default`.
+    pub fn max_run_duration_or(&self, service_default: MaxRunDuration) -> MaxRunDuration {
+        self.settings.max_run_duration.unwrap_or(service_default)
     }
 
     pub fn instance(&self, key: &InstanceKey) -> Option<&RunnerInstance> {
@@ -128,6 +170,7 @@ mod tests {
             key: RunnerTypeKey::new("analyst").unwrap(),
             registered_at: at(0),
             lifecycle: RunnerTypeLifecycle::Active,
+            settings: RunnerTypeSettings::default(),
             instances,
         }
     }

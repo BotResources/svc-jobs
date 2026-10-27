@@ -8,6 +8,7 @@ use serde_json::json;
 
 mod guards;
 mod parenting;
+mod priority;
 
 fn config() -> RunnerConfig {
     RunnerConfig::new(json!({ "prompt": "summarise", "temperature": 0.2 })).unwrap()
@@ -23,6 +24,7 @@ fn command() -> CreateJob {
         triggered_by: None,
         source_entity_id: None,
         max_attempts: None,
+        requested_priority: Priority::DEFAULT,
     }
 }
 
@@ -42,7 +44,7 @@ fn a_declared_job_is_queued_under_the_id_its_producer_minted() {
     let command = command();
     let id = command.id;
     // When: the declaration is accepted
-    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
     // Then: one queued fact carries the caller-supplied id and its routing key
     let fact = queued(outcome);
     assert_eq!(fact.job_id, id);
@@ -60,7 +62,7 @@ fn the_queued_fact_carries_the_user_the_work_runs_for() {
         ..command()
     };
     // When: it is queued
-    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
     // Then: the fact carries the user, so no subscriber has to look it up
     assert_eq!(queued(outcome).triggered_by, Some(known));
 }
@@ -74,6 +76,7 @@ fn an_identical_redelivery_of_a_creation_is_absorbed() {
     let outcome = create_job(
         command,
         Some(&existing),
+        None,
         None,
         None,
         &ServiceLimits::default(),
@@ -96,6 +99,7 @@ fn reusing_a_known_id_with_different_input_is_rejected() {
     let result = create_job(
         conflicting,
         Some(&existing),
+        None,
         None,
         None,
         &ServiceLimits::default(),
@@ -123,6 +127,7 @@ fn a_second_live_job_for_one_source_reference_is_rejected() {
         command,
         None,
         Some(&active),
+        None,
         None,
         &ServiceLimits::default(),
     );
@@ -153,6 +158,7 @@ fn a_source_whose_previous_job_is_terminal_may_be_declared_again() {
         None,
         Some(&settled),
         None,
+        None,
         &ServiceLimits::default(),
     )
     .unwrap();
@@ -169,7 +175,7 @@ fn a_budget_above_the_service_ceiling_is_rejected() {
         ..command()
     };
     // When: the declaration is judged
-    let result = create_job(command, None, None, None, &ServiceLimits::default());
+    let result = create_job(command, None, None, None, None, &ServiceLimits::default());
     // Then: it is rejected with both figures
     assert_eq!(
         result,
@@ -188,7 +194,7 @@ fn the_queued_fact_carries_the_runner_configuration_the_producer_declared() {
         ..command()
     };
     // When: it is queued
-    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
     // Then: the fact carries it verbatim — it is the only instruction the trigger will have
     assert_eq!(queued(outcome).config, Some(config()));
 }
@@ -210,6 +216,7 @@ fn an_identical_redelivery_of_a_creation_carrying_a_configuration_is_absorbed() 
         Some(&existing),
         None,
         None,
+        None,
         &ServiceLimits::default(),
     )
     .unwrap();
@@ -222,7 +229,7 @@ fn a_root_job_is_owned_by_the_producer_that_declared_it() {
     // Given: a job declared with no parent
     let command = command();
     // When: it is queued
-    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
     // Then: the fact names its owner, so no consumer has to re-derive the rule
     assert_eq!(queued(outcome).owner, JobOwner::Producer(producer()));
 }

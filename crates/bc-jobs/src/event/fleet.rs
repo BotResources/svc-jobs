@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::fleet::capacity::Capacity;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
@@ -13,6 +15,27 @@ pub const RUNNER_TYPE_AGGREGATE_TYPE: &str = "RunnerType";
 pub struct RunnerTypeRegistered {
     pub runner_type_id: RunnerTypeId,
     pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeDispatchModeChanged {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+    pub dispatch_mode: DispatchMode,
+}
+
+/// The RunnerType returned to the service default maximum Run duration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeMaxRunDurationCleared {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeMaxRunDurationChanged {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+    pub max_run_duration: MaxRunDuration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +101,9 @@ pub enum FleetEvent {
     RunnerTypeReactivated(RunnerTypeReactivated),
     RunnerTypeRetired(RunnerTypeRetired),
     RunnerTypeBecameRetirable(RunnerTypeBecameRetirable),
+    RunnerTypeDispatchModeChanged(RunnerTypeDispatchModeChanged),
+    RunnerTypeMaxRunDurationChanged(RunnerTypeMaxRunDurationChanged),
+    RunnerTypeMaxRunDurationCleared(RunnerTypeMaxRunDurationCleared),
     InstanceConnected(InstanceConnected),
     InstanceStatusReported(InstanceStatusReported),
     InstanceDisconnected(InstanceDisconnected),
@@ -91,6 +117,9 @@ impl FleetEvent {
             Self::RunnerTypeReactivated(_) => "RunnerTypeReactivated",
             Self::RunnerTypeRetired(_) => "RunnerTypeRetired",
             Self::RunnerTypeBecameRetirable(_) => "RunnerTypeBecameRetirable",
+            Self::RunnerTypeDispatchModeChanged(_) => "RunnerTypeDispatchModeChanged",
+            Self::RunnerTypeMaxRunDurationChanged(_) => "RunnerTypeMaxRunDurationChanged",
+            Self::RunnerTypeMaxRunDurationCleared(_) => "RunnerTypeMaxRunDurationCleared",
             Self::InstanceConnected(_) => "InstanceConnected",
             Self::InstanceStatusReported(_) => "InstanceStatusReported",
             Self::InstanceDisconnected(_) => "InstanceDisconnected",
@@ -104,10 +133,19 @@ impl FleetEvent {
             | Self::RunnerTypeReactivated(_)
             | Self::RunnerTypeRetired(_) => true,
             Self::RunnerTypeBecameRetirable(_)
+            | Self::RunnerTypeDispatchModeChanged(_)
+            | Self::RunnerTypeMaxRunDurationChanged(_)
+            | Self::RunnerTypeMaxRunDurationCleared(_)
             | Self::InstanceConnected(_)
             | Self::InstanceStatusReported(_)
             | Self::InstanceDisconnected(_) => false,
         }
+    }
+
+    /// Whether the fact moves the published dispatch mode of its type: the
+    /// entry exists from registration until retirement and follows each switch.
+    pub fn changes_published_dispatch_mode(&self) -> bool {
+        self.changes_published_catalog() || matches!(self, Self::RunnerTypeDispatchModeChanged(_))
     }
 
     pub fn runner_type_id(&self) -> RunnerTypeId {
@@ -117,6 +155,9 @@ impl FleetEvent {
             Self::RunnerTypeReactivated(fact) => fact.runner_type_id,
             Self::RunnerTypeRetired(fact) => fact.runner_type_id,
             Self::RunnerTypeBecameRetirable(fact) => fact.runner_type_id,
+            Self::RunnerTypeDispatchModeChanged(fact) => fact.runner_type_id,
+            Self::RunnerTypeMaxRunDurationChanged(fact) => fact.runner_type_id,
+            Self::RunnerTypeMaxRunDurationCleared(fact) => fact.runner_type_id,
             Self::InstanceConnected(fact) => fact.runner_type_id,
             Self::InstanceStatusReported(fact) => fact.runner_type_id,
             Self::InstanceDisconnected(fact) => fact.runner_type_id,
@@ -133,6 +174,15 @@ impl FleetEvent {
             "RunnerTypeRetired" => Self::RunnerTypeRetired(serde_json::from_value(payload)?),
             "RunnerTypeBecameRetirable" => {
                 Self::RunnerTypeBecameRetirable(serde_json::from_value(payload)?)
+            }
+            "RunnerTypeDispatchModeChanged" => {
+                Self::RunnerTypeDispatchModeChanged(serde_json::from_value(payload)?)
+            }
+            "RunnerTypeMaxRunDurationChanged" => {
+                Self::RunnerTypeMaxRunDurationChanged(serde_json::from_value(payload)?)
+            }
+            "RunnerTypeMaxRunDurationCleared" => {
+                Self::RunnerTypeMaxRunDurationCleared(serde_json::from_value(payload)?)
             }
             "InstanceConnected" => Self::InstanceConnected(serde_json::from_value(payload)?),
             "InstanceStatusReported" => {
@@ -156,6 +206,9 @@ impl FleetEvent {
             Self::RunnerTypeReactivated(fact) => &fact.runner_type,
             Self::RunnerTypeRetired(fact) => &fact.runner_type,
             Self::RunnerTypeBecameRetirable(fact) => &fact.runner_type,
+            Self::RunnerTypeDispatchModeChanged(fact) => &fact.runner_type,
+            Self::RunnerTypeMaxRunDurationChanged(fact) => &fact.runner_type,
+            Self::RunnerTypeMaxRunDurationCleared(fact) => &fact.runner_type,
             Self::InstanceConnected(fact) => &fact.runner_type,
             Self::InstanceStatusReported(fact) => &fact.runner_type,
             Self::InstanceDisconnected(fact) => &fact.runner_type,
@@ -169,6 +222,9 @@ impl FleetEvent {
             Self::RunnerTypeReactivated(_) => None,
             Self::RunnerTypeRetired(_) => None,
             Self::RunnerTypeBecameRetirable(_) => None,
+            Self::RunnerTypeDispatchModeChanged(_) => None,
+            Self::RunnerTypeMaxRunDurationChanged(_) => None,
+            Self::RunnerTypeMaxRunDurationCleared(_) => None,
             Self::InstanceConnected(fact) => Some(&fact.instance_key),
             Self::InstanceStatusReported(fact) => Some(&fact.instance_key),
             Self::InstanceDisconnected(fact) => Some(&fact.instance_key),
@@ -182,6 +238,9 @@ impl FleetEvent {
             Self::RunnerTypeReactivated(fact) => serde_json::to_value(fact),
             Self::RunnerTypeRetired(fact) => serde_json::to_value(fact),
             Self::RunnerTypeBecameRetirable(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeDispatchModeChanged(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeMaxRunDurationChanged(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeMaxRunDurationCleared(fact) => serde_json::to_value(fact),
             Self::InstanceConnected(fact) => serde_json::to_value(fact),
             Self::InstanceStatusReported(fact) => serde_json::to_value(fact),
             Self::InstanceDisconnected(fact) => serde_json::to_value(fact),
@@ -233,5 +292,18 @@ mod tests {
         // Then: presence traffic never reaches the bucket, a lifecycle change always does
         assert!(!reported.changes_published_catalog());
         assert!(deprecated.changes_published_catalog());
+    }
+
+    #[test]
+    fn a_settings_change_never_moves_the_published_catalog() {
+        // Given: a dispatch-mode change
+        let changed = FleetEvent::RunnerTypeDispatchModeChanged(RunnerTypeDispatchModeChanged {
+            runner_type_id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
+            runner_type: RunnerTypeKey::new("analyst").unwrap(),
+            dispatch_mode: DispatchMode::Claim,
+        });
+        // When/Then: the catalog publishes lifecycles only
+        assert!(!changed.changes_published_catalog());
+        assert_eq!(changed.payload().unwrap()["dispatch_mode"], "CLAIM");
     }
 }

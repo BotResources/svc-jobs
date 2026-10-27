@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod command;
+pub mod dispatch_mode;
 pub mod event;
 #[cfg(feature = "integration")]
 mod integration;
@@ -15,11 +16,13 @@ pub const SERVICE_KEY: &str = "jobs";
 pub const CMD_JOB_CANCEL_V1: &str = "integration.cmd.jobs.job.cancel.v1";
 pub const CMD_JOB_CANCEL_V2: &str = "integration.cmd.jobs.job.cancel.v2";
 pub const CMD_JOB_CREATE_V1: &str = "integration.cmd.jobs.job.create.v1";
+pub const CMD_JOB_CREATE_V2: &str = "integration.cmd.jobs.job.create.v2";
 pub const CMD_JOB_FAIL_V1: &str = "integration.cmd.jobs.job.fail.v1";
 pub const CMD_JOB_FAIL_V2: &str = "integration.cmd.jobs.job.fail.v2";
 pub const CMD_JOB_FINISH_V1: &str = "integration.cmd.jobs.job.finish.v1";
 pub const CMD_JOB_FINISH_V2: &str = "integration.cmd.jobs.job.finish.v2";
 pub const CMD_JOBS_TRIGGER_RUNNER_TYPE: &str = "jobs.trigger.{runner_type}";
+pub const CMD_JOBS_CLAIM_RUNNER_TYPE: &str = "jobs.claim.{runner_type}";
 
 pub const EVT_JOB_CANCELLED_V1: &str = "integration.evt.jobs.job.cancelled.v1";
 pub const EVT_JOB_COMPLETED_V1: &str = "integration.evt.jobs.job.completed.v1";
@@ -40,6 +43,7 @@ pub const EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED: &str = "jobs.status.{runner_
 pub const KV_RUN_ID: &str = "{run_id}";
 pub const KV_RUNNER_TYPE_INSTANCE_KEY: &str = "{runner_type}.{instance_key}";
 pub const KV_JOBS_RUNNER_TYPE: &str = "jobs.runner_type.{runner_type}";
+pub const KV_JOBS_DISPATCH_MODE: &str = "jobs.dispatch_mode.{runner_type}";
 
 #[cfg(test)]
 mod tests;

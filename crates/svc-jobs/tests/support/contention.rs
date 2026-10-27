@@ -6,11 +6,13 @@ use bc_jobs::commands::job::dispatch::DispatchRun;
 use bc_jobs::domain::attempts::MaxAttempts;
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::fleet::capacity::Capacity;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::fleet::status::ReportedStatus;
 use bc_jobs::domain::ids::{JobId, PresenceSessionId, RunId, RunnerTypeId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::{InstanceKey, ProducerKey, RunnerTypeKey, RunnerVersion};
 use bc_jobs::domain::policy::ServiceLimits;
+use bc_jobs::domain::priority::Priority;
 use bc_jobs::ports::environment::IdFactory;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
@@ -134,7 +136,17 @@ pub fn ids() -> UuidV7Factory {
 }
 
 pub async fn commit(fixture: &Fixture, changes: Vec<JobChange>) -> Result<(), ServiceError> {
-    write::commit_job_changes(&fixture.store, &ids(), changes, &metadata(), clock::now()).await
+    write::commit_job_changes(
+        &fixture.store,
+        write::WriteContext {
+            ids: &ids(),
+            metadata: &metadata(),
+            at: clock::now(),
+            limits: &limits(),
+        },
+        changes,
+    )
+    .await
 }
 
 pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str) -> (Job, RunId) {
@@ -148,9 +160,10 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
         triggered_by: None,
         source_entity_id: None,
         max_attempts: None,
+        requested_priority: Priority::DEFAULT,
     };
-    let CreateOutcome::Queued(queued) =
-        create_job(declaration, None, None, None, &limits()).expect("the declaration is accepted")
+    let CreateOutcome::Queued(queued) = create_job(declaration, None, None, None, None, &limits())
+        .expect("the declaration is accepted")
     else {
         panic!("a fresh job id is queued, never already queued");
     };
@@ -168,6 +181,7 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
             DispatchRun {
                 run_id,
                 at: clock::now(),
+                max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
             },
             &limits(),
         )

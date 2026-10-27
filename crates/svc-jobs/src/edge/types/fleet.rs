@@ -1,11 +1,12 @@
 use async_graphql::SimpleObject;
 use bc_jobs::domain::fleet::RunnerType;
+use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::fleet::view::FleetView;
 use br_util_graphql::Affordance;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use super::enums::{GqlFleetEventKind, GqlRunnerTypeLifecycle};
+use super::enums::{GqlDispatchMode, GqlFleetEventKind, GqlRunnerTypeLifecycle};
 use crate::edge::project::affordance_list;
 
 #[derive(SimpleObject, Clone)]
@@ -24,6 +25,8 @@ pub struct GqlRunnerInstance {
 pub struct GqlRunnerType {
     pub type_key: String,
     pub lifecycle: GqlRunnerTypeLifecycle,
+    pub dispatch_mode: GqlDispatchMode,
+    pub max_run_duration_seconds: i32,
     pub instances: Vec<GqlRunnerInstance>,
     pub is_available: bool,
     pub total_capacity: i32,
@@ -59,15 +62,21 @@ fn count(value: u32) -> i32 {
 pub fn view_of(view: crate::app::fleet::RunnerTypeView) -> GqlRunnerTypeView {
     let known = &view.runner_type;
     GqlRunnerTypeView {
-        runner_type: runner_type_of(known, &view.fleet),
+        runner_type: runner_type_of(known, &view.fleet, view.max_run_duration),
         affordances: affordance_list(view.affordances),
     }
 }
 
-fn runner_type_of(known: &RunnerType, projection: &FleetView) -> GqlRunnerType {
+fn runner_type_of(
+    known: &RunnerType,
+    projection: &FleetView,
+    max_run_duration: MaxRunDuration,
+) -> GqlRunnerType {
     GqlRunnerType {
         type_key: known.key().as_str().to_owned(),
         lifecycle: known.lifecycle().into(),
+        dispatch_mode: known.dispatch_mode().into(),
+        max_run_duration_seconds: i32::try_from(max_run_duration.seconds()).unwrap_or(i32::MAX),
         instances: projection
             .instances()
             .iter()

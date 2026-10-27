@@ -1,5 +1,6 @@
 pub mod fleet;
 pub mod job;
+pub mod user;
 
 use serde_json::Value;
 

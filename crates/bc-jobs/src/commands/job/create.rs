@@ -8,6 +8,7 @@ use crate::domain::job::parenting::guard_parent_admits_work;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
 use crate::domain::policy::ServiceLimits;
+use crate::domain::priority::{JobPriority, Priority, PriorityBasis, UserMaxPriority};
 use crate::domain::references::{KnownUser, SourceReference};
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -23,6 +24,8 @@ pub struct CreateJob {
     pub triggered_by: Option<KnownUser>,
     pub source_entity_id: Option<SourceEntityId>,
     pub max_attempts: Option<MaxAttempts>,
+    /// The level the producer requested; the default when it named none.
+    pub requested_priority: Priority,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,14 +48,19 @@ impl CreateJob {
             && existing.triggered_by() == self.triggered_by.as_ref()
             && existing.source_entity_id() == self.source_entity_id
             && existing.max_attempts() == self.max_attempts
+            && (self.parent_job_id.is_some()
+                || existing.priority().requested() == self.requested_priority)
     }
 }
 
+/// `user_maximum` is the stored maximum of the user the Job runs for, absent
+/// when that user has none or the Job runs for nobody.
 pub fn create_job(
     command: CreateJob,
     existing: Option<&Job>,
     active_for_source: Option<&Job>,
     parent: Option<&Job>,
+    user_maximum: Option<&UserMaxPriority>,
     limits: &ServiceLimits,
 ) -> Result<CreateOutcome, JobsError> {
     if let Some(existing) = existing {
@@ -73,7 +81,11 @@ pub fn create_job(
         requested.guard_under_ceiling(limits.max_attempts_ceiling())?;
     }
     guard_source_free(command.source(), active_for_source)?;
-    let owner = resolve_owner(&command, parent)?;
+    let (owner, parent) = resolve_owner(&command, parent)?;
+    let priority = JobPriority::admitted(
+        command.requested_priority,
+        PriorityBasis::of(parent, user_maximum, limits),
+    );
     let source = command.source();
     Ok(CreateOutcome::Queued(CommandResult::from_event(
         JobEvent::JobQueued(JobQueued {
@@ -87,13 +99,19 @@ pub fn create_job(
             triggered_by: command.triggered_by,
             source,
             max_attempts: command.max_attempts,
+            requested_priority: priority.requested(),
+            effective_priority: priority.effective(),
+            forced_priority: priority.forced(),
         }),
     )))
 }
 
-fn resolve_owner(command: &CreateJob, parent: Option<&Job>) -> Result<JobOwner, JobsError> {
+fn resolve_owner<'a>(
+    command: &CreateJob,
+    parent: Option<&'a Job>,
+) -> Result<(JobOwner, Option<&'a Job>), JobsError> {
     let Some(parent_job_id) = command.parent_job_id else {
-        return Ok(JobOwner::Producer(command.producer.clone()));
+        return Ok((JobOwner::Producer(command.producer.clone()), None));
     };
     if parent_job_id == command.id {
         return Err(JobsError::SelfReference {
@@ -101,10 +119,13 @@ fn resolve_owner(command: &CreateJob, parent: Option<&Job>) -> Result<JobOwner, 
         });
     }
     let parent = guard_parent_admits_work(parent_job_id, parent)?;
-    Ok(JobOwner::Runner {
-        parent_job_id,
-        runner_type: parent.runner_type().clone(),
-    })
+    Ok((
+        JobOwner::Runner {
+            parent_job_id,
+            runner_type: parent.runner_type().clone(),
+        },
+        Some(parent),
+    ))
 }
 
 #[cfg(test)]

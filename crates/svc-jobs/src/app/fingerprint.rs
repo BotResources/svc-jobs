@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct JobFingerprint {
+    priority: (u8, u8, Option<u8>),
     resolution_id: Option<Uuid>,
     is_deleted: bool,
     manual_retry_successor_id: Option<Uuid>,
@@ -18,6 +19,7 @@ struct RunFingerprint {
     run_id: Uuid,
     attempt_number: u32,
     has_started: bool,
+    is_reserved: bool,
     terminal: Option<RunTerminalKind>,
     plan_declaration_number: Option<u32>,
     step_count: usize,
@@ -26,7 +28,13 @@ struct RunFingerprint {
 }
 
 pub fn of_job(job: &Job) -> JobFingerprint {
+    let priority = job.priority();
     JobFingerprint {
+        priority: (
+            priority.requested().get(),
+            priority.effective().get(),
+            priority.forced().map(|forced| forced.get()),
+        ),
         resolution_id: job.resolution().map(|resolution| resolution.id().as_uuid()),
         is_deleted: job.is_deleted(),
         manual_retry_successor_id: job
@@ -41,6 +49,7 @@ fn of_run(run: &Run) -> RunFingerprint {
         run_id: run.id().as_uuid(),
         attempt_number: run.attempt_number().get(),
         has_started: run.has_started(),
+        is_reserved: run.is_reserved(),
         terminal: run
             .terminal()
             .map(bc_jobs::domain::run::parts::RunTerminal::kind),
@@ -54,6 +63,7 @@ fn of_run(run: &Run) -> RunFingerprint {
 #[derive(Debug, PartialEq, Eq)]
 pub struct FleetFingerprint {
     lifecycle: Option<&'static str>,
+    settings: Option<(&'static str, Option<i64>)>,
     instances: Vec<InstanceFingerprint>,
 }
 
@@ -76,6 +86,14 @@ pub fn of_fleet(runner_type: Option<&RunnerType>) -> FleetFingerprint {
     instances.sort_by(|left, right| left.instance_key.cmp(&right.instance_key));
     FleetFingerprint {
         lifecycle: runner_type.map(|known| known.lifecycle().as_str()),
+        settings: runner_type.map(|known| {
+            (
+                known.dispatch_mode().as_str(),
+                known
+                    .own_max_run_duration()
+                    .map(|duration| duration.seconds()),
+            )
+        }),
         instances,
     }
 }

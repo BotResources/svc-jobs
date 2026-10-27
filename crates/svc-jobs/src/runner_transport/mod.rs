@@ -1,4 +1,5 @@
 pub mod cancel;
+pub mod claim;
 pub mod consume;
 pub mod observability;
 pub mod presence;
@@ -51,6 +52,11 @@ impl RunnerChannels {
 
     pub fn context(&self) -> &Context {
         &self.jetstream
+    }
+
+    /// The core NATS client the claim responder answers requests on.
+    pub fn client(&self) -> async_nats::Client {
+        self.jetstream.client()
     }
 
     pub fn consumer_tuning(&self) -> ConsumerTuning {

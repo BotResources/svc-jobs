@@ -269,3 +269,37 @@ fn an_instance_of_another_runner_type_may_not_claim_the_run() {
         })
     );
 }
+
+#[test]
+fn a_reserved_run_is_started_only_by_the_instance_that_claimed_it() {
+    // Given: a run reserved to pod-7
+    let run = RunBuilder::new(1).reserved(ts(1)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new().with_run(run).build();
+    let elsewhere = RunnerInstanceReference::new(
+        crate::fixtures::runner_type(),
+        crate::domain::keys::InstanceKey::new("pod-9").unwrap(),
+    );
+    // When: pod-9 reports starting it, then pod-7 does
+    let stolen = job.record_run_started(RunStartedFact {
+        run_id,
+        instance: elsewhere,
+    });
+    let honoured = job
+        .record_run_started(RunStartedFact {
+            run_id,
+            instance: crate::fixtures::instance(),
+        })
+        .unwrap();
+    // Then: the stranger is refused, the claimant's start is recorded
+    assert_eq!(
+        stolen,
+        Err(JobsError::RunReservedElsewhere {
+            run_id: run_id.as_uuid()
+        })
+    );
+    assert!(matches!(
+        honoured.events.as_slice(),
+        [JobEvent::RunStarted(_)]
+    ));
+}

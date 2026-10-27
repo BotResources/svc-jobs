@@ -43,12 +43,59 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   the report and decides. Cancelling a job cancels every non-terminal
   descendant, withdraws undelivered triggers and writes desired-state cancel
   entries for runs in flight.
+- **Priorities**: a job requests a level from 1 (lowest) to 5 (highest), 3 when
+  its producer names none (`job.create.v1` always requests 3). Its effective
+  level is capped by the maximum of the user it runs for — a super user sets
+  or clears that maximum; without one, `JOBS_DEFAULT_MAX_PRIORITY` applies, and
+  it also caps a job that runs for nobody. A child job requests and waits at
+  its parent's effective level; under a forced parent it is born forced at the
+  parent's forced level. A super user may force a non-terminal job to
+  any level, which also forces every waiting descendant, forced earlier or
+  not — the latest force on an ancestor wins; a change
+  of a user's maximum recalculates that user's waiting, non-forced root jobs
+  and the waiting descendants inheriting from them. A job that goes back to
+  waiting — a retry scheduled, a stranded trigger withdrawn — re-derives its
+  effective level from the current cap or its parent (a forced job keeps its
+  force). A change of `JOBS_DEFAULT_MAX_PRIORITY` applies to new admissions and
+  to those re-derivations only. Priority orders waiting jobs only: a started
+  run is never interrupted.
+- **Dispatch** takes waiting jobs by effective priority, highest first; within
+  a level it alternates strictly between root jobs — each root's next job in
+  turn, the root served least recently first, and among roots never served the
+  one whose oldest waiting job is oldest — then by creation time. A runner type
+  is dispatched in one of two modes, set by a platform administrator:
+  - `PUSH` (the default, and the only mode before 0.4): the trigger of each
+    waiting job is published on the trigger stream while the type is available.
+    **Deprecated:** kept only while runners migrate to the claiming toolkit;
+    priorities are best effort in this mode (a published trigger is consumed
+    in stream order). Switch a type to `CLAIM` only once its runners claim. The
+    trigger stream and `PUSH` are removed in a later minor.
+  - `CLAIM`: an instance with a free slot claims its next run on
+    `jobs.claim.{runner_type}`. The claim is held open until a job is waiting,
+    which is then reserved to that instance — its run created in the
+    transaction that locked the job with `FOR UPDATE SKIP LOCKED`, so however
+    many pods serve claims, a job is reserved once. The reply carries exactly
+    what a trigger carries. A run reserved and never started within
+    `JOBS_CLAIM_RESERVATION_SECONDS` fails as transient with `claim_lost`.
+    Each pod holds at most `JOBS_CLAIM_MAX_HELD` claims open at once and
+    answers a claim beyond that `busy` with a `retry_after_ms` back-off. A
+    queued job wakes one held claim of its type; a retry falling due wakes one
+    through the single retry timer the pod keeps per type — never every held
+    claim.
+  The mode of each type is published under `jobs.dispatch_mode.{runner_type}`
+  (see below).
 - **Retries**: after a transient run failure, jobs computes exponential
   backoff with jitter once and stores the due time; a runner `retry_after`
   hint may lengthen but never shorten it. A permanent failure ends automatic
   retry. Backstops reclaim abandoned work: a run exceeding the maximum
-  duration fails as transient, and a job idle beyond the inactivity timeout
-  fails with `INACTIVITY_TIMEOUT`.
+  duration of its runner type (the one it was dispatched with) fails as
+  transient, a run reserved by a claim and never started fails as transient
+  with `claim_lost`, a trigger published before its type switched to `CLAIM`
+  and still neither started nor reserved `JOBS_CLAIM_RESERVATION_SECONDS`
+  after the switch is cancelled with `trigger_stranded` — without counting as
+  an attempt: the job waits to be claimed and the claimed run carries the same
+  attempt number — and a job idle beyond the inactivity timeout fails with
+  `INACTIVITY_TIMEOUT`.
 
 ## NATS surface
 
@@ -60,12 +107,13 @@ own durable consumers.
 ### Integration bus (via `br-util-nats-fabric`)
 
 Commands consumed on the `INTEGRATION_CMD` stream. Version 1 keeps the durables
-`svc_jobs_job_{create,cancel,finish,fail}`; version 2 resolutions use
-`svc_jobs_job_{cancel,finish,fail}_v2`:
+`svc_jobs_job_{create,cancel,finish,fail}`; version 2 uses
+`svc_jobs_job_{create,cancel,finish,fail}_v2`:
 
 | Subject | Meaning |
 |---|---|
-| `integration.cmd.jobs.job.create.v1` | Create a job addressed to a runner type; the producer mints the UUIDv7 id and names its own bounded context in `producer` (required). |
+| `integration.cmd.jobs.job.create.v1` | Create a job addressed to a runner type; the producer mints the UUIDv7 id and names its own bounded context in `producer` (required). The job requests priority 3. |
+| `integration.cmd.jobs.job.create.v2` | Supersedes v1: the same fields plus an optional `priority` (1–5, 3 when absent, ignored for a child job). A level outside 1–5 is answered by `creation_rejected` with reason `invalid_priority`. |
 | `integration.cmd.jobs.job.cancel.v1` | Cancel a job; cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v1` | The owner declares the job succeeded — the only path to `COMPLETED`. |
 | `integration.cmd.jobs.job.fail.v1` | The owner declares the job failed (`DECLARED_BY_OWNER`). |
@@ -88,6 +136,17 @@ creation that still names a job id is answered by a rejection event — a
 creation naming no `producer` is exactly that case — a domain refusal is
 acknowledged and discarded; only infrastructure failures and lost write races
 are redelivered.
+
+### Published dispatch modes
+
+Every active or deprecated runner type also has an entry under
+`jobs.dispatch_mode.{runner_type}` in the same bucket, a
+`contract_jobs::dispatch_mode::RunnerTypeDispatchMode`
+`{version, runner_type, dispatch_mode}` with `dispatch_mode` `PUSH` or
+`CLAIM`, so a runner learns whether to consume its trigger stream or to
+claim. It is written after the commit of each switch and repaired with the
+catalog at boot and periodically (the outbox stages events, not Key-Value
+puts); retirement retracts it. The `jobs.runner_type.` entry is unchanged.
 
 ### Published runner-type catalog
 
@@ -123,7 +182,8 @@ design.
 
 | Channel | Name / subject | Direction | Contract |
 |---|---|---|---|
-| Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.{runner_type}` | jobs → runners | Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. |
+| Claim subject | `jobs.claim.{runner_type}` (core NATS request/reply, queue group `svc_jobs_claims`) | runners → jobs, answered | `CLAIM` types only. Request `{instance_key, claim_id, wait_ms}`; reply `{run?, reason?}`, `run` being a trigger. At most once: an instance repeats an unanswered claim under the same `claim_id` and is handed the run already reserved to it. Refusals form a closed set of seven (`contract_jobs::runner::ClaimRefusal`): `instance_unknown` (announce presence, claim later), `not_claim_mode` (consume the trigger stream instead), `instance_draining` (stop claiming until `READY`), `runner_type_retired` (stop claiming), `claim_spent` (mint a new `claim_id`), `malformed_claim` (fix the claim; a nil `claim_id` is malformed), `busy` (the pod could not hold the claim or its store failed; wait `retry_after_ms`, then repeat the SAME claim). |
+| Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.{runner_type}` | jobs → runners | `PUSH` types only. Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. Switching a type to `CLAIM` does not withdraw triggers already published. |
 | Status stream | `JOBS_STATUS` / `jobs.status.{runner_type}.{started,plan_declared,step_started,completed,failed}` | runners → jobs | Persistent, acknowledged, at-least-once; carries start, plan, step and terminal run facts. |
 | Log stream | `JOBS_LOG` / `jobs.log.{runner_type}` | runners → jobs | Size-bounded, discard-old; a lost log line is tolerated, a lost lifecycle fact is not — which is why logs never share the status stream. |
 | Cancel bucket | `JOBS_CANCEL` KV, key `{run_id}` | jobs → runners | One desired-state entry per cancelled run, replayed on watch (re)connection; removed after the terminal fact, bucket TTL is the cleanup backstop. |
@@ -211,12 +271,17 @@ stays open until a backstop ends it. Both series are registered at zero when the
 transport starts, so the alert on them is armed before the first drop rather
 than after it.
 
-## GraphQL surface — platform administrators only
+## GraphQL surface — platform administrators, and one's own maximum
 
-The entire user-facing surface is restricted to platform administrators: a
-missing or undecodable `X-Passport` is answered `UNAUTHENTICATED`, any other
-caller `FORBIDDEN`, both as structured errors, before anything reaches a
-resolver. No end-user, org-scoped or per-project access exists in this
+The surface is restricted to platform administrators, except the user surface:
+any active human may read their own maximum priority (`jobsMyMaxPriority`,
+`jobsMyMaxPriorityChanged`) and nothing else. A missing or undecodable
+`X-Passport` is answered `UNAUTHENTICATED`; a request selecting anything its
+caller may not reach is answered `FORBIDDEN`, both as structured errors, before
+anything reaches a resolver. Service accounts reach nothing. Setting or clearing
+a user's maximum and forcing a job's priority are super-user gestures — the
+admins of the platform org, which the Passport carries as the same privilege as
+platform administration. No org-scoped or per-project access exists in this
 version.
 
 `X-Passport` is a trusted header: the service decodes it, it does not
@@ -235,26 +300,39 @@ recorded is always the passport's own id.
 - **Queries** — `jobs` (filtered, paginated list), `jobsJob`,
   `jobsJobBySource` (the single non-terminal job for a source reference),
   `jobsLogs` (cursor-paginated, by job or run), `jobsFleet` (runner types and
-  live instances).
+  live instances, each with its `dispatchMode` and `maxRunDurationSeconds`),
+  `jobsMyMaxPriority` (the caller's own maximum). Job views carry
+  `requestedPriority`, `effectivePriority` and `forcedPriority`.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a
-  pinned failed resolution, even past the retry budget), `jobsDeleteJob`
-  (soft-delete of a terminal job; the audit trail remains), plus
-  `jobsDeprecateRunnerType`, `jobsReactivateRunnerType` and
-  `jobsRetireRunnerType`.
+  pinned failed resolution, even past the retry budget; for a `CLAIM` type the
+  successor waits to be claimed), `jobsDeleteJob` (soft-delete of a terminal
+  job; the audit trail remains), `jobsDeprecateRunnerType`,
+  `jobsReactivateRunnerType`, `jobsRetireRunnerType`,
+  `jobsSetRunnerTypeDispatchMode`, `jobsSetRunnerTypeMaxRunDuration` and
+  `jobsClearRunnerTypeMaxRunDuration` (back to the service default); for
+  super users `jobsSetUserMaxPriority`, `jobsClearUserMaxPriority` and
+  `jobsForceJobPriority`.
 - **Subscriptions** (GraphQL over SSE: `POST /graphql` with
   `Accept: text/event-stream`) — `jobsChanged`, `jobsJobChanged` (the whole
-  job tree), `jobsJobLogTail`, `jobsFleetChanged`. Every subscription first
+  job tree), `jobsJobLogTail`, `jobsFleetChanged`, and
+  `jobsMyMaxPriorityChanged` (the caller's own maximum). Every subscription first
   sends a snapshot equivalent to its initial read, then typed deltas;
   reconnecting starts with a fresh snapshot, so clients never need a separate
-  refetch. Watching a job watches its whole tree.
+  refetch. Watching a job watches its whole tree. A subscription takes the
+  facts waiting for it in batches — one read of the store per batch — and a
+  batch carrying more than 64 facts for it is answered with a fresh snapshot
+  instead of one delta per fact.
 - **Affordances** — every job snapshot and delta carries the backend-owned
-  affordances (`cancel`, `manual_retry`, `delete` — allowed or
-  blocked with a reason code); when affordances change without a job state
+  affordances (`cancel`, `manual_retry`, `delete`, `force_priority` — allowed
+  or blocked with a reason code); when affordances change without a job state
   change, a dedicated `JobsJobAffordancesChangedEvent` is emitted. Clients
   render these decisions, they never derive them.
   Every runner-type view and fleet delta likewise carries the complete
-  `deprecate`, `reactivate`, and `retire` decisions. Retirement is available
+  `deprecate`, `reactivate`, `retire`, `set_dispatch_mode`,
+  `set_max_run_duration` and `clear_max_run_duration` decisions (the last
+  blocked with `no_max_run_duration_set` while the type follows the service
+  default). Retirement is available
   only for a deprecated type with no non-terminal job and no terminal run in
   the configured quiet period (default 24 h); reactivating a retired type
   requires live presence. If that boundary is the only changing fact, the
@@ -281,7 +359,11 @@ failing job by job.
 | `NATS_URL` | — required | The NATS server carrying the integration bus and the runner transport. |
 | `NATS_USER` / `NATS_PASSWORD` | unset | Optional credential pair — both or neither; one without the other refuses to boot. |
 | `JOBS_INACTIVITY_TIMEOUT_SECONDS` | `86400` | An `IN_PROGRESS` job with no active run and no scheduled retry beyond this fails with `INACTIVITY_TIMEOUT`. |
-| `JOBS_RUN_MAX_DURATION_SECONDS` | `259200` (72 h) | A `STARTED` run exceeding this fails as transient and gets a cancel entry. |
+| `JOBS_RUN_MAX_DURATION_SECONDS` | `259200` (72 h) | The maximum run duration of every runner type that has none of its own (a type registered before 0.4, or never set); a platform administrator sets one per type. A `STARTED` run exceeding the maximum it was dispatched with fails as transient and gets a cancel entry (a run dispatched before 0.4 answers to this value). |
+| `JOBS_DEFAULT_MAX_PRIORITY` | `3` | The maximum priority (1–5) of a user without one of their own, and of a job that runs for nobody. |
+| `JOBS_CLAIM_MAX_WAIT_SECONDS` | `30` | The longest a claim is held open, whatever `wait_ms` it asks for. |
+| `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost`; a pushed trigger left unstarted this long after its type switched to `CLAIM` is cancelled with `trigger_stranded` (both swept with the backstops). Must exceed `JOBS_CLAIM_MAX_WAIT_SECONDS`, or the service refuses to boot. |
+| `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered `busy` immediately. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |
@@ -332,7 +414,14 @@ before integrating.
 | Streams, buckets and the database are bound, never created | Topology is declared out of band by the deployment; a service that auto-provisions infra hides drift. Absence fails the boot loudly instead of lingering as a pod that will never be ready. |
 | The runner transport talks to NATS directly, confined to `src/runner_transport/` | The `jobs.*` streams and the cancel/presence buckets are this service's private wire with its runners, deliberately outside the platform's integration-bus conventions; no other component ever speaks it. That module is the only NATS seam besides the integration bus, and the boundary is deliberate: widening it is a design change, not a refactor. |
 | `run_logs` has monthly range partitions (2026-01 → 2030-12) and **no `DEFAULT` partition** | A missing partition fails loud rather than silently pooling rows into an unbounded default. Operational obligation: declare the next partitions before the horizon, or log ingestion stops (lifecycle facts are unaffected). |
-| `JOBS_CANCEL` bucket TTL must track `JOBS_RUN_MAX_DURATION_SECONDS` | The bucket's expiry is the cleanup backstop for cancel entries whose terminal fact never arrived; a TTL shorter than the maximum run duration can drop a stop request a slow run still needs. Keep the two aligned in the topology declaration. |
+| `JOBS_CANCEL` bucket TTL must cover the longest runner-type maximum run duration | The bucket's expiry is the cleanup backstop for cancel entries whose terminal fact never arrived; a TTL shorter than a run's maximum duration can drop a stop request a slow run still needs. A platform administrator may set a type above `JOBS_RUN_MAX_DURATION_SECONDS`: keep the TTL above the largest value in use. |
+| Claims ride core NATS request/reply, not a stream | A claim is a question with a short life: an unanswered one is simply repeated. Durability is in the ledger — the reservation is committed before the reply leaves — and the repeat carries the same `claim_id`, so a lost reply is answered with the run already reserved, never with a second one. |
+| The claim locks its job with `FOR UPDATE SKIP LOCKED` | Claims for one type are served concurrently by every pod. Skipping a locked row instead of waiting on it is what lets two claims take the next two jobs rather than queue on the first; the run is created in that same transaction, and a unique (instance, `claim_id`) reservation stops two pods serving one repeated claim twice. |
+| An admission re-reads the priority facts it decided on, under lock | A user's maximum or a parent's level can change between the decision and the commit. The admission takes a shared lock on the user (an advisory lock — the user need not be known to Jobs) or on the root of the parent's tree and then the parent, then re-reads: a changed level fails as a write race and is retried, a parent settled meanwhile refuses the child (`parent_job_terminal`). |
+| Force and cap cascades are decided inside the write transaction | A force locks the forced job, reads its descendants and locks them in one id-ordered statement; a change of maximum takes the user's exclusive lock before reading which jobs it reaches. Each row is re-decided on the locked state, and a row that stopped waiting is skipped — a child admitted concurrently is either seen by the cascade or re-reads the new level. |
+| Waiting jobs have their own table | `waiting_jobs` is maintained in the transaction that makes a job start or stop waiting, so dispatch and claims read an indexed queue instead of anti-joining every resolution and run. A claim considers only the head of each (root, level) and locks the waiting row, then the job row, both with `SKIP LOCKED`; the push pass walks the same index in order. Fairness turns are kept per runner type and root (`root_dispatch_turns`), and a root with nothing waiting any more is forgotten by the sweep. `unstarted_pushed_runs` keeps the triggers not yet taken, so stranded-trigger detection never scans the ledger. |
+| Both access paths are repaired from the ledger | During a rolling update a 0.3 pod records facts without maintaining `waiting_jobs` or `unstarted_pushed_runs`. Boot repairs both for every job on them or unresolved, and every backstop sweep repairs those whose facts were recorded in the last ten minutes, by any pod. The drift is found by a read that locks nothing; only the drifted jobs are then locked, with `SKIP LOCKED`, and fixed — so the repair never waits on a writer and never holds a correct row a claim would have to skip. The root of a lineage admitted before 0.4 is found by walking its parents; `jobs.root_job_id` is never rewritten. |
+| Every writer locks the root first | Admission share-locks the root of its parent's tree, then the parent; a force or a cancellation locks the job it starts from, then its descendants by id. One order for all writers is what keeps a cascade and an admission from deadlocking. A cancellation re-reads its descendants under lock and starts over when one was admitted meanwhile. |
 | Logs ride their own size-bounded, discard-old stream | A log flood can neither delay a status fact nor evict one; losing an old log line is acceptable, losing a lifecycle fact is not. |
 | A reclaim only takes runs started inside the closed presence session's window | An instance key outlives its sessions: reclaiming by key alone would fail a run the replacement session is executing. The session that carried the run owns the reclaim. |
 | The service clock truncates every instant it mints to microseconds | `timestamptz` keeps microseconds, a Linux clock reads nanoseconds. An instant minted at nanosecond precision is carried one way by the event a subscriber folds and another way by the column a later read returns — the same moment, two values. Truncating where the instant is minted is the only place that keeps the two identical; every timestamp the service authors comes from that clock, never from an ambient `Utc::now()`. |

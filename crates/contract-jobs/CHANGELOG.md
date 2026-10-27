@@ -5,6 +5,38 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.6.0 - 2026-10-26
+
+Additive: every 0.5 subject, payload and constant is unchanged.
+
+- `integration.cmd.jobs.job.create.v2`: `CMD_JOB_CREATE_V2`,
+  `cmd_job_create_v2_coords()`, and the payload `command::CreateJobV2` — the
+  v1 fields plus an optional `priority` (an integer, 1–5, 3 when absent,
+  ignored for a child job; out of range is rejected as `invalid_priority`).
+  `command::CreateJob` (v1) is untouched and requests 3.
+- Claims for `CLAIM` runner types: `CMD_JOBS_CLAIM_RUNNER_TYPE`
+  (`jobs.claim.{runner_type}`), `runner_transport::claim_subject`,
+  `runner::CLAIM_FILTER`, `runner::Claim { version, instance_key, claim_id,
+  wait_ms }` and `runner::ClaimReply { version, run, reason }` with
+  `served` / `empty` / `refused`. A served `run` is exactly a `Trigger`.
+- The closed refusal set `runner::ClaimRefusal` (`ALL`, `as_str`), each
+  variant documenting the runner's reaction: `instance_unknown`,
+  `not_claim_mode`, `instance_draining`, `runner_type_retired`,
+  `claim_spent`, `malformed_claim` (a nil `claim_id` is malformed) and `busy`
+  (wait `ClaimReply::retry_after_ms`, then repeat the same claim under the
+  same `claim_id`), with the matching `CLAIM_REASON_*` constants and
+  `ClaimReply::busy`.
+- The run failure `RUN_FAILURE_CLAIM_LOST` (`claim_lost`) and the run
+  cancellation reason `RUN_CANCELLATION_TRIGGER_STRANDED`
+  (`trigger_stranded`, not counted as an attempt).
+- The KV offer `jobs.dispatch_mode.{runner_type}`: `KV_JOBS_DISPATCH_MODE`,
+  the module `dispatch_mode` with `DISPATCH_MODE_PREFIX`,
+  `dispatch_mode_key`, `DispatchMode` (`PUSH` | `CLAIM`) and the value
+  `RunnerTypeDispatchMode { version, runner_type, dispatch_mode }`. The
+  `jobs.runner_type.` offer is unchanged.
+- `jobs.trigger.{runner_type}` carries a deprecation intent: it serves `PUSH`
+  types only, and goes once every type claims. No deletion version is set.
+
 ## 0.5.1 - 2026-10-17
 
 - Dependency re-pin only. The contract is unchanged: subjects, KV prefixes,

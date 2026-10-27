@@ -18,11 +18,15 @@ impl JobsError {
                 length,
                 maximum,
             } => json!({ "field": field, "length": length, "maximum": maximum }),
+            Self::InvalidPriority { value } => json!({ "value": value }),
             Self::InvalidJitter
             | Self::InvalidRetryFactor
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
             | Self::NotOwner
+            | Self::NotPlatformAdministrator
+            | Self::NotSuperUser
+            | Self::NotActiveHuman
             | Self::JobStillActive
             | Self::RetryNotScheduled
             | Self::EmptyPlan => json!({}),
@@ -52,12 +56,19 @@ impl JobsError {
             Self::RunNotFound { run_id }
             | Self::RunAlreadyInFlight { run_id }
             | Self::RunNotStarted { run_id }
-            | Self::RunWithinMaxDuration { run_id } => json!({ "runId": run_id }),
+            | Self::RunWithinMaxDuration { run_id }
+            | Self::RunNotReserved { run_id }
+            | Self::RunReservedElsewhere { run_id }
+            | Self::ReservationWithinDelay { run_id }
+            | Self::TriggerNotStranded { run_id } => json!({ "runId": run_id }),
             Self::RunnerTypeMismatch { expected, claimed } => {
                 json!({ "expected": expected, "claimed": claimed })
             }
             Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
-            Self::RunnerTypeRetired { runner_type } => json!({ "runnerType": runner_type }),
+            Self::RunnerTypeRetired { runner_type }
+            | Self::NotClaimMode { runner_type }
+            | Self::NotPushMode { runner_type }
+            | Self::MaxRunDurationNotSet { runner_type } => json!({ "runnerType": runner_type }),
             Self::RunnerTypeNotActive { lifecycle }
             | Self::RunnerTypeNotDeprecated { lifecycle } => json!({ "lifecycle": lifecycle }),
             Self::RunnerTypeHasNonTerminalJobs { count } => json!({ "count": count }),
@@ -70,7 +81,9 @@ impl JobsError {
             } => json!({ "attempts": attempts, "maxAttempts": max_attempts }),
             Self::RetryNotDue { due_at } => json!({ "dueAt": due_at }),
             Self::DuplicatePlanStepIndex { step_index } => json!({ "stepIndex": step_index }),
-            Self::InstanceNotLive { instance_key } => json!({ "instanceKey": instance_key }),
+            Self::InstanceNotLive { instance_key }
+            | Self::InstanceUnknown { instance_key }
+            | Self::InstanceDraining { instance_key } => json!({ "instanceKey": instance_key }),
             Self::StaleLoss {
                 instance_key,
                 observed_session_id,

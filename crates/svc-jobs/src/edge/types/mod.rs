@@ -4,5 +4,6 @@ pub mod fleet;
 pub mod input;
 pub mod job;
 pub mod log;
+pub mod priority;
 pub mod run;
 pub mod stream;

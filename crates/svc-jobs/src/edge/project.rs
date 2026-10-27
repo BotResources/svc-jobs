@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::Result;
+use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::actions::Affordance as DomainAffordance;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::job::parenting::ParentContext;
@@ -48,12 +49,16 @@ fn rendered(value: &serde_json::Value) -> String {
     }
 }
 
-pub fn affordances_of(job: &Job, parent: Option<&Job>) -> Result<Vec<Affordance>> {
+pub fn affordances_of(
+    job: &Job,
+    parent: Option<&Job>,
+    principal: &PrincipalFacts,
+) -> Result<Vec<Affordance>> {
     let context = match (job.parent_job_id(), parent) {
         (Some(_), Some(parent)) => ParentContext::Loaded(parent),
         _ => ParentContext::Root,
     };
-    let computed = job.affordances(context).map_err(edge_error)?;
+    let computed = job.affordances(context, principal).map_err(edge_error)?;
     Ok(affordance_list(computed))
 }
 
@@ -115,10 +120,15 @@ pub async fn fleet_views(
         .map(RunnerTypeKey::new)
         .transpose()
         .map_err(edge_error)?;
+    let service_default = bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_delta(
+        state.jobs.limits.max_run_duration(),
+    )
+    .map_err(edge_error)?;
     crate::app::fleet::views(
         &state.store,
         watched.as_ref(),
         state.jobs.retirement_window(),
+        service_default,
     )
     .await
     .map_err(edge_error)

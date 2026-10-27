@@ -18,6 +18,10 @@ fn every_coordinate_renders_its_declared_subject() {
         CMD_JOB_CREATE_V1
     );
     assert_eq!(
+        rendered_command(&cmd_job_create_v2_coords().unwrap()),
+        CMD_JOB_CREATE_V2
+    );
+    assert_eq!(
         rendered_command(&cmd_job_fail_v1_coords().unwrap()),
         CMD_JOB_FAIL_V1
     );

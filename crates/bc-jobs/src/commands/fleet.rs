@@ -2,15 +2,18 @@ use crate::commands::{CommandResult, CommandWarning, FleetCommandResult};
 use crate::domain::actions::fleet::RunnerTypeDecisionFacts;
 use crate::domain::fleet::RunnerType;
 use crate::domain::fleet::capacity::Capacity;
+use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::fleet::instance::RunnerInstance;
+use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::fleet::status::ReportedStatus;
 use crate::domain::ids::{PresenceSessionId, RunnerTypeId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, RunnerVersion};
 use crate::error::JobsError;
 use crate::event::fleet::{
     FleetEvent, InstanceConnected, InstanceDisconnected, InstanceStatusReported,
-    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeReactivated, RunnerTypeRegistered,
-    RunnerTypeRetired,
+    RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeDispatchModeChanged,
+    RunnerTypeMaxRunDurationChanged, RunnerTypeMaxRunDurationCleared, RunnerTypeReactivated,
+    RunnerTypeRegistered, RunnerTypeRetired,
 };
 
 pub const PRESENCE_EXPIRED: &str = "presence_expired";
@@ -138,6 +141,59 @@ pub fn retire(
             runner_type: runner_type.key().clone(),
         },
     )))
+}
+
+pub fn set_dispatch_mode(
+    runner_type: &RunnerType,
+    dispatch_mode: DispatchMode,
+) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_configure()?;
+    if runner_type.dispatch_mode() == dispatch_mode {
+        return Ok(CommandResult::nothing_happened(
+            CommandWarning::CommandAlreadyApplied {
+                command: "set_dispatch_mode",
+            },
+        ));
+    }
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeDispatchModeChanged(RunnerTypeDispatchModeChanged {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+            dispatch_mode,
+        }),
+    ))
+}
+
+/// Returns the type to the service default maximum Run duration.
+pub fn clear_max_run_duration(runner_type: &RunnerType) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_clear_max_run_duration()?;
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeMaxRunDurationCleared(RunnerTypeMaxRunDurationCleared {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+        }),
+    ))
+}
+
+pub fn set_max_run_duration(
+    runner_type: &RunnerType,
+    max_run_duration: MaxRunDuration,
+) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_configure()?;
+    if runner_type.own_max_run_duration() == Some(max_run_duration) {
+        return Ok(CommandResult::nothing_happened(
+            CommandWarning::CommandAlreadyApplied {
+                command: "set_max_run_duration",
+            },
+        ));
+    }
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeMaxRunDurationChanged(RunnerTypeMaxRunDurationChanged {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
+            max_run_duration,
+        }),
+    ))
 }
 
 pub fn became_retirable(
