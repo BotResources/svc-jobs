@@ -234,6 +234,7 @@ impl GqlJobView {
     }
 }
 
+#[derive(Clone)]
 pub struct GqlJobSummaryView {
     pub job: Arc<Job>,
     pub parent: Option<Arc<Job>>,

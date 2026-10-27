@@ -1,5 +1,4 @@
 use super::*;
-use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::fixtures::{JobBuilder, RunBuilder, resolution_id, schedule_id, ts};
 use chrono::TimeDelta;
 
@@ -315,65 +314,74 @@ fn a_run_dispatched_with_a_longer_maximum_outlives_the_service_default() {
 }
 
 #[test]
-fn a_trigger_left_on_the_stream_of_a_claim_type_fails_as_stranded_and_waits_for_a_claim() {
-    // Given: a pushed run never started, its type since switched to CLAIM
+fn a_trigger_stranded_by_a_switch_to_claim_is_withdrawn_without_spending_an_attempt() {
+    // Given: a pushed run never started, its type switched to CLAIM at ts(10)
     let run = RunBuilder::new(1).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: the backstop sweeps past the delay
+    // When: the backstop sweeps 70 s after the switch
     let result = job
-        .fail_run_for_stranded_trigger(
-            reclaim(run_id, ts(70)),
-            DispatchMode::Claim,
+        .withdraw_stranded_trigger(
+            WithdrawStrandedTrigger { run_id, at: ts(80) },
+            Some(ts(10)),
             TimeDelta::seconds(60),
-            &RetryPolicy::default(),
-            &ServiceLimits::default(),
         )
         .unwrap();
-    // Then: any taker is told to stop, the run fails transient, and a retry waits
+    // Then: any late taker is told to stop and the run is withdrawn — no failure, no retry
     match result.events.as_slice() {
         [
             JobEvent::RunCancellationRequested(requested),
-            JobEvent::RunFailed(failed),
-            JobEvent::RetryScheduled(_),
+            JobEvent::RunCancelled(cancelled),
         ] => {
             assert_eq!(requested.reason_code.as_str(), "trigger_stranded");
-            assert_eq!(failed.report.reason_code().as_str(), "trigger_stranded");
-            assert_eq!(failed.report.kind(), RunFailureKind::Transient);
+            assert_eq!(
+                cancelled.withdrawn_for.as_ref().map(ReasonCode::as_str),
+                Some("trigger_stranded")
+            );
         }
-        other => panic!("expected a stop, a transient failure and a retry, got {other:?}"),
+        other => panic!("expected a stop and a withdrawal, got {other:?}"),
     }
 }
 
 #[test]
-fn a_trigger_of_a_push_type_or_within_the_delay_is_not_stranded() {
-    // Given: a pushed run never started
+fn a_withdrawn_run_leaves_its_job_waiting_with_no_attempt_spent() {
+    // Given: a job whose only run was withdrawn as stranded
+    let run = RunBuilder::new(1)
+        .withdrawn(ts(80), "trigger_stranded")
+        .build();
+    let job = JobBuilder::new().with_run(run).build();
+    // Then: it waits as a fresh job, and its next run is attempt one again
+    assert!(job.is_waiting());
+    assert_eq!(job.attempt_count(), 0);
+    assert_eq!(job.status(), crate::domain::job::status::JobStatus::Pending);
+}
+
+#[test]
+fn a_trigger_is_stranded_only_on_a_claim_type_and_only_past_the_delay_after_the_switch() {
+    // Given: a pushed run dispatched at ts(0), never started
     let run = RunBuilder::new(1).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When/Then: on a PUSH type it is waiting for its taker, within the delay it is fresh
+    let at = |offset| WithdrawStrandedTrigger {
+        run_id,
+        at: ts(offset),
+    };
+    // When/Then: on a PUSH type it waits for its taker
     assert_eq!(
-        job.fail_run_for_stranded_trigger(
-            reclaim(run_id, ts(70)),
-            DispatchMode::Push,
-            TimeDelta::seconds(60),
-            &RetryPolicy::default(),
-            &ServiceLimits::default(),
-        )
-        .unwrap_err()
-        .code(),
+        job.withdraw_stranded_trigger(at(500), None, TimeDelta::seconds(60))
+            .unwrap_err()
+            .code(),
         "not_claim_mode"
     );
+    // When/Then: the delay counts from the switch, not from the dispatch
     assert_eq!(
-        job.fail_run_for_stranded_trigger(
-            reclaim(run_id, ts(30)),
-            DispatchMode::Claim,
-            TimeDelta::seconds(60),
-            &RetryPolicy::default(),
-            &ServiceLimits::default(),
-        ),
+        job.withdraw_stranded_trigger(at(130), Some(ts(100)), TimeDelta::seconds(60)),
         Err(JobsError::TriggerNotStranded {
             run_id: run_id.as_uuid()
         })
+    );
+    assert!(
+        job.withdraw_stranded_trigger(at(161), Some(ts(100)), TimeDelta::seconds(60))
+            .is_ok()
     );
 }

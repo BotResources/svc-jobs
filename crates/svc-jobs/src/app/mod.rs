@@ -31,7 +31,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::{RetryPolicy, ServiceLimits};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::{Clock, IdFactory, JitterSource};
-use bc_jobs::ports::fleet::RunnerTypeCatalogWriter;
+use bc_jobs::ports::fleet::{DispatchModeOfferWriter, RunnerTypeCatalogWriter};
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::transport::{RunTrigger, RunnerTransport};
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
@@ -54,6 +54,7 @@ pub struct Jobs {
     pub limits: ServiceLimits,
     pub retry: RetryPolicy,
     pub catalog: Arc<dyn RunnerTypeCatalogWriter>,
+    pub dispatch_modes: Arc<dyn DispatchModeOfferWriter>,
     pub claims: ClaimSettings,
     pub waiters: Arc<claim_waiters::ClaimWaiters>,
 }
@@ -84,7 +85,17 @@ impl Jobs {
             .iter()
             .map(|change| (change.job_id, change.events.clone()))
             .collect();
-        write::commit_job_changes(&self.store, self.ids.as_ref(), changes, metadata, at).await?;
+        write::commit_job_changes(
+            &self.store,
+            write::WriteContext {
+                ids: self.ids.as_ref(),
+                metadata,
+                at,
+                limits: &self.limits,
+            },
+            changes,
+        )
+        .await?;
         for (job_id, events) in effects {
             self.after_commit(job_id, &events).await?;
         }

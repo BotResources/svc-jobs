@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod command;
+pub mod dispatch_mode;
 pub mod event;
 #[cfg(feature = "integration")]
 mod integration;
@@ -42,6 +43,7 @@ pub const EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED: &str = "jobs.status.{runner_
 pub const KV_RUN_ID: &str = "{run_id}";
 pub const KV_RUNNER_TYPE_INSTANCE_KEY: &str = "{runner_type}.{instance_key}";
 pub const KV_JOBS_RUNNER_TYPE: &str = "jobs.runner_type.{runner_type}";
+pub const KV_JOBS_DISPATCH_MODE: &str = "jobs.dispatch_mode.{runner_type}";
 
 #[cfg(test)]
 mod tests;

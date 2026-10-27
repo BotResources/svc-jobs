@@ -21,7 +21,8 @@ use crate::db::hydrate::unavailable;
 
 const TYPES_SQL: &str = "SELECT rt.id::uuid AS id, rt.type_key, \
      registered.lifecycle::text AS lifecycle, registered.registered_at, \
-     registered.dispatch_mode::text AS dispatch_mode, registered.max_run_duration_seconds \
+     registered.dispatch_mode::text AS dispatch_mode, registered.max_run_duration_seconds, \
+     registered.dispatch_mode_since \
      FROM runner_types rt \
      JOIN registered_runner_types registered ON registered.runner_type_id = rt.id \
      WHERE $1::text IS NULL OR rt.type_key = $1 \
@@ -216,6 +217,7 @@ fn settings_of(row: &PgRow) -> Result<RunnerTypeSettings, JobsError> {
             .get::<Option<i64>, _>("max_run_duration_seconds")
             .map(MaxRunDuration::from_seconds)
             .transpose()?,
+        dispatch_mode_since: row.get("dispatch_mode_since"),
     })
 }
 

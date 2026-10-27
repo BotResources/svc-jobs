@@ -2,7 +2,7 @@
 //! Run duration.
 
 use bc_jobs::commands::FleetCommandResult;
-use bc_jobs::commands::fleet::{set_dispatch_mode, set_max_run_duration};
+use bc_jobs::commands::fleet::{clear_max_run_duration, set_dispatch_mode, set_max_run_duration};
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::fleet::dispatch_mode::DispatchMode;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
@@ -11,7 +11,7 @@ use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::fleet::FleetReader;
 
 use super::admin::administrator_metadata;
-use super::{Jobs, write};
+use super::{Jobs, runner_type_catalog, write};
 use crate::error::ServiceError;
 
 pub async fn dispatch_mode(
@@ -37,6 +37,14 @@ pub async fn max_run_duration(
         set_max_run_duration(known, duration)
     })
     .await
+}
+
+pub async fn clear_run_duration(
+    jobs: &Jobs,
+    actor: KnownUser,
+    runner_type: String,
+) -> Result<(), ServiceError> {
+    configure(jobs, actor, runner_type, clear_max_run_duration).await
 }
 
 async fn configure<F>(
@@ -65,5 +73,7 @@ where
         &administrator_metadata(&actor),
         jobs.clock.now(),
     )
-    .await
+    .await?;
+    runner_type_catalog::project_committed(jobs, &key, &result.events).await;
+    Ok(())
 }

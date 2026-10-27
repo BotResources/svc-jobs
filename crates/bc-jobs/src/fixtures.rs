@@ -162,6 +162,14 @@ impl RunBuilder {
         self
     }
 
+    pub fn withdrawn(mut self, at: DateTime<Utc>, reason: &str) -> Self {
+        self.state.terminal = Some(RunTerminal::withdrawn(
+            at,
+            crate::domain::keys::ReasonCode::new(reason).unwrap(),
+        ));
+        self
+    }
+
     pub fn failed(self, at: DateTime<Utc>, kind: RunFailureKind) -> Self {
         self.failed_with(at, report(kind))
     }

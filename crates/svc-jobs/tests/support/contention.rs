@@ -136,7 +136,17 @@ pub fn ids() -> UuidV7Factory {
 }
 
 pub async fn commit(fixture: &Fixture, changes: Vec<JobChange>) -> Result<(), ServiceError> {
-    write::commit_job_changes(&fixture.store, &ids(), changes, &metadata(), clock::now()).await
+    write::commit_job_changes(
+        &fixture.store,
+        write::WriteContext {
+            ids: &ids(),
+            metadata: &metadata(),
+            at: clock::now(),
+            limits: &limits(),
+        },
+        changes,
+    )
+    .await
 }
 
 pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str) -> (Job, RunId) {

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::{load_many, unavailable};
+use super::lineage::root_of;
 use super::rows;
 
 const MAXIMUM_SQL: &str = "SELECT m.max_priority::smallint FROM user_max_priorities m \
@@ -65,31 +66,34 @@ impl PgStore {
         maximum(tx, user_id).await
     }
 
-    /// Share-locks the lineage a child admission inherits from — the parent's
-    /// root and the parent, in id order, the order every cascade takes them
-    /// in — and reads the parent's state under that lock: its effective level,
-    /// and whether it still admits work. `None` when the parent is gone.
+    /// Share-locks the lineage a child admission inherits from — the root of
+    /// the parent's tree first, then the parent, the order every writer takes
+    /// Job rows in — and reads the parent's state under that lock: its
+    /// effective level, whether it is forced, and whether it still admits
+    /// work. `None` when the parent is gone.
     pub async fn share_lock_lineage(
         tx: &mut PgConnection,
         parent_job_id: JobId,
     ) -> Result<Option<ParentState>, PortError> {
-        let root: Option<Option<Uuid>> = sqlx::query_scalar(
-            "SELECT coalesce(root_job_id, parent_job_id)::uuid FROM jobs WHERE id = $1",
-        )
-        .bind(parent_job_id.as_uuid())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?;
+        let sql = format!("SELECT {}::uuid FROM jobs p WHERE p.id = $1", root_of("p"));
+        let root: Option<Uuid> = sqlx::query_scalar(&sql)
+            .bind(parent_job_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?;
         let Some(root) = root else {
             return Ok(None);
         };
-        let mut lineage = vec![parent_job_id.as_uuid()];
-        lineage.extend(root);
-        sqlx::query("SELECT id FROM jobs WHERE id = ANY($1) ORDER BY id FOR SHARE")
-            .bind(&lineage)
-            .execute(&mut *tx)
-            .await
-            .map_err(unavailable)?;
+        for row in [root, parent_job_id.as_uuid()] {
+            sqlx::query("SELECT id FROM jobs WHERE id = $1 FOR SHARE")
+                .bind(row)
+                .execute(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+            if row == parent_job_id.as_uuid() {
+                break;
+            }
+        }
         let row = sqlx::query(
             "SELECT j.effective_priority::smallint AS effective_priority, \
                 (j.forced_priority IS NOT NULL) AS forced, \

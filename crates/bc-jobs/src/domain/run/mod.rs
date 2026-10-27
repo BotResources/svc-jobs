@@ -91,6 +91,11 @@ impl Run {
                 }
                 _ => {}
             }
+            if terminal.withdrawal().is_some()
+                && (state.start.is_some() || state.reservation.is_some())
+            {
+                return Err(corrupt("withdrawn_run_was_taken"));
+            }
         }
         let mut steps = state.steps;
         steps.sort_by_key(Step::index);
@@ -277,11 +282,27 @@ impl Run {
     /// A Run published on the trigger stream that no Instance ever started,
     /// past `delay`: its type switched to claims, and no pushed Instance is
     /// left to take it.
-    pub fn has_a_stranded_trigger(&self, now: DateTime<Utc>, delay: TimeDelta) -> bool {
+    /// A pushed trigger nobody took, `delay` after its type switched to
+    /// `CLAIM` at `claimed_since` (or after its dispatch, when that is later).
+    pub fn has_a_stranded_trigger(
+        &self,
+        now: DateTime<Utc>,
+        delay: TimeDelta,
+        claimed_since: DateTime<Utc>,
+    ) -> bool {
         self.reservation.is_none()
             && self.start.is_none()
             && self.terminal.is_none()
-            && now - self.dispatched_at > delay
+            && now - self.dispatched_at.max(claimed_since) > delay
+    }
+
+    /// Whether this Run counts as an attempt of its Job. A Run withdrawn
+    /// unstarted — its trigger stranded by a switch to `CLAIM` — does not: the
+    /// Job waits again as it waited before it.
+    pub fn counts_as_attempt(&self) -> bool {
+        self.terminal
+            .as_ref()
+            .is_none_or(|terminal| terminal.withdrawal().is_none())
     }
 
     /// A started Run past its maximum duration: the one it was dispatched with,
@@ -306,12 +327,7 @@ impl Run {
 fn settles_unstarted(terminal: &RunTerminal, reserved: bool) -> bool {
     match terminal.kind() {
         RunTerminalKind::Cancelled => true,
-        RunTerminalKind::Failed => {
-            reserved
-                || terminal.failure().is_some_and(|report| {
-                    report.reason_code().as_str() == crate::domain::run::failure::TRIGGER_STRANDED
-                })
-        }
+        RunTerminalKind::Failed => reserved,
         RunTerminalKind::Completed => false,
     }
 }

@@ -100,6 +100,36 @@ pub fn cursor(event_id: Uuid) -> String {
     event_id.to_string()
 }
 
+/// The facts a subscription takes in one go: a burst — a cascade over a whole
+/// tree — is answered with one read of the store per batch, not one per fact.
+pub const FACT_BATCH: usize = 256;
+
+/// Above this many facts concerning a subscription in one batch, it is sent a
+/// fresh snapshot instead of one delta per fact.
+pub const RESET_ABOVE: usize = 64;
+
+/// The next fact, then every fact already waiting behind it, up to `limit`.
+/// `None` ends the subscription, as `next_unbroken_fact` does.
+pub async fn next_fact_batch(facts: &mut Receiver<Fact>, limit: usize) -> Option<Vec<Fact>> {
+    let mut batch = vec![next_unbroken_fact(facts).await?];
+    while batch.len() < limit {
+        match facts.try_recv() {
+            Ok(fact) => batch.push(fact),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                tracing::warn!(
+                    missed,
+                    "a subscriber fell behind the durable fact stream; its subscription ends so \
+                     the client reconnects onto a fresh snapshot"
+                );
+                return None;
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+        }
+    }
+    Some(batch)
+}
+
 pub async fn next_unbroken_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {
     match facts.recv().await {
         Ok(fact) => Some(fact),

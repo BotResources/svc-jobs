@@ -34,7 +34,7 @@ const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
 const RUNS_SQL: &str = "SELECT id::uuid AS id, job_id::uuid AS job_id, attempt_number, \
      dispatched_at, automatic_retry_schedule_id::uuid AS automatic_retry_schedule_id, \
      max_run_duration_seconds \
-     FROM runs WHERE job_id = ANY($1) ORDER BY job_id, attempt_number";
+     FROM runs WHERE job_id = ANY($1) ORDER BY job_id, attempt_number, dispatched_at, id";
 
 const RESERVATIONS_SQL: &str = "SELECT rr.run_id::uuid AS run_id, rr.reserved_at, rr.claim_id, \
      rt.type_key, ri.instance_key FROM run_reservations rr \
@@ -52,7 +52,8 @@ const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rt.ty
 
 const TERMINALS_SQL: &str = "SELECT t.run_id::uuid AS run_id, t.kind::text AS kind, t.occurred_at, \
      t.failure_kind::text AS failure_kind, t.reason_code, t.params, t.diagnostic, \
-     EXTRACT(EPOCH FROM t.retry_after_hint)::bigint AS retry_after_seconds \
+     EXTRACT(EPOCH FROM t.retry_after_hint)::bigint AS retry_after_seconds, \
+     r.withdrawn_reason \
      FROM run_terminals t JOIN runs r ON r.id = t.run_id WHERE r.job_id = ANY($1)";
 
 const SCHEDULES_SQL: &str = "SELECT s.id::uuid AS id, s.failed_run_id::uuid AS failed_run_id, s.due_at \

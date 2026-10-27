@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::fleet::run_duration::MaxRunDuration;
-use crate::domain::keys::{InstanceKey, RunnerTypeKey};
+use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::run::failure::{RunFailureKind, RunFailureReport};
 use crate::domain::run::parts::{RunReservation, RunnerInstanceReference};
 use uuid::Uuid;
@@ -264,14 +264,32 @@ fn a_reserved_run_may_fail_without_ever_starting_while_a_pushed_one_may_not() {
 }
 
 #[test]
-fn a_pushed_run_may_fail_unstarted_only_as_a_stranded_trigger() {
-    // Given: the failure the stranded-trigger backstop records
-    let report = RunFailureReport::platform(RunFailureKind::Transient, "trigger_stranded").unwrap();
-    // When: a pushed run that never started carries it
-    let stranded = Run::hydrate(RunState {
-        terminal: Some(RunTerminal::failed(at(90), report)),
+fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_cannot_be_withdrawn()
+{
+    // Given: a pushed run never taken, withdrawn as stranded
+    let withdrawn = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::withdrawn(
+            at(90),
+            ReasonCode::new("trigger_stranded").unwrap(),
+        )),
         ..pending()
+    })
+    .unwrap();
+    // Then: it loads, and is not an attempt
+    assert!(!withdrawn.counts_as_attempt());
+    // When: a reserved run carries a withdrawal
+    let taken = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::withdrawn(
+            at(90),
+            ReasonCode::new("trigger_stranded").unwrap(),
+        )),
+        ..reserved_at(1)
     });
-    // Then: it loads — no instance ever took the trigger
-    assert!(stranded.is_ok());
+    // Then: the contradiction is refused at load
+    assert_eq!(
+        taken.err(),
+        Some(JobsError::CorruptState {
+            reason_code: "withdrawn_run_was_taken"
+        })
+    );
 }

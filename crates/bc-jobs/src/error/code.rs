@@ -55,6 +55,7 @@ impl JobsError {
             Self::RunnerTypeHasNoLiveInstances => "runner_type_has_no_live_instances",
             Self::NotClaimMode { .. } => "not_claim_mode",
             Self::NotPushMode { .. } => "not_push_mode",
+            Self::MaxRunDurationNotSet { .. } => "no_max_run_duration_set",
             Self::RetryBudgetExhausted { .. } => "retry_budget_exhausted",
             Self::RetryNotScheduled => "retry_not_scheduled",
             Self::RetryNotDue { .. } => "retry_not_due",

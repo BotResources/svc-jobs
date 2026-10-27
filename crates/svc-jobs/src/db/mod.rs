@@ -5,12 +5,14 @@ pub mod fleet;
 pub mod hydrate;
 pub mod impacts;
 pub mod jobs;
+pub mod lineage;
 pub mod list;
 pub mod logs;
 pub mod notify;
 pub mod partitions;
 pub mod priority;
 pub mod rows;
+pub mod waiting_repair;
 
 use sqlx::PgPool;
 

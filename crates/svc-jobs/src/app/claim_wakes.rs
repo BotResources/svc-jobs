@@ -48,8 +48,14 @@ async fn wake(jobs: &Jobs, fact: &Fact) -> Result<(), ServiceError> {
             }
             JobEvent::RetryScheduled(_)
             | JobEvent::JobPriorityForced(_)
-            | JobEvent::JobPriorityRecalculated(_) => {
+            | JobEvent::JobPriorityRecalculated(_)
+            | JobEvent::RunCancelled(_) => {
                 if !jobs.waiters.is_any_held() {
+                    return Ok(());
+                }
+                if let JobEvent::RunCancelled(cancelled) = event.as_ref()
+                    && cancelled.withdrawn_for.is_none()
+                {
                     return Ok(());
                 }
                 let Some(runner_type) = jobs.store.runner_type_of(*job_id).await? else {
@@ -58,11 +64,16 @@ async fn wake(jobs: &Jobs, fact: &Fact) -> Result<(), ServiceError> {
                 if !jobs.waiters.is_held(&runner_type) {
                     return Ok(());
                 }
-                if matches!(event.as_ref(), JobEvent::RetryScheduled(_)) {
-                    // Every held claim of the type re-reads when the next retry falls due.
-                    jobs.waiters.wake_all(&runner_type);
-                } else {
-                    jobs.waiters.wake_one(&runner_type);
+                match event.as_ref() {
+                    // A retry is one more Job to take once due: the type's one
+                    // timer is armed for it, never every claim woken now.
+                    JobEvent::RetryScheduled(scheduled) => {
+                        let due_in = (scheduled.due_at - jobs.clock.now())
+                            .to_std()
+                            .unwrap_or_default();
+                        jobs.waiters.arm_retry(&runner_type, due_in);
+                    }
+                    _ => jobs.waiters.wake_one(&runner_type),
                 }
                 Ok(())
             }

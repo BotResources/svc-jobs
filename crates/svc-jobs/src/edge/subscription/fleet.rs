@@ -91,6 +91,9 @@ async fn fleet_deltas(
         FleetEvent::RunnerTypeMaxRunDurationChanged(_) => {
             GqlFleetEventKind::RunnerTypeMaxRunDurationChanged
         }
+        FleetEvent::RunnerTypeMaxRunDurationCleared(_) => {
+            GqlFleetEventKind::RunnerTypeMaxRunDurationCleared
+        }
         FleetEvent::InstanceConnected(_) => GqlFleetEventKind::InstanceConnected,
         FleetEvent::InstanceStatusReported(_) => GqlFleetEventKind::InstanceStatusReported,
         FleetEvent::InstanceDisconnected(_) => GqlFleetEventKind::InstanceDisconnected,

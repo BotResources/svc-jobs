@@ -33,6 +33,28 @@ impl JobTree {
         Ok(Self { children })
     }
 
+    /// The same tree with `touched` Jobs in their current state: a Job already
+    /// in the tree is replaced where it stands, a Job new to it joins its
+    /// parent's children. Every untouched node is shared, never reloaded.
+    pub fn with_replaced(&self, touched: Vec<Job>) -> Self {
+        let mut children = self.children.clone();
+        for job in touched {
+            let Some(parent) = job.parent_job_id() else {
+                continue;
+            };
+            let siblings = children.entry(parent.as_uuid()).or_default();
+            let job = Arc::new(job);
+            match siblings.iter_mut().find(|sibling| sibling.id() == job.id()) {
+                Some(slot) => *slot = job,
+                None => {
+                    siblings.push(job);
+                    siblings.sort_by_key(|job| (job.created_at(), job.id()));
+                }
+            }
+        }
+        Self { children }
+    }
+
     pub fn descendant_ids(&self) -> HashSet<Uuid> {
         self.children
             .values()

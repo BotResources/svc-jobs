@@ -9,7 +9,7 @@ use sqlx::{PgConnection, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::dispatch_order::{ORDER_BY, PUSHED_TYPES, ordered_waiting};
+use super::dispatch_order::{PUSHED_TYPES, pushed_in_order};
 use super::hydrate::{load_many, unavailable};
 
 pub(crate) const NO_ACTIVE_RUN: &str = "NOT EXISTS (SELECT 1 FROM runs r \
@@ -29,6 +29,7 @@ const ACTIVE_FOR_SOURCE_SQL: &str = "SELECT j.id::uuid AS id FROM jobs j \
 pub(crate) const UNCONSUMED_RETRY: &str = "SELECT s.due_at FROM run_retry_schedules s \
      JOIN runs fr ON fr.id = s.failed_run_id \
      LEFT JOIN runs dr ON dr.automatic_retry_schedule_id = s.id \
+        AND dr.withdrawn_reason IS NULL \
      WHERE fr.job_id = j.id AND dr.id IS NULL";
 
 impl PgStore {
@@ -195,11 +196,12 @@ impl JobReader for PgStore {
 #[async_trait]
 impl DueWorkReader for PgStore {
     async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
-        let sql = format!(
-            "{} SELECT o.job_id::uuid AS id FROM ordered o {ORDER_BY} LIMIT {DUE_WORK_BATCH}",
-            ordered_waiting(PUSHED_TYPES),
-        );
-        let ids = self.ids(&sql, at).await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(&pushed_in_order())
+            .bind(at)
+            .bind(i64::try_from(DUE_WORK_BATCH).unwrap_or(i64::MAX))
+            .fetch_all(self.pool())
+            .await
+            .map_err(unavailable)?;
         let mut jobs = self.load_batch(&ids).await?;
         jobs.sort_by_key(|job| {
             ids.iter()
@@ -249,16 +251,16 @@ impl DueWorkReader for PgStore {
         &self,
         cutoff: DateTime<Utc>,
     ) -> Result<Vec<Job>, PortError> {
+        // The outstanding triggers alone are read — never the ledger: a
+        // trigger is stranded once its type has been claimed from for the
+        // whole delay, counted from the switch or from its dispatch, whichever
+        // is later.
         let sql = format!(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             JOIN registered_runner_types reg ON reg.runner_type_id = j.runner_type_id \
+            "SELECT DISTINCT u.job_id::uuid AS id FROM unstarted_pushed_runs u \
+             JOIN registered_runner_types reg ON reg.runner_type_id = u.runner_type_id \
                 AND reg.dispatch_mode = 'CLAIM' \
-             WHERE {NOT_RESOLVED} AND EXISTS (SELECT 1 FROM runs r \
-                LEFT JOIN run_starts rs ON rs.run_id = r.id \
-                LEFT JOIN run_terminals t ON t.run_id = r.id \
-                LEFT JOIN run_reservations rr ON rr.run_id = r.id \
-                WHERE r.job_id = j.id AND rs.run_id IS NULL AND t.run_id IS NULL \
-                  AND rr.run_id IS NULL AND r.dispatched_at < $1) \
+             WHERE greatest(u.dispatched_at, \
+                    coalesce(reg.dispatch_mode_since, reg.registered_at)) < $1 \
              LIMIT {DUE_WORK_BATCH}"
         );
         let ids = self.ids(&sql, cutoff).await?;
@@ -285,7 +287,8 @@ impl DueWorkReader for PgStore {
                     UNION ALL \
                     SELECT j.created_at) activity) idle ON true \
              WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} \
-               AND EXISTS (SELECT 1 FROM runs r WHERE r.job_id = j.id) \
+               AND EXISTS (SELECT 1 FROM runs r \
+                    WHERE r.job_id = j.id AND r.withdrawn_reason IS NULL) \
                AND NOT EXISTS ({UNCONSUMED_RETRY}) \
                AND idle.last_activity < $1 \
              LIMIT {DUE_WORK_BATCH}"

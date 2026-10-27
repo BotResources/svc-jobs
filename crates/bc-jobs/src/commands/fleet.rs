@@ -12,8 +12,8 @@ use crate::error::JobsError;
 use crate::event::fleet::{
     FleetEvent, InstanceConnected, InstanceDisconnected, InstanceStatusReported,
     RunnerTypeBecameRetirable, RunnerTypeDeprecated, RunnerTypeDispatchModeChanged,
-    RunnerTypeMaxRunDurationChanged, RunnerTypeReactivated, RunnerTypeRegistered,
-    RunnerTypeRetired,
+    RunnerTypeMaxRunDurationChanged, RunnerTypeMaxRunDurationCleared, RunnerTypeReactivated,
+    RunnerTypeRegistered, RunnerTypeRetired,
 };
 
 pub const PRESENCE_EXPIRED: &str = "presence_expired";
@@ -160,6 +160,17 @@ pub fn set_dispatch_mode(
             runner_type_id: runner_type.id(),
             runner_type: runner_type.key().clone(),
             dispatch_mode,
+        }),
+    ))
+}
+
+/// Returns the type to the service default maximum Run duration.
+pub fn clear_max_run_duration(runner_type: &RunnerType) -> Result<FleetCommandResult, JobsError> {
+    runner_type.guard_clear_max_run_duration()?;
+    Ok(CommandResult::from_event(
+        FleetEvent::RunnerTypeMaxRunDurationCleared(RunnerTypeMaxRunDurationCleared {
+            runner_type_id: runner_type.id(),
+            runner_type: runner_type.key().clone(),
         }),
     ))
 }

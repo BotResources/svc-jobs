@@ -190,6 +190,18 @@ impl Settings {
                 value: claim_max_wait_seconds.to_string(),
             });
         }
+        // A held claim must be answered well before a reservation made for it
+        // could be judged lost: the reservation delay outlasts the longest
+        // wait a claim may be held.
+        if u64::try_from(claim_reservation_seconds).unwrap_or(0) <= claim_max_wait_seconds {
+            return Err(ServiceError::Configuration {
+                key: "JOBS_CLAIM_RESERVATION_SECONDS",
+                value: format!(
+                    "{claim_reservation_seconds} (must exceed JOBS_CLAIM_MAX_WAIT_SECONDS = \
+                     {claim_max_wait_seconds})"
+                ),
+            });
+        }
         let retry_policy = RetryPolicy::new(
             TimeDelta::seconds(retry_base_delay_seconds),
             retry_factor,

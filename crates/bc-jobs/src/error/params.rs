@@ -67,7 +67,8 @@ impl JobsError {
             Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
             Self::RunnerTypeRetired { runner_type }
             | Self::NotClaimMode { runner_type }
-            | Self::NotPushMode { runner_type } => json!({ "runnerType": runner_type }),
+            | Self::NotPushMode { runner_type }
+            | Self::MaxRunDurationNotSet { runner_type } => json!({ "runnerType": runner_type }),
             Self::RunnerTypeNotActive { lifecycle }
             | Self::RunnerTypeNotDeprecated { lifecycle } => json!({ "lifecycle": lifecycle }),
             Self::RunnerTypeHasNonTerminalJobs { count } => json!({ "count": count }),

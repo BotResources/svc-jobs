@@ -94,6 +94,19 @@ impl RunnerType {
         self.settings.dispatch_mode
     }
 
+    /// Since when the type is claimed from: the switch to `CLAIM`, or its
+    /// registration. `None` while it is pushed to.
+    pub fn claimed_since(&self) -> Option<DateTime<Utc>> {
+        match self.settings.dispatch_mode {
+            DispatchMode::Claim => Some(
+                self.settings
+                    .dispatch_mode_since
+                    .unwrap_or(self.registered_at),
+            ),
+            DispatchMode::Push => None,
+        }
+    }
+
     /// The maximum set for this type, absent while it follows the service
     /// default.
     pub fn own_max_run_duration(&self) -> Option<MaxRunDuration> {

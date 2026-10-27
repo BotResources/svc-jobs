@@ -14,7 +14,7 @@ impl Job {
     pub fn status(&self) -> JobStatus {
         match self.resolution() {
             Some(resolution) => resolution.kind().as_status(),
-            None if self.runs().is_empty() => JobStatus::Pending,
+            None if self.attempt_count() == 0 => JobStatus::Pending,
             None => JobStatus::InProgress,
         }
     }
@@ -27,8 +27,15 @@ impl Job {
         self.deletion().is_some()
     }
 
+    /// The Runs that count as attempts — a Run withdrawn unstarted does not.
     pub fn attempt_count(&self) -> u32 {
-        u32::try_from(self.runs().len()).unwrap_or(u32::MAX)
+        u32::try_from(
+            self.runs()
+                .iter()
+                .filter(|run| run.counts_as_attempt())
+                .count(),
+        )
+        .unwrap_or(u32::MAX)
     }
 
     pub fn active_run(&self) -> Option<&Run> {
@@ -42,7 +49,7 @@ impl Job {
     pub fn is_waiting(&self) -> bool {
         !self.is_terminal()
             && self.active_run().is_none()
-            && (self.runs().is_empty() || self.unconsumed_retry().is_some())
+            && (self.attempt_count() == 0 || self.unconsumed_retry().is_some())
     }
 
     pub fn latest_run(&self) -> Option<&Run> {
@@ -81,10 +88,10 @@ impl Job {
     pub fn unconsumed_retry(&self) -> Option<&Run> {
         self.runs().iter().rev().find(|run| {
             run.retry_schedule().is_some_and(|schedule| {
-                !self
-                    .runs()
-                    .iter()
-                    .any(|other| other.automatic_retry_schedule_id() == Some(schedule.id()))
+                !self.runs().iter().any(|other| {
+                    other.counts_as_attempt()
+                        && other.automatic_retry_schedule_id() == Some(schedule.id())
+                })
             })
         })
     }

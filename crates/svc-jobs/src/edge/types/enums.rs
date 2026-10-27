@@ -181,6 +181,7 @@ pub enum GqlFleetEventKind {
     RunnerTypeBecameRetirable,
     RunnerTypeDispatchModeChanged,
     RunnerTypeMaxRunDurationChanged,
+    RunnerTypeMaxRunDurationCleared,
     InstanceConnected,
     InstanceStatusReported,
     InstanceDisconnected,

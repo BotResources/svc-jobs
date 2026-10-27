@@ -30,6 +30,10 @@ pub async fn dispatched(
     .map_err(unavailable)?;
     super::waiting::end_waiting(tx, fact.job_id.as_uuid()).await?;
     super::waiting::served(tx, fact.job_id.as_uuid(), at).await?;
+    if fact.claimed_by.is_none() {
+        super::waiting::trigger_published(tx, fact.run_id.as_uuid(), fact.job_id.as_uuid(), at)
+            .await?;
+    }
     if let Some(claim) = &fact.claimed_by {
         let instance = existing_instance(tx, &fact.runner_type, &claim.instance_key).await?;
         sqlx::query(
@@ -100,6 +104,7 @@ pub async fn started(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    super::waiting::trigger_settled(tx, fact.run_id.as_uuid()).await?;
     settle_reservation(tx, fact.run_id.as_uuid(), at).await
 }
 
@@ -161,7 +166,28 @@ pub async fn cancelled(
     fact: &RunCancelled,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await
+    terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await?;
+    let Some(reason) = &fact.withdrawn_for else {
+        return Ok(());
+    };
+    // A withdrawn Run does not count: its Job waits again exactly as before
+    // it — for its first attempt, or for the retry the Run was meant to be,
+    // whose due time has passed.
+    sqlx::query("UPDATE runs SET withdrawn_reason = $2 WHERE id = $1")
+        .bind(fact.run_id.as_uuid())
+        .bind(reason.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    let due_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT s.due_at FROM runs r JOIN run_retry_schedules s \
+            ON s.id = r.automatic_retry_schedule_id WHERE r.id = $1",
+    )
+    .bind(fact.run_id.as_uuid())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), due_at).await
 }
 
 pub async fn failed(
@@ -203,6 +229,7 @@ async fn terminal(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    super::waiting::trigger_settled(tx, run_id).await?;
     settle_reservation(tx, run_id, at).await?;
     crate::db::impacts::record_terminal(tx, run_id, at).await
 }

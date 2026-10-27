@@ -73,6 +73,22 @@ impl Job {
         basis: PriorityBasis,
         user_id: KnownUserId,
     ) -> JobCommandResult {
+        self.recalculated_on(basis, Some(user_id))
+    }
+
+    /// The effective level a Job that just went back to waiting takes from
+    /// the current cap or its parent — a retry or a withdrawn trigger waits at
+    /// the level its basis gives now, not the one it was admitted with. A
+    /// forced Job keeps its force.
+    pub fn rederive_priority(&self, basis: PriorityBasis) -> JobCommandResult {
+        self.recalculated_on(basis, None)
+    }
+
+    fn recalculated_on(
+        &self,
+        basis: PriorityBasis,
+        user_id: Option<KnownUserId>,
+    ) -> JobCommandResult {
         if !self.is_waiting() {
             return CommandResult::new(vec![]);
         }
@@ -286,9 +302,59 @@ mod tests {
                 job_id: job.id(),
                 effective_priority: level(4),
                 previous_priority: level(3),
-                user_id,
+                user_id: Some(user_id),
                 requested_priority: None,
             })]
+        );
+    }
+
+    #[test]
+    fn a_job_back_to_waiting_takes_the_level_its_cap_gives_now() {
+        // Given: a job admitted at 4 that requested 5, whose first attempt failed
+        // with a retry scheduled
+        let job = JobBuilder::new()
+            .with_priority(level(5), level(4), None)
+            .with_run(
+                RunBuilder::new(1)
+                    .started(ts(5))
+                    .failed(
+                        ts(20),
+                        crate::domain::run::failure::RunFailureKind::Transient,
+                    )
+                    .retry_due(ts(80))
+                    .build(),
+            )
+            .build();
+        // When: it re-derives its level under a cap now at 2
+        let result = job.rederive_priority(PriorityBasis::Capped { maximum: level(2) });
+        // Then: it waits at 2, naming no user
+        assert!(matches!(
+            result.events.as_slice(),
+            [JobEvent::JobPriorityRecalculated(fact)]
+                if fact.effective_priority == level(2) && fact.user_id.is_none()
+        ));
+    }
+
+    #[test]
+    fn a_forced_job_back_to_waiting_keeps_its_force() {
+        // Given: a forced job waiting for its retry
+        let job = JobBuilder::new()
+            .with_priority(level(3), level(5), Some(level(5)))
+            .with_run(
+                RunBuilder::new(1)
+                    .started(ts(5))
+                    .failed(
+                        ts(20),
+                        crate::domain::run::failure::RunFailureKind::Transient,
+                    )
+                    .retry_due(ts(80))
+                    .build(),
+            )
+            .build();
+        // When/Then: the cap does not move it
+        assert!(
+            job.rederive_priority(PriorityBasis::Capped { maximum: level(1) })
+                .is_empty()
         );
     }
 

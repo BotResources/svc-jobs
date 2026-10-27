@@ -48,6 +48,7 @@ impl Job {
         events.push(JobEvent::RunCancelled(RunCancelled {
             job_id: self.id(),
             run_id: run.id(),
+            withdrawn_for: None,
         }));
         events
     }

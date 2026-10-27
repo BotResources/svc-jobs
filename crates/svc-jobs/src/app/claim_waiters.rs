@@ -4,20 +4,30 @@
 //! a burst of claims does not stampede the ledger for every Job. A claim woken
 //! but leaving without taking the wake (it was served by its own pass, or its
 //! wait ended) passes the wake on to the next one, so no Job is left waiting
-//! with claims parked beside it. Facts that change what every claim of a type
-//! may do — the fleet of the type moved, a retry of the type was scheduled —
-//! wake them all.
+//! with claims parked beside it. A retry falling due is one more Job to take:
+//! the pod keeps ONE timer per type, armed for the earliest retry it knows
+//! of, and wakes one claim when it fires. Facts that change what every claim
+//! of a type may do — the fleet of the type moved — wake them all.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::time::Duration;
 
 use bc_jobs::domain::keys::RunnerTypeKey;
 use tokio::sync::Notify;
+use tokio::task::AbortHandle;
+use tokio::time::Instant;
 
 #[derive(Default)]
 pub struct ClaimWaiters {
     held: Mutex<HashMap<RunnerTypeKey, VecDeque<Weak<Waiter>>>>,
+    retry_timers: Mutex<HashMap<RunnerTypeKey, RetryTimer>>,
+}
+
+struct RetryTimer {
+    due: Instant,
+    task: AbortHandle,
 }
 
 pub struct Waiter {
@@ -108,6 +118,52 @@ impl ClaimWaiters {
         }
     }
 
+    /// Arms the type's retry timer for `due_in` from now, unless it is already
+    /// armed for an earlier moment. When it fires, one held claim of the type
+    /// is woken; a claim parking afterwards arms it again for the next retry.
+    pub fn arm_retry(self: &Arc<Self>, runner_type: &RunnerTypeKey, due_in: Duration) {
+        let due = Instant::now() + due_in;
+        let mut timers = self.timers();
+        if timers
+            .get(runner_type)
+            .is_some_and(|armed| armed.due <= due && !armed.task.is_finished())
+        {
+            return;
+        }
+        let waiters = Arc::downgrade(self);
+        let key = runner_type.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep_until(due).await;
+            if let Some(waiters) = waiters.upgrade() {
+                waiters.fired(&key, due);
+            }
+        })
+        .abort_handle();
+        if let Some(replaced) = timers.insert(runner_type.clone(), RetryTimer { due, task }) {
+            replaced.task.abort();
+        }
+    }
+
+    /// Whether a retry timer of the type is armed and not yet fired.
+    pub fn has_retry_timer(&self, runner_type: &RunnerTypeKey) -> bool {
+        self.timers()
+            .get(runner_type)
+            .is_some_and(|armed| !armed.task.is_finished())
+    }
+
+    fn fired(&self, runner_type: &RunnerTypeKey, due: Instant) {
+        {
+            let mut timers = self.timers();
+            if timers
+                .get(runner_type)
+                .is_some_and(|armed| armed.due == due)
+            {
+                timers.remove(runner_type);
+            }
+        }
+        self.wake_one(runner_type);
+    }
+
     pub fn wake_everyone(&self) {
         let types: Vec<RunnerTypeKey> = self.lock().keys().cloned().collect();
         for runner_type in types {
@@ -117,6 +173,12 @@ impl ClaimWaiters {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<RunnerTypeKey, VecDeque<Weak<Waiter>>>> {
         self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn timers(&self) -> std::sync::MutexGuard<'_, HashMap<RunnerTypeKey, RetryTimer>> {
+        self.retry_timers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -185,5 +247,23 @@ mod tests {
         assert!(is_woken(&first).await);
         assert!(is_woken(&second).await);
         assert!(!is_woken(&other).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_retry_falling_due_wakes_one_claim_through_one_timer() {
+        // Given: two claims held for one type, and two retries armed
+        let waiters = Arc::new(ClaimWaiters::default());
+        let first = waiters.hold(&analyst());
+        let second = waiters.hold(&analyst());
+        waiters.arm_retry(&analyst(), Duration::from_secs(5));
+        waiters.arm_retry(&analyst(), Duration::from_secs(9));
+        // Then: one timer stands, for the earliest retry
+        assert!(waiters.has_retry_timer(&analyst()));
+        // When: it fires
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        // Then: one claim is woken, the other keeps waiting, and the timer is spent
+        assert!(is_woken(&first).await);
+        assert!(!is_woken(&second).await);
+        assert!(!waiters.has_retry_timer(&analyst()));
     }
 }

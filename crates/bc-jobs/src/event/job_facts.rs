@@ -116,6 +116,10 @@ pub struct RunFailed {
 pub struct RunCancelled {
     pub job_id: JobId,
     pub run_id: RunId,
+    /// Set when the Run is withdrawn without counting as an attempt — its
+    /// trigger was stranded by a switch to `CLAIM` — so its Job waits again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withdrawn_for: Option<ReasonCode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,8 +206,10 @@ pub struct JobPriorityRecalculated {
     pub job_id: JobId,
     pub effective_priority: Priority,
     pub previous_priority: Priority,
-    /// The user whose maximum changed.
-    pub user_id: KnownUserId,
+    /// The user whose maximum changed — absent when the Job re-derived its
+    /// level on going back to waiting.
+    #[serde(default)]
+    pub user_id: Option<KnownUserId>,
     /// The request an inheriting descendant now records: its new level, as at
     /// admission. Absent for a root, whose own request stands.
     #[serde(default)]

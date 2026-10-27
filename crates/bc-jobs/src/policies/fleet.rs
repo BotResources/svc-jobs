@@ -30,6 +30,10 @@ pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
         JobEvent::JobQueued(_) | JobEvent::RetryScheduled(_) => vec![FleetSignal::JobBeganWaiting],
         JobEvent::RunDispatched(_) => vec![FleetSignal::JobStoppedWaiting],
         JobEvent::RunStarted(_) => vec![FleetSignal::JobBeganExecuting],
+        // A withdrawn trigger never executed: its Job simply waits again.
+        JobEvent::RunCancelled(fact) if fact.withdrawn_for.is_some() => {
+            vec![FleetSignal::JobBeganWaiting]
+        }
         JobEvent::RunCompleted(_) | JobEvent::RunFailed(_) | JobEvent::RunCancelled(_) => {
             vec![FleetSignal::JobStoppedExecuting]
         }

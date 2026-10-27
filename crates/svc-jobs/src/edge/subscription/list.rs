@@ -1,9 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use async_graphql::Result;
-use bc_jobs::event::job::JobEvent;
 use br_util_graphql::{Connection, Edge, PageInfo};
-use chrono::{DateTime, Utc};
 use futures::Stream;
 use uuid::Uuid;
 
@@ -16,7 +14,7 @@ use crate::edge::types::job::GqlJobSummaryView;
 use crate::edge::types::stream::{GqlJobsDelta, GqlJobsSnapshot, GqlJobsStreamMessage};
 use crate::stream::Fact;
 
-use super::{cursor, next_unbroken_fact};
+use super::{FACT_BATCH, RESET_ABOVE, cursor, next_fact_batch};
 
 pub struct Window {
     pub filter: JobFilter,
@@ -31,78 +29,148 @@ pub fn list_stream(
     let mut facts = state.hub.subscribe();
     async_stream::stream! {
         let mut present: HashSet<Uuid>;
-        match page(&state, &window).await {
-            Ok((connection, ids)) => {
+        match snapshot(&state, &window).await {
+            Ok((message, ids)) => {
                 present = ids;
-                yield GqlJobsStreamMessage::Snapshot(GqlJobsSnapshot {
-                    cursor: cursor(Uuid::now_v7()),
-                    jobs: connection,
-                });
+                yield message;
             }
             Err(error) => {
                 tracing::warn!(error = ?error, "the job list snapshot could not be built");
                 return;
             }
         }
-        while let Some(fact) = next_unbroken_fact(&mut facts).await {
-            let Fact::Job { event_id, occurred_at, job_id, event } = fact else {
+        while let Some(batch) = next_fact_batch(&mut facts, FACT_BATCH).await {
+            let carried: Vec<Carried> = batch.iter().filter_map(Carried::of).collect();
+            if carried.is_empty() {
                 continue;
-            };
-            match delta(
-                &state,
-                &window,
-                &mut present,
-                job_id.as_uuid(),
-                event_id,
-                occurred_at,
-                &event,
-            )
-            .await
-            {
-                Ok(Some(message)) => yield message,
-                Ok(None) => {}
-                Err(error) => tracing::warn!(error = ?error, "a list delta could not be built"),
+            }
+            match deltas(&state, &window, &mut present, carried).await {
+                Ok(Deltas::Each(messages)) => {
+                    for message in messages {
+                        yield message;
+                    }
+                }
+                Ok(Deltas::Reset) => match snapshot(&state, &window).await {
+                    Ok((message, ids)) => {
+                        present = ids;
+                        yield message;
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = ?error, "the job list could not be reset");
+                        return;
+                    }
+                },
+                Err(error) => tracing::warn!(error = ?error, "list deltas could not be built"),
             }
         }
     }
 }
 
-async fn delta(
+/// One Job fact a list may carry.
+struct Carried {
+    job_id: Uuid,
+    event: crate::edge::types::event::GqlJobEvent,
+    event_id: Uuid,
+}
+
+impl Carried {
+    fn of(fact: &Fact) -> Option<Self> {
+        let Fact::Job {
+            event_id,
+            occurred_at,
+            job_id,
+            event,
+        } = fact
+        else {
+            return None;
+        };
+        Some(Self {
+            job_id: job_id.as_uuid(),
+            event: of_domain(*event_id, *occurred_at, event)?,
+            event_id: *event_id,
+        })
+    }
+}
+
+enum Deltas {
+    Each(Vec<GqlJobsStreamMessage>),
+    Reset,
+}
+
+async fn snapshot(
+    state: &EdgeState,
+    window: &Window,
+) -> Result<(GqlJobsStreamMessage, HashSet<Uuid>)> {
+    let (connection, ids) = page(state, window).await?;
+    Ok((
+        GqlJobsStreamMessage::Snapshot(GqlJobsSnapshot {
+            cursor: cursor(Uuid::now_v7()),
+            jobs: connection,
+        }),
+        ids,
+    ))
+}
+
+/// The deltas of one batch: the window and the touched Jobs are read once for
+/// the whole batch, then each fact is carried with the current view of its
+/// Job. A batch touching more Jobs of the list than `RESET_ABOVE` resets it.
+async fn deltas(
     state: &EdgeState,
     window: &Window,
     present: &mut HashSet<Uuid>,
-    job_id: Uuid,
-    event_id: Uuid,
-    occurred_at: DateTime<Utc>,
-    event: &JobEvent,
-) -> Result<Option<GqlJobsStreamMessage>> {
-    let Some(carried) = of_domain(event_id, occurred_at, event) else {
-        return Ok(None);
-    };
-    let matches = state
+    carried: Vec<Carried>,
+) -> Result<Deltas> {
+    let mut touched: Vec<Uuid> = carried.iter().map(|fact| fact.job_id).collect();
+    touched.sort_unstable();
+    touched.dedup();
+    let matched = state
         .store
-        .matches_filter(job_id, &window.filter)
+        .matching_among(&touched, &window.filter)
         .await
         .map_err(edge_error)?;
-    if !matches && !present.contains(&job_id) {
-        return Ok(None);
+    let relevant: Vec<&Carried> = carried
+        .iter()
+        .filter(|fact| matched.contains(&fact.job_id) || present.contains(&fact.job_id))
+        .collect();
+    if relevant.is_empty() {
+        return Ok(Deltas::Each(vec![]));
+    }
+    if relevant.len() > RESET_ABOVE {
+        return Ok(Deltas::Reset);
     }
     let (ids, page_info) = window_of(state, window).await?;
-    let (upserted, removed_ids) = if matches {
-        present.insert(job_id);
-        (upsert(state, job_id).await?, vec![])
-    } else {
-        present.remove(&job_id);
-        (vec![], vec![job_id])
-    };
-    present.retain(|id| ids.contains(id) || *id == job_id);
-    Ok(Some(GqlJobsStreamMessage::Delta(GqlJobsDelta {
-        cursor: cursor(event_id),
-        event: carried,
-        upserted,
-        removed_ids,
-        page_info,
-    })))
+    let wanted: Vec<Uuid> = touched
+        .iter()
+        .copied()
+        .filter(|id| matched.contains(id))
+        .collect();
+    let views: HashMap<Uuid, GqlJobSummaryView> = upserts(state, &wanted)
+        .await?
+        .into_iter()
+        .map(|view| (view.job.id().as_uuid(), view))
+        .collect();
+    let mut messages = Vec::with_capacity(relevant.len());
+    for fact in relevant {
+        let (upserted, removed_ids) = match views.get(&fact.job_id) {
+            Some(view) => {
+                present.insert(fact.job_id);
+                (vec![view.clone()], vec![])
+            }
+            None => {
+                present.remove(&fact.job_id);
+                (vec![], vec![fact.job_id])
+            }
+        };
+        messages.push(GqlJobsStreamMessage::Delta(GqlJobsDelta {
+            cursor: cursor(fact.event_id),
+            event: fact.event.clone(),
+            upserted,
+            removed_ids,
+            page_info: page_info.clone(),
+        }));
+    }
+    present.retain(|id| ids.contains(id) || views.contains_key(id));
+    Ok(Deltas::Each(messages))
 }
 
 async fn window_of(state: &EdgeState, window: &Window) -> Result<(HashSet<Uuid>, PageInfo)> {
@@ -120,12 +188,11 @@ async fn window_of(state: &EdgeState, window: &Window) -> Result<(HashSet<Uuid>,
     Ok((matched.ids().into_iter().collect(), page_info))
 }
 
-async fn upsert(state: &EdgeState, job_id: Uuid) -> Result<Vec<GqlJobSummaryView>> {
-    let jobs = state
-        .store
-        .load_batch(&[job_id])
-        .await
-        .map_err(edge_error)?;
+async fn upserts(state: &EdgeState, job_ids: &[Uuid]) -> Result<Vec<GqlJobSummaryView>> {
+    if job_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let jobs = state.store.load_batch(job_ids).await.map_err(edge_error)?;
     project::summary_views(&state.store, jobs).await
 }
 

@@ -87,10 +87,13 @@ fn metadata() -> EventMetadata {
 async fn commit(fixture: &Fixture, changes: Vec<JobChange>) {
     write::commit_job_changes(
         &fixture.store,
-        &UuidV7Factory,
+        write::WriteContext {
+            ids: &UuidV7Factory,
+            metadata: &metadata(),
+            at: clock::now(),
+            limits: &limits(),
+        },
         changes,
-        &metadata(),
-        clock::now(),
     )
     .await
     .expect("the write lands");

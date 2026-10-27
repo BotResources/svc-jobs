@@ -1,4 +1,4 @@
-use bc_jobs::commands::job::backstop::{FailForInactivity, ReclaimRun};
+use bc_jobs::commands::job::backstop::{FailForInactivity, ReclaimRun, WithdrawStrandedTrigger};
 use bc_jobs::domain::ids::{ResolutionId, RetryScheduleId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::run::Run;
@@ -9,7 +9,42 @@ use super::write::JobChange;
 use super::{Jobs, reconcile, service_metadata};
 use crate::error::ServiceError;
 
+/// How far back a sweep looks for facts that may have left an access path
+/// wrong — far more than a sweep interval, so a fact recorded by any pod, a
+/// 0.3 one included, is repaired by several sweeps before it falls out.
+const REPAIR_LOOKBACK: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
+
+/// Repairs the access paths of every Job that may be on one, at boot: the
+/// facts a 0.3 pod recorded before this pod existed are covered too.
+pub async fn repair_every_access_path(jobs: &Jobs) -> Result<(), ServiceError> {
+    let candidates = jobs.store.every_job_on_a_path().await?;
+    let repaired = jobs.store.repair_access_paths(&candidates).await?;
+    if !repaired.is_empty() {
+        tracing::warn!(
+            ?repaired,
+            "the access paths drifted from the ledger and were repaired"
+        );
+    }
+    Ok(())
+}
+
+async fn repair_recent_access_paths(jobs: &Jobs) -> Result<(), ServiceError> {
+    let since = jobs.clock.now() - REPAIR_LOOKBACK;
+    let candidates = jobs.store.jobs_with_path_facts_since(since).await?;
+    let repaired = jobs.store.repair_access_paths(&candidates).await?;
+    if !repaired.is_empty() {
+        tracing::warn!(
+            ?repaired,
+            "the access paths drifted from the ledger (a pod that does not maintain them \
+             recorded facts) and were repaired"
+        );
+    }
+    jobs.store.purge_idle_turns(since).await?;
+    Ok(())
+}
+
 pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
+    repair_recent_access_paths(jobs).await?;
     if let Err(error) = reconcile::presence_sessions(jobs).await {
         tracing::warn!(
             error = %error,
@@ -77,16 +112,13 @@ async fn reclaim_lost_claims(jobs: &Jobs) -> Result<(), ServiceError> {
     Ok(())
 }
 
-/// Runs published on the trigger stream before their type switched to
-/// `CLAIM`, that nobody started: past the reservation delay they fail as
-/// transient (`trigger_stranded`) and their retry waits to be claimed.
+/// Runs published on the trigger stream that nobody took, their type claimed
+/// from for the whole reservation delay since the switch: each is withdrawn
+/// without spending an attempt, and its Job waits to be claimed.
 async fn reclaim_stranded_triggers(jobs: &Jobs) -> Result<(), ServiceError> {
     let now = jobs.clock.now();
     let delay = jobs.claims.reservation_delay;
     let stranded = DueWorkReader::jobs_with_stranded_triggers(&jobs.store, now - delay).await?;
-    if stranded.is_empty() {
-        return Ok(());
-    }
     for job in stranded {
         let Some(run) = job.active_run() else {
             continue;
@@ -94,20 +126,11 @@ async fn reclaim_stranded_triggers(jobs: &Jobs) -> Result<(), ServiceError> {
         let Some(runner_type) = FleetReader::load(&jobs.store, job.runner_type()).await? else {
             continue;
         };
-        let command = ReclaimRun {
+        let command = WithdrawStrandedTrigger {
             run_id: run.id(),
-            retry_schedule_id: RetryScheduleId::new(jobs.ids.next())?,
-            resolution_id: ResolutionId::new(jobs.ids.next())?,
-            jitter: jobs.jitter.draw(),
             at: now,
         };
-        match job.fail_run_for_stranded_trigger(
-            command,
-            runner_type.dispatch_mode(),
-            delay,
-            &jobs.retry,
-            &jobs.limits,
-        ) {
+        match job.withdraw_stranded_trigger(command, runner_type.claimed_since(), delay) {
             Err(refusal) => tracing::debug!(
                 job_id = %job.id().as_uuid(),
                 code = refusal.code(),

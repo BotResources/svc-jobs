@@ -16,6 +16,7 @@ pub const REACTIVATE: &str = "reactivate";
 pub const RETIRE: &str = "retire";
 pub const SET_DISPATCH_MODE: &str = "set_dispatch_mode";
 pub const SET_MAX_RUN_DURATION: &str = "set_max_run_duration";
+pub const CLEAR_MAX_RUN_DURATION: &str = "clear_max_run_duration";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetirementWindow {
@@ -47,28 +48,6 @@ impl RunnerTypeDecisionFacts {
 }
 
 impl RunnerType {
-    /// How the first Run of a manual-retry successor of a Job of `runner_type`
-    /// leaves the ledger: a `CLAIM` type's successor waits to be claimed; any other
-    /// — or a type never registered — is pushed with the intervention, held to the
-    /// type's maximum duration or the service default.
-    pub fn successor_dispatch(
-        runner_type: Option<&RunnerType>,
-        first_run_id: RunId,
-        service_default: MaxRunDuration,
-    ) -> SuccessorDispatch {
-        match runner_type {
-            Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
-                SuccessorDispatch::AwaitClaim
-            }
-            known => SuccessorDispatch::Push {
-                first_run_id,
-                max_run_duration: known.map_or(service_default, |known| {
-                    known.max_run_duration_or(service_default)
-                }),
-            },
-        }
-    }
-
     pub fn guard_accept_job(&self) -> Result<(), JobsError> {
         guard_accept_job(self.lifecycle(), self.key())
     }
@@ -132,6 +111,23 @@ impl RunnerType {
         Availability::from_guard(self.guard_configure())
     }
 
+    /// Returning the type to the service default maximum: it has one of its
+    /// own to clear.
+    pub fn guard_clear_max_run_duration(&self) -> Result<(), JobsError> {
+        self.guard_configure()?;
+        if self.own_max_run_duration().is_some() {
+            Ok(())
+        } else {
+            Err(JobsError::MaxRunDurationNotSet {
+                runner_type: self.key().as_str().to_owned(),
+            })
+        }
+    }
+
+    pub fn can_clear_max_run_duration(&self) -> Availability {
+        Availability::from_guard(self.guard_clear_max_run_duration())
+    }
+
     pub fn guard_deprecate(&self) -> Result<(), JobsError> {
         match self.lifecycle() {
             RunnerTypeLifecycle::Active => Ok(()),
@@ -192,6 +188,7 @@ impl RunnerType {
             Affordance::new(RETIRE, self.can_retire(facts)),
             Affordance::new(SET_DISPATCH_MODE, self.can_configure()),
             Affordance::new(SET_MAX_RUN_DURATION, self.can_configure()),
+            Affordance::new(CLEAR_MAX_RUN_DURATION, self.can_clear_max_run_duration()),
         ]
     }
 }

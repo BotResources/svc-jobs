@@ -125,6 +125,19 @@ impl MutationRoot {
         )
     }
 
+    /// Returns a RunnerType to the service default maximum Run duration.
+    async fn jobs_clear_runner_type_max_run_duration(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlRunnerTypeInput,
+    ) -> Result<MutationResult> {
+        let actor = administrator(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        acknowledged(
+            runner_type_settings::clear_run_duration(&state.jobs, actor, input.runner_type).await,
+        )
+    }
+
     /// Super users only: decided by the domain on the caller's principal.
     async fn jobs_set_user_max_priority(
         &self,

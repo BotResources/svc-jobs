@@ -73,6 +73,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunWithinMaxDuration { .. }
         | JobsError::RunnerTypeUnavailable { .. }
         | JobsError::RunnerTypeRetired { .. }
+        | JobsError::MaxRunDurationNotSet { .. }
         | JobsError::RunnerTypeNotActive { .. }
         | JobsError::RunnerTypeNotDeprecated { .. }
         | JobsError::RunnerTypeAlreadyActive

@@ -270,6 +270,44 @@ mod tests {
     }
 
     #[test]
+    fn a_retry_whose_trigger_was_withdrawn_goes_out_again_as_the_same_attempt() {
+        // Given: attempt one failed with a retry due at ts(80), and the retry's
+        // trigger was withdrawn as stranded
+        let failed = RunBuilder::new(1)
+            .started(ts(5))
+            .failed(ts(20), RunFailureKind::Transient)
+            .retry_due(ts(80))
+            .build();
+        let schedule = failed.retry_schedule().unwrap().id();
+        let withdrawn = RunBuilder::new(2)
+            .retry_of_schedule(schedule)
+            .withdrawn(ts(150), "trigger_stranded")
+            .build();
+        let job = JobBuilder::new()
+            .with_run(failed)
+            .with_run(withdrawn)
+            .build();
+        // Then: the job waits again, one attempt spent
+        assert!(job.is_waiting());
+        assert_eq!(job.attempt_count(), 1);
+        // When: the retry is dispatched again
+        let fact = dispatched(
+            job.dispatch_run(
+                DispatchRun {
+                    run_id: run_id(),
+                    at: ts(160),
+                    max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
+                },
+                &ServiceLimits::default(),
+            )
+            .unwrap(),
+        );
+        // Then: it is attempt two again, consuming the same schedule
+        assert_eq!(fact.attempt_number.get(), 2);
+        assert_eq!(fact.automatic_retry_schedule_id, Some(schedule));
+    }
+
+    #[test]
     fn a_retry_with_no_schedule_behind_it_is_refused() {
         // Given: a job whose first attempt failed without a retry being scheduled
         let job = JobBuilder::new()

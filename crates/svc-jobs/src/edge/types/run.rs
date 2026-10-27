@@ -125,6 +125,9 @@ pub struct GqlRun {
     pub failure_report: Option<GqlRunFailureReport>,
     pub retry_due_at: Option<DateTime<Utc>>,
     pub cancellation_requested_at: Option<DateTime<Utc>>,
+    /// Why the Run was cancelled or asked to stop: `trigger_stranded` for a
+    /// trigger withdrawn without counting as an attempt.
+    pub cancellation_reason: Option<String>,
     pub dispatched_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -161,6 +164,14 @@ pub fn run_of(job: &Job, run: &Run) -> GqlRun {
                     .map(|hint| i32::try_from(hint.num_seconds()).unwrap_or(i32::MAX)),
             }),
         retry_due_at: run.retry_schedule().map(|schedule| schedule.due_at()),
+        cancellation_reason: run
+            .terminal()
+            .and_then(|terminal| terminal.withdrawal())
+            .or_else(|| {
+                run.cancellation_request()
+                    .map(|request| request.reason_code())
+            })
+            .map(|reason| reason.as_str().to_owned()),
         cancellation_requested_at: run
             .cancellation_request()
             .map(|request| request.requested_at()),

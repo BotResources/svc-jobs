@@ -2,7 +2,6 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::commands::job::run_outcome::RunFailureFact;
 use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
-use crate::domain::fleet::dispatch_mode::DispatchMode;
 use crate::domain::ids::{ResolutionId, RetryScheduleId, RunId};
 use crate::domain::job::Job;
 use crate::domain::job::resolution::JobFailureCause;
@@ -14,7 +13,7 @@ use crate::domain::run::failure::{
 };
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
-use crate::event::job_facts::{JobFailed, RunCancellationRequested};
+use crate::event::job_facts::{JobFailed, RunCancellationRequested, RunCancelled};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReclaimRun {
@@ -22,6 +21,12 @@ pub struct ReclaimRun {
     pub retry_schedule_id: RetryScheduleId,
     pub resolution_id: ResolutionId,
     pub jitter: Jitter,
+    pub at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WithdrawStrandedTrigger {
+    pub run_id: RunId,
     pub at: DateTime<Utc>,
 }
 
@@ -150,44 +155,51 @@ impl Job {
     /// before its type switched to claims — that no Instance started within
     /// `delay` fails as transient with `trigger_stranded`: its retry waits to be
     /// claimed. A pushed Instance that still takes the trigger is told to stop.
-    pub fn fail_run_for_stranded_trigger(
+    /// Withdraws a trigger its type stranded by switching to `CLAIM`: nobody
+    /// took it within `delay` after the switch (`claimed_since`, `None` when
+    /// the type is not claimed from). The Run is cancelled without counting as
+    /// an attempt, any late taker is told to stop, and the Job waits to be
+    /// claimed exactly as it waited before — no attempt spent, no retry
+    /// scheduled.
+    pub fn withdraw_stranded_trigger(
         &self,
-        command: ReclaimRun,
-        dispatch_mode: DispatchMode,
+        command: WithdrawStrandedTrigger,
+        claimed_since: Option<DateTime<Utc>>,
         delay: TimeDelta,
-        policy: &RetryPolicy,
-        limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
+        if let Some(discarded) = self.discard_on_terminal_job("RunCancelled") {
             return Ok(discarded);
         }
         let run = self.find_run(command.run_id)?;
-        if let Some(discarded) = self.discard_settled("RunFailed", run) {
+        if let Some(discarded) = self.discard_settled("RunCancelled", run) {
             return Ok(discarded);
         }
-        if dispatch_mode != DispatchMode::Claim {
+        let Some(claimed_since) = claimed_since else {
             return Err(JobsError::NotClaimMode {
                 runner_type: self.runner_type().as_str().to_owned(),
             });
-        }
-        if !run.has_a_stranded_trigger(command.at, delay) {
+        };
+        if !run.has_a_stranded_trigger(command.at, delay, claimed_since) {
             return Err(JobsError::TriggerNotStranded {
                 run_id: run.id().as_uuid(),
             });
         }
-        let mut events = vec![JobEvent::RunCancellationRequested(
-            RunCancellationRequested {
+        let reason = ReasonCode::new(TRIGGER_STRANDED)?;
+        Ok(CommandResult::new(vec![
+            JobEvent::RunCancellationRequested(RunCancellationRequested {
                 job_id: self.id(),
                 run_id: run.id(),
-                reason_code: ReasonCode::new(TRIGGER_STRANDED)?,
+                reason_code: reason.clone(),
                 requested_by: None,
                 originating_job_id: None,
-            },
-        )];
-        let report = RunFailureReport::platform(RunFailureKind::Transient, TRIGGER_STRANDED)?;
-        let fact = command.into_failure(report);
-        events.extend(self.run_failure_events(run, &fact, policy, limits)?);
-        Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))
+            }),
+            JobEvent::RunCancelled(RunCancelled {
+                job_id: self.id(),
+                run_id: run.id(),
+                withdrawn_for: Some(reason),
+            }),
+        ])
+        .with_warning(CommandWarning::CancellationIsBestEffort))
     }
 
     pub fn fail_for_inactivity(

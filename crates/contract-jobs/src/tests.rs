@@ -352,7 +352,23 @@ fn every_claim_refusal_is_written_as_its_published_code_and_nothing_else_parses(
         );
     }
     // And: a word outside the vocabulary is not a refusal a runner could misread
-    for outside in ["blank_value", "NOT_CLAIM_MODE", "busy", ""] {
+    for outside in ["blank_value", "NOT_CLAIM_MODE", "overloaded", ""] {
         assert!(serde_json::from_value::<runner::ClaimRefusal>(json_code(outside)).is_err());
     }
+}
+
+#[test]
+fn a_busy_claim_names_how_long_to_wait_before_repeating_it() {
+    // Given: the reply of a pod that cannot hold the claim
+    let reply = serde_json::to_value(runner::ClaimReply::busy(250)).unwrap();
+    // Then: it is a refusal with its back-off, and carries no run
+    assert_eq!(reply["reason"], "busy");
+    assert_eq!(reply["retry_after_ms"], 250);
+    assert!(reply.get("run").is_none());
+    // And: every other answer carries no back-off
+    let refused = serde_json::to_value(runner::ClaimReply::refused(
+        runner::ClaimRefusal::ClaimSpent,
+    ))
+    .unwrap();
+    assert!(refused.get("retry_after_ms").is_none());
 }

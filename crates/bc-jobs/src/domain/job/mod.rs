@@ -84,11 +84,19 @@ impl Job {
             return Err(corrupt("owner_does_not_match_producer"));
         }
         let mut runs = state.runs;
-        runs.sort_by_key(Run::attempt_number);
-        for (position, run) in runs.iter().enumerate() {
-            let expected = u32::try_from(position + 1).unwrap_or(u32::MAX);
-            if run.attempt_number().get() != expected {
-                return Err(corrupt("attempt_numbers_not_contiguous"));
+        runs.sort_by_key(|run| (run.attempt_number(), run.dispatched_at(), run.id()));
+        // The Runs that count number the attempts 1, 2, …; a withdrawn Run
+        // carries the number of the attempt it was meant to be, which a later
+        // Run takes again.
+        let mut counted: u32 = 0;
+        for run in &runs {
+            if run.counts_as_attempt() {
+                counted = counted.saturating_add(1);
+                if run.attempt_number().get() != counted {
+                    return Err(corrupt("attempt_numbers_not_contiguous"));
+                }
+            } else if run.attempt_number().get() != counted.saturating_add(1) {
+                return Err(corrupt("withdrawn_run_out_of_sequence"));
             }
         }
         if runs.iter().filter(|run| !run.is_terminal()).count() > 1 {

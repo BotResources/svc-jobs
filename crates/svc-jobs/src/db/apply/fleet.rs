@@ -37,10 +37,12 @@ pub async fn write(
         FleetEvent::RunnerTypeBecameRetirable(_) => {}
         FleetEvent::RunnerTypeDispatchModeChanged(fact) => {
             sqlx::query(
-                "UPDATE registered_runner_types SET dispatch_mode = $2 WHERE runner_type_id = $1",
+                "UPDATE registered_runner_types SET dispatch_mode = $2, dispatch_mode_since = $3 \
+                 WHERE runner_type_id = $1",
             )
             .bind(fact.runner_type_id.as_uuid())
             .bind(fact.dispatch_mode.as_str())
+            .bind(at)
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
@@ -52,6 +54,16 @@ pub async fn write(
             )
             .bind(fact.runner_type_id.as_uuid())
             .bind(fact.max_run_duration.seconds())
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        }
+        FleetEvent::RunnerTypeMaxRunDurationCleared(fact) => {
+            sqlx::query(
+                "UPDATE registered_runner_types SET max_run_duration_seconds = NULL \
+                 WHERE runner_type_id = $1",
+            )
+            .bind(fact.runner_type_id.as_uuid())
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;

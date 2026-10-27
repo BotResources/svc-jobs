@@ -1,3 +1,4 @@
+pub mod dispatch_mode_offer;
 pub mod runner_type_catalog;
 
 use std::sync::Arc;

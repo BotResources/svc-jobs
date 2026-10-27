@@ -178,6 +178,7 @@ mod tests {
         // Given: a fact about a run and a fact about the job itself
         let job = job_id();
         let run_fact = JobEvent::RunCancelled(RunCancelled {
+            withdrawn_for: None,
             job_id: job,
             run_id: run_id(),
         });
@@ -216,6 +217,7 @@ mod tests {
             originating_job_id: None,
         });
         let published = JobEvent::RunCancelled(RunCancelled {
+            withdrawn_for: None,
             job_id: job_id(),
             run_id: run_id(),
         });

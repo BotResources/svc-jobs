@@ -120,6 +120,9 @@ pub enum JobsError {
     TriggerNotStranded {
         run_id: Uuid,
     },
+    MaxRunDurationNotSet {
+        runner_type: String,
+    },
     RunnerTypeMismatch {
         expected: String,
         claimed: String,

@@ -78,7 +78,7 @@ pub async fn force(
                 cascaded.events,
             ));
         }
-        write::commit_job_changes_in(&mut tx, jobs.ids.as_ref(), changes, &metadata, at).await?;
+        write::commit_job_changes_in(&mut tx, context(jobs, &metadata, at), changes).await?;
         tx.commit().await?;
         Ok(())
     })
@@ -192,8 +192,7 @@ where
             at,
         )
         .await?;
-        write::commit_job_changes_in(&mut tx, jobs.ids.as_ref(), recalculations, &metadata, at)
-            .await?;
+        write::commit_job_changes_in(&mut tx, context(jobs, &metadata, at), recalculations).await?;
         tx.commit().await?;
         Ok(())
     })
@@ -220,6 +219,19 @@ async fn lock_trees(tx: &mut PgConnection, roots: &[Uuid]) -> Result<Vec<Uuid>, 
         let newly = PgStore::lock_jobs_in(tx, &missing).await?;
         locked.extend(newly.iter().copied());
         order.extend(newly);
+    }
+}
+
+fn context<'a>(
+    jobs: &'a Jobs,
+    metadata: &'a br_core_events::EventMetadata,
+    at: chrono::DateTime<chrono::Utc>,
+) -> write::WriteContext<'a> {
+    write::WriteContext {
+        ids: jobs.ids.as_ref(),
+        metadata,
+        at,
+        limits: &jobs.limits,
     }
 }
 

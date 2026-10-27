@@ -125,7 +125,14 @@ pub fn terminal(row: &PgRow) -> Result<(RunId, RunTerminal), JobsError> {
     };
     Ok((
         RunId::new(row.get("run_id"))?,
-        RunTerminal::hydrate(kind, row.get("occurred_at"), failure)?,
+        RunTerminal::hydrate(
+            kind,
+            row.get("occurred_at"),
+            failure,
+            row.get::<Option<String>, _>("withdrawn_reason")
+                .map(ReasonCode::new)
+                .transpose()?,
+        )?,
     ))
 }
 

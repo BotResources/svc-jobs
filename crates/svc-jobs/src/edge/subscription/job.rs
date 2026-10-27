@@ -6,7 +6,6 @@ use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::event::job::JobEvent;
 use br_util_graphql::Affordance;
-use chrono::{DateTime, Utc};
 use futures::Stream;
 use uuid::Uuid;
 
@@ -19,7 +18,7 @@ use crate::edge::types::job::GqlJobDetail;
 use crate::edge::types::stream::{GqlJobDelta, GqlJobSnapshot, GqlJobStreamMessage};
 use crate::stream::Fact;
 
-use super::{cursor, next_unbroken_fact};
+use super::{FACT_BATCH, RESET_ABOVE, cursor, next_fact_batch};
 
 pub fn job_stream(
     state: EdgeState,
@@ -28,10 +27,10 @@ pub fn job_stream(
 ) -> impl Stream<Item = GqlJobStreamMessage> + Send {
     let mut facts = state.hub.subscribe();
     async_stream::stream! {
-        let mut descendants = match snapshot(&state, job_id, &principal).await {
-            Ok(Some((message, descendants))) => {
-                yield message;
-                descendants
+        let mut current = match projection(&state, job_id, &principal).await {
+            Ok(Some(projected)) => {
+                yield snapshot_of(&projected);
+                projected
             }
             Ok(None) => return,
             Err(error) => {
@@ -39,23 +38,105 @@ pub fn job_stream(
                 return;
             }
         };
-        while let Some(fact) = next_unbroken_fact(&mut facts).await {
-            let Fact::Job { event_id, occurred_at, job_id: carried, event } = fact else {
-                continue;
-            };
-            if !concerns_the_tree(&event, carried, job_id, &descendants) {
+        while let Some(batch) = next_fact_batch(&mut facts, FACT_BATCH).await {
+            let mut descendants = current.tree.descendant_ids();
+            let mut concerning = Vec::new();
+            for fact in batch {
+                let Fact::Job { event_id, occurred_at, job_id: carried, event } = fact else {
+                    continue;
+                };
+                if !concerns_the_tree(&event, carried, job_id, &descendants) {
+                    continue;
+                }
+                descendants.insert(carried.as_uuid());
+                if let Some(event) = of_domain(event_id, occurred_at, &event) {
+                    concerning.push((carried, event_id, event));
+                }
+            }
+            if concerning.is_empty() {
                 continue;
             }
-            match delta(&state, job_id, &principal, event_id, occurred_at, &event).await {
-                Ok(Some((message, refreshed))) => {
-                    descendants = refreshed;
-                    yield message;
+            let refreshed = if concerning.len() > RESET_ABOVE {
+                projection(&state, job_id, &principal).await.map(|found| found.map(Refresh::Reset))
+            } else {
+                touched(&state, job_id, &principal, &current, &concerning)
+                    .await
+                    .map(|found| found.map(Refresh::Deltas))
+            };
+            match refreshed {
+                Ok(Some(Refresh::Reset(projected))) => {
+                    yield snapshot_of(&projected);
+                    current = projected;
                 }
-                Ok(None) => {}
-                Err(error) => tracing::warn!(error = ?error, "a job delta could not be built"),
+                Ok(Some(Refresh::Deltas(projected))) => {
+                    for (_, event_id, event) in concerning {
+                        yield GqlJobStreamMessage::Delta(GqlJobDelta {
+                            cursor: cursor(event_id),
+                            event,
+                            job: GqlJobDetail {
+                                job: Arc::clone(&projected.job),
+                                tree: Arc::clone(&projected.tree),
+                            },
+                            affordances: projected.affordances.clone(),
+                        });
+                    }
+                    current = projected;
+                }
+                Ok(None) => return,
+                Err(error) => tracing::warn!(error = ?error, "job deltas could not be built"),
             }
         }
     }
+}
+
+enum Refresh {
+    Reset(Projection),
+    Deltas(Projection),
+}
+
+fn snapshot_of(projected: &Projection) -> GqlJobStreamMessage {
+    GqlJobStreamMessage::Snapshot(GqlJobSnapshot {
+        cursor: cursor(Uuid::now_v7()),
+        job: GqlJobDetail {
+            job: Arc::clone(&projected.job),
+            tree: Arc::clone(&projected.tree),
+        },
+        affordances: projected.affordances.clone(),
+    })
+}
+
+/// The projection after a batch, reloading only the Jobs the batch touched:
+/// the root (and its affordances) when it is one of them, each touched
+/// descendant in place in the tree. `None` when the root is gone.
+async fn touched(
+    state: &EdgeState,
+    root: JobId,
+    principal: &PrincipalFacts,
+    current: &Projection,
+    concerning: &[(JobId, Uuid, crate::edge::types::event::GqlJobEvent)],
+) -> Result<Option<Projection>> {
+    let mut ids: Vec<Uuid> = concerning.iter().map(|(job, _, _)| job.as_uuid()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut loaded = state.store.load_batch(&ids).await.map_err(edge_error)?;
+    let reloaded_root = loaded
+        .iter()
+        .position(|job| job.id() == root)
+        .map(|at| loaded.remove(at));
+    let (job, affordances) = match reloaded_root {
+        Some(job) => {
+            let parent = project::parent_of(&state.store, &job).await?;
+            let affordances = project::affordances_of(&job, parent.as_deref(), principal)?;
+            (Arc::new(job), affordances)
+        }
+        None if ids.contains(&root.as_uuid()) => return Ok(None),
+        None => (Arc::clone(&current.job), current.affordances.clone()),
+    };
+    Ok(Some(Projection {
+        job,
+        tree: Arc::new(current.tree.with_replaced(loaded)),
+        affordances,
+    }))
 }
 
 fn concerns_the_tree(
@@ -76,57 +157,6 @@ fn joins_the_tree(event: &JobEvent, root: JobId, descendants: &HashSet<Uuid>) ->
     queued
         .parent_job_id
         .is_some_and(|parent| parent == root || descendants.contains(&parent.as_uuid()))
-}
-
-async fn snapshot(
-    state: &EdgeState,
-    job_id: JobId,
-    principal: &PrincipalFacts,
-) -> Result<Option<(GqlJobStreamMessage, HashSet<Uuid>)>> {
-    let Some(projected) = projection(state, job_id, principal).await? else {
-        return Ok(None);
-    };
-    let descendants = projected.tree.descendant_ids();
-    Ok(Some((
-        GqlJobStreamMessage::Snapshot(GqlJobSnapshot {
-            cursor: cursor(Uuid::now_v7()),
-            job: GqlJobDetail {
-                job: projected.job,
-                tree: projected.tree,
-            },
-            affordances: projected.affordances,
-        }),
-        descendants,
-    )))
-}
-
-async fn delta(
-    state: &EdgeState,
-    job_id: JobId,
-    principal: &PrincipalFacts,
-    event_id: Uuid,
-    occurred_at: DateTime<Utc>,
-    event: &JobEvent,
-) -> Result<Option<(GqlJobStreamMessage, HashSet<Uuid>)>> {
-    let Some(carried) = of_domain(event_id, occurred_at, event) else {
-        return Ok(None);
-    };
-    let Some(projected) = projection(state, job_id, principal).await? else {
-        return Ok(None);
-    };
-    let descendants = projected.tree.descendant_ids();
-    Ok(Some((
-        GqlJobStreamMessage::Delta(GqlJobDelta {
-            cursor: cursor(event_id),
-            event: carried,
-            job: GqlJobDetail {
-                job: projected.job,
-                tree: projected.tree,
-            },
-            affordances: projected.affordances,
-        }),
-        descendants,
-    )))
 }
 
 struct Projection {

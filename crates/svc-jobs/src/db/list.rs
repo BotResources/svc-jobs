@@ -122,21 +122,22 @@ impl PgStore {
         })
     }
 
-    pub async fn matches_filter(
+    /// Which of `job_ids` the filter matches, in one read.
+    pub async fn matching_among(
         &self,
-        job_id: Uuid,
+        job_ids: &[Uuid],
         filter: &JobFilter,
-    ) -> Result<bool, PortError> {
-        let row = sqlx::query(LIST_SQL_MATCH)
+    ) -> Result<std::collections::HashSet<Uuid>, PortError> {
+        let rows = sqlx::query(LIST_SQL_MATCH)
             .bind(filter.statuses.as_deref())
             .bind(filter.runner_types.as_deref())
             .bind(filter.producers.as_deref())
             .bind(filter.deleted.as_deref())
-            .bind(job_id)
-            .fetch_optional(self.pool())
+            .bind(job_ids)
+            .fetch_all(self.pool())
             .await
             .map_err(unavailable)?;
-        Ok(row.is_some())
+        Ok(rows.iter().map(|row| row.get("id")).collect())
     }
 }
 
@@ -153,4 +154,4 @@ const LIST_SQL_MATCH: &str = "SELECT j.id::uuid AS id FROM jobs j \
               WHEN 'ONLY_DELETED' THEN st.is_deleted \
               WHEN 'INCLUDE_DELETED' THEN true \
               ELSE NOT st.is_deleted END) \
-       AND j.id = $5";
+       AND j.id = ANY($5)";

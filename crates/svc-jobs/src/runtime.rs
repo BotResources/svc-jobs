@@ -11,9 +11,14 @@ use crate::error::ServiceError;
 use crate::runner_transport::{RunnerChannels, cancel};
 use crate::stream::{Fact, Hub};
 
+/// The push pass: runs once, then sleeps until the next retry falls due, the
+/// interval elapses, or a fact unblocks dispatch. A fact-triggered pass never
+/// starts sooner than `minimum_wake` after the previous one, so a burst of
+/// facts — a cascade over a whole tree — costs one pass, not one per fact.
 pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimum_wake: Duration) {
     let mut facts = hub.subscribe();
     loop {
+        let started = Instant::now();
         let pass = match dispatch::dispatch_due_work(&jobs).await {
             Ok(pass) => pass,
             Err(error) => {
@@ -22,16 +27,30 @@ pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimu
             }
         };
         let wake = next_wake(&jobs, interval, minimum_wake, pass).await;
+        let woken_by_fact = wait_for_unblocking_fact(&hub, &mut facts, wake).await;
+        if woken_by_fact {
+            sleep_until(started + minimum_wake).await;
+        }
+    }
+}
+
+/// Waits until `wake`, or until a fact that may unblock dispatch arrives;
+/// facts that cannot are ignored without starting a pass. `true` when a fact
+/// ended the wait.
+async fn wait_for_unblocking_fact(
+    hub: &Hub,
+    facts: &mut tokio::sync::broadcast::Receiver<Fact>,
+    wake: Instant,
+) -> bool {
+    loop {
         tokio::select! {
-            () = sleep_until(wake) => {}
-            fact = facts.recv() => {
-                match fact {
-                    Ok(fact) if !unblocks_dispatch(&fact) => continue,
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        facts = hub.subscribe();
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            () = sleep_until(wake) => return false,
+            fact = facts.recv() => match fact {
+                Ok(fact) if !unblocks_dispatch(&fact) => {}
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => return true,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    *facts = hub.subscribe();
+                    return true;
                 }
             }
         }
@@ -45,6 +64,11 @@ async fn next_wake(
     pass: DispatchPass,
 ) -> Instant {
     let ceiling = interval.max(minimum_wake);
+    // A pass that filled its batch left Jobs waiting behind it: the next one
+    // follows as soon as passes may.
+    if pass.truncated && !pass.failed {
+        return Instant::now() + minimum_wake;
+    }
     let waited = match jobs.store.next_retry_due_at().await {
         Err(error) => {
             tracing::warn!(error = %error, "reading the next retry due time failed");

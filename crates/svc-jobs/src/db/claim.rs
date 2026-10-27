@@ -9,35 +9,56 @@ use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::dispatch_order::{CLAIMED_TYPE, ORDER_BY, ordered_waiting};
+use super::dispatch_order::{CLAIM_CANDIDATES, NEXT_CLAIMABLE};
 use super::hydrate::unavailable;
 
 impl PgStore {
-    /// The next Job of `runner_type` waiting at `at`, in dispatch order, locked
-    /// for this transaction. A Job another transaction holds is skipped, never
-    /// waited for: two claims never reserve the same Job, whatever the number
-    /// of pods. `passed_over` are the Jobs this claim already found the domain
-    /// refusing.
+    /// The database clock, read once per claim pass: the selection, the
+    /// reservation and its facts all carry this instant.
+    pub async fn now_in(tx: &mut PgConnection) -> Result<DateTime<Utc>, PortError> {
+        sqlx::query_scalar("SELECT now()")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(unavailable)
+    }
+
+    /// The next Job of `runner_type` waiting at `at`, in dispatch order, its
+    /// waiting row and its Job row locked for this transaction. A row another
+    /// transaction holds is skipped, never waited for: two claims never
+    /// reserve the same Job, whatever the number of pods, and a claim never
+    /// queues behind a writer. `passed_over` are the Jobs this claim already
+    /// found the domain refusing.
     pub async fn lock_next_claimable(
         tx: &mut PgConnection,
         runner_type: &RunnerTypeKey,
         at: DateTime<Utc>,
         passed_over: &[Uuid],
-    ) -> Result<Option<JobId>, PortError> {
-        let sql = format!(
-            "{} SELECT j.id::uuid AS id FROM jobs j JOIN ordered o ON o.job_id = j.id \
-             WHERE NOT (j.id = ANY($3)) {ORDER_BY} \
-             FOR UPDATE OF j SKIP LOCKED LIMIT 1",
-            ordered_waiting(CLAIMED_TYPE),
-        );
-        let found: Option<Uuid> = sqlx::query_scalar(&sql)
+    ) -> Result<NextClaimable, PortError> {
+        let found: Option<Uuid> = sqlx::query_scalar(NEXT_CLAIMABLE)
             .bind(at)
             .bind(runner_type.as_str())
             .bind(passed_over)
+            .bind(CLAIM_CANDIDATES)
             .fetch_optional(&mut *tx)
             .await
             .map_err(unavailable)?;
-        found.map(JobId::new).transpose().map_err(PortError::from)
+        let Some(job_id) = found else {
+            return Ok(NextClaimable::NothingWaiting);
+        };
+        // The Job row is taken the same way: a writer holding it (a
+        // cancellation, a force) is not waited for — that Job is left to the
+        // next pass, which finds it waiting or gone.
+        let locked: Option<Uuid> =
+            sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE id = $1 FOR UPDATE SKIP LOCKED")
+                .bind(job_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        let job_id = JobId::new(job_id).map_err(PortError::from)?;
+        Ok(match locked {
+            Some(_) => NextClaimable::Locked(job_id),
+            None => NextClaimable::HeldElsewhere(job_id),
+        })
     }
 
     /// The Job and Run an earlier claim under this identity reserved, if any.
@@ -85,14 +106,14 @@ impl PgStore {
             .map_err(PortError::from)
     }
 
-    /// The earliest moment a retry of `runner_type` becomes due, so a held
-    /// claim wakes for it without polling.
-    pub async fn next_retry_due_for(
+    /// How long until the next retry of `runner_type` falls due, by the
+    /// database clock — `None` when none is scheduled ahead.
+    pub async fn next_retry_due_in(
         &self,
         runner_type: &RunnerTypeKey,
-    ) -> Result<Option<DateTime<Utc>>, PortError> {
-        let row = sqlx::query(
-            "SELECT min(w.due_at) AS due_at FROM waiting_jobs w \
+    ) -> Result<Option<std::time::Duration>, PortError> {
+        let millis: Option<f64> = sqlx::query_scalar(
+            "SELECT (EXTRACT(EPOCH FROM (min(w.due_at) - now())) * 1000)::float8 FROM waiting_jobs w \
              WHERE w.due_at > now() \
                AND w.runner_type_id = (SELECT rt.id FROM runner_types rt WHERE rt.type_key = $1)",
         )
@@ -100,6 +121,16 @@ impl PgStore {
         .fetch_one(self.pool())
         .await
         .map_err(unavailable)?;
-        Ok(row.get("due_at"))
+        Ok(millis.map(|millis| std::time::Duration::from_millis(millis.max(0.0) as u64)))
     }
+}
+
+/// The outcome of looking for the next claimable Job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextClaimable {
+    NothingWaiting,
+    /// Both its rows are locked by this transaction.
+    Locked(JobId),
+    /// Its waiting row was free but a writer holds the Job.
+    HeldElsewhere(JobId),
 }

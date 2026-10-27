@@ -24,6 +24,13 @@ pub struct RunnerTypeDispatchModeChanged {
     pub dispatch_mode: DispatchMode,
 }
 
+/// The RunnerType returned to the service default maximum Run duration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTypeMaxRunDurationCleared {
+    pub runner_type_id: RunnerTypeId,
+    pub runner_type: RunnerTypeKey,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerTypeMaxRunDurationChanged {
     pub runner_type_id: RunnerTypeId,
@@ -96,6 +103,7 @@ pub enum FleetEvent {
     RunnerTypeBecameRetirable(RunnerTypeBecameRetirable),
     RunnerTypeDispatchModeChanged(RunnerTypeDispatchModeChanged),
     RunnerTypeMaxRunDurationChanged(RunnerTypeMaxRunDurationChanged),
+    RunnerTypeMaxRunDurationCleared(RunnerTypeMaxRunDurationCleared),
     InstanceConnected(InstanceConnected),
     InstanceStatusReported(InstanceStatusReported),
     InstanceDisconnected(InstanceDisconnected),
@@ -111,6 +119,7 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(_) => "RunnerTypeBecameRetirable",
             Self::RunnerTypeDispatchModeChanged(_) => "RunnerTypeDispatchModeChanged",
             Self::RunnerTypeMaxRunDurationChanged(_) => "RunnerTypeMaxRunDurationChanged",
+            Self::RunnerTypeMaxRunDurationCleared(_) => "RunnerTypeMaxRunDurationCleared",
             Self::InstanceConnected(_) => "InstanceConnected",
             Self::InstanceStatusReported(_) => "InstanceStatusReported",
             Self::InstanceDisconnected(_) => "InstanceDisconnected",
@@ -126,10 +135,17 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(_)
             | Self::RunnerTypeDispatchModeChanged(_)
             | Self::RunnerTypeMaxRunDurationChanged(_)
+            | Self::RunnerTypeMaxRunDurationCleared(_)
             | Self::InstanceConnected(_)
             | Self::InstanceStatusReported(_)
             | Self::InstanceDisconnected(_) => false,
         }
+    }
+
+    /// Whether the fact moves the published dispatch mode of its type: the
+    /// entry exists from registration until retirement and follows each switch.
+    pub fn changes_published_dispatch_mode(&self) -> bool {
+        self.changes_published_catalog() || matches!(self, Self::RunnerTypeDispatchModeChanged(_))
     }
 
     pub fn runner_type_id(&self) -> RunnerTypeId {
@@ -141,6 +157,7 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(fact) => fact.runner_type_id,
             Self::RunnerTypeDispatchModeChanged(fact) => fact.runner_type_id,
             Self::RunnerTypeMaxRunDurationChanged(fact) => fact.runner_type_id,
+            Self::RunnerTypeMaxRunDurationCleared(fact) => fact.runner_type_id,
             Self::InstanceConnected(fact) => fact.runner_type_id,
             Self::InstanceStatusReported(fact) => fact.runner_type_id,
             Self::InstanceDisconnected(fact) => fact.runner_type_id,
@@ -163,6 +180,9 @@ impl FleetEvent {
             }
             "RunnerTypeMaxRunDurationChanged" => {
                 Self::RunnerTypeMaxRunDurationChanged(serde_json::from_value(payload)?)
+            }
+            "RunnerTypeMaxRunDurationCleared" => {
+                Self::RunnerTypeMaxRunDurationCleared(serde_json::from_value(payload)?)
             }
             "InstanceConnected" => Self::InstanceConnected(serde_json::from_value(payload)?),
             "InstanceStatusReported" => {
@@ -188,6 +208,7 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(fact) => &fact.runner_type,
             Self::RunnerTypeDispatchModeChanged(fact) => &fact.runner_type,
             Self::RunnerTypeMaxRunDurationChanged(fact) => &fact.runner_type,
+            Self::RunnerTypeMaxRunDurationCleared(fact) => &fact.runner_type,
             Self::InstanceConnected(fact) => &fact.runner_type,
             Self::InstanceStatusReported(fact) => &fact.runner_type,
             Self::InstanceDisconnected(fact) => &fact.runner_type,
@@ -203,6 +224,7 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(_) => None,
             Self::RunnerTypeDispatchModeChanged(_) => None,
             Self::RunnerTypeMaxRunDurationChanged(_) => None,
+            Self::RunnerTypeMaxRunDurationCleared(_) => None,
             Self::InstanceConnected(fact) => Some(&fact.instance_key),
             Self::InstanceStatusReported(fact) => Some(&fact.instance_key),
             Self::InstanceDisconnected(fact) => Some(&fact.instance_key),
@@ -218,6 +240,7 @@ impl FleetEvent {
             Self::RunnerTypeBecameRetirable(fact) => serde_json::to_value(fact),
             Self::RunnerTypeDispatchModeChanged(fact) => serde_json::to_value(fact),
             Self::RunnerTypeMaxRunDurationChanged(fact) => serde_json::to_value(fact),
+            Self::RunnerTypeMaxRunDurationCleared(fact) => serde_json::to_value(fact),
             Self::InstanceConnected(fact) => serde_json::to_value(fact),
             Self::InstanceStatusReported(fact) => serde_json::to_value(fact),
             Self::InstanceDisconnected(fact) => serde_json::to_value(fact),
