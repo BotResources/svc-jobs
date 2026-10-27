@@ -22,7 +22,7 @@ const FORBIDDEN: &str = "FORBIDDEN";
 const RESTARTED_DEFAULT_SECONDS: u64 = 5;
 const STRANDED_AFTER_SECONDS: u64 = 8;
 // The service refuses a reservation delay that is not above its longest claim wait.
-const MAX_CLAIM_WAIT_SECONDS: u64 = 2;
+const MAX_CLAIM_WAIT_SECONDS: u64 = 6;
 const WITHIN_MAX_CLAIM_WAIT: Duration = Duration::from_secs(MAX_CLAIM_WAIT_SECONDS);
 const BEFORE_THE_SWITCH: Duration = Duration::from_secs(4);
 const SINCE_THE_SWITCH: Duration = Duration::from_secs(6);

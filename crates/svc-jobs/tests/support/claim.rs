@@ -147,6 +147,29 @@ pub async fn claim(nats: &TestNats, runner: &FakeRunner<'_>, wait: Duration) -> 
     claim_again(nats, runner, Uuid::now_v7(), wait).await
 }
 
+/// A free slot keeps claiming — each expired claim is a new one — until it is served, or `within`
+/// runs out. Every miss must be a plain empty reply: a refusal ends the wait at once.
+pub async fn claim_until_served(
+    nats: &TestNats,
+    runner: &FakeRunner<'_>,
+    wait: Duration,
+    within: Duration,
+    what: &str,
+) -> Value {
+    let deadline = Instant::now() + within;
+    loop {
+        let answer = claim(nats, runner, wait).await;
+        if answer.reply["run"].is_object() {
+            return answer.expect_run(what);
+        }
+        answer.expect_empty(what);
+        assert!(
+            Instant::now() < deadline,
+            "{what}: no claim was served within {within:?} — the job never waited again"
+        );
+    }
+}
+
 /// The same slot asks again under the claim id it already used.
 pub async fn claim_again(
     nats: &TestNats,
