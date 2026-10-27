@@ -21,6 +21,9 @@ const LONG_POLL: Duration = Duration::from_secs(6);
 const SHORT_POLL: Duration = Duration::from_secs(3);
 const ARRIVAL_DELAY: Duration = Duration::from_secs(1);
 const RESERVATION_SECONDS: u64 = 3;
+// The service refuses a reservation delay that is not above its longest claim wait.
+const MAX_CLAIM_WAIT_SECONDS: u64 = 2;
+const WITHIN_MAX_CLAIM_WAIT: Duration = Duration::from_secs(MAX_CLAIM_WAIT_SECONDS);
 const HELD_CLAIMS_PER_POD: u64 = 2;
 
 #[tokio::test]
@@ -440,6 +443,7 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
     // Given: a reservation delay of three seconds, a CLAIM type and a job with two attempts
     let fixture = JobsFixture::start_with(Knobs {
         claim_reservation_seconds: RESERVATION_SECONDS,
+        claim_max_wait_seconds: MAX_CLAIM_WAIT_SECONDS,
         backstop_interval_seconds: 1,
         retry_base_delay_seconds: 1,
         ..Knobs::default()
@@ -476,7 +480,7 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
     stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
 
     // When: the instance is served a run and never starts it
-    let lost = claim::claim(fixture.nats(), &instance, SHORT_POLL)
+    let lost = claim::claim(fixture.nats(), &instance, WITHIN_MAX_CLAIM_WAIT)
         .await
         .expect_run("the first claim");
     let lost_run = runner::run_id(&lost);
@@ -539,7 +543,7 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
     events.expect_none(wire::FACT_STARTED, job_id, QUIET).await;
 
     // When: the instance claims again
-    let retried = claim::claim(fixture.nats(), &instance, SHORT_POLL)
+    let retried = claim::claim(fixture.nats(), &instance, WITHIN_MAX_CLAIM_WAIT)
         .await
         .expect_run("the claim after the lost reservation");
 

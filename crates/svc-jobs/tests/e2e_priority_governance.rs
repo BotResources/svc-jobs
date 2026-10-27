@@ -6,7 +6,6 @@ use br_core_auth::PassportHeader;
 use br_test_harness::{SseSubscription, verdict};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use support::claim;
 use support::events::EventLog;
 use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_caller};
 use support::producer::{JobDeclaration, Producer};
@@ -15,6 +14,7 @@ use support::{
     JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, docs, gql, priority, stream,
     subs, wire,
 };
+use support::{claim, clock};
 use uuid::Uuid;
 
 const CLAIM_WAIT: Duration = Duration::from_secs(4);
@@ -1019,7 +1019,20 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
         "a forced job keeps its force through a retry",
     );
 
-    // Then: dispatch follows the levels — the forced job's retry first
+    // Then: once both retries are due — retry jitter may set their due times apart — dispatch
+    // follows the levels, the forced job's retry first
+    let both_due = br_test_harness::wait_until(LONG, || async {
+        let mut due = true;
+        for job_id in [capped.job_id, forced.job_id] {
+            let next = gql::job(&client, admin, job_id).await["nextAttemptAt"].clone();
+            if !next.is_null() && delta::instant(&next) > clock::now() {
+                due = false;
+            }
+        }
+        due
+    })
+    .await;
+    assert!(both_due, "both retries fall due within {LONG:?}");
     let mut retried = Vec::new();
     for _ in 0..2 {
         let run = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
