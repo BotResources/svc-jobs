@@ -108,7 +108,9 @@ in.
   counts those runs only.
 - The access paths `waiting_jobs` and `unstarted_pushed_runs` are filled and
   repaired from the ledger at boot and on every backstop sweep, which covers
-  the facts a 0.3 pod records during a rolling update. Pre-0.4 lineages find
+  the facts a 0.3 pod records during a rolling update. The drift is read
+  without locks; only drifted jobs are locked and fixed, so the sweep never
+  makes a claim skip a correct waiting job. Pre-0.4 lineages find
   their root by walking their parents; `jobs.root_job_id` is not rewritten.
 
 ### Changed
