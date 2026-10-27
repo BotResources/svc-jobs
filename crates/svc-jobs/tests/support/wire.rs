@@ -123,6 +123,7 @@ pub const REASON_INSTANCE_DRAINING: &str = "instance_draining";
 pub const REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
 pub const REASON_PARENT_JOB_TERMINAL: &str = "parent_job_terminal";
 pub const REASON_BUSY: &str = "busy";
+pub const REASON_NO_MAX_RUN_DURATION_SET: &str = "no_max_run_duration_set";
 
 /// The closed vocabulary a refused claim may answer with — nothing else.
 pub const CLAIM_REFUSALS: [&str; 7] = [

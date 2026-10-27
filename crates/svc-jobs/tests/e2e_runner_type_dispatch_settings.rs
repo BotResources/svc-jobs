@@ -461,6 +461,12 @@ async fn a_trigger_stranded_by_a_switch_to_claim_is_cancelled_and_its_job_served
     // Then: the job is served by the claim, on a new run, never by a new trigger
     assert_eq!(runner::job_id(&served), job_id);
     assert_ne!(runner::run_id(&served), stranded_run);
+    assert_eq!(
+        runner::attempt_number(&served),
+        runner::attempt_number(&published),
+        "the claimed run carries the stranded run's attempt number: a stranded trigger costs no \
+         attempt",
+    );
     instance.expect_no_trigger(QUIET).await;
     instance.complete_run(&served).await;
     producer.finish(job_id).await;
@@ -576,6 +582,14 @@ async fn clearing_a_runner_types_maximum_returns_it_to_the_service_default() {
     let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     instance.connect().await;
     dispatch::await_live_instances(&client, &admin, &runner_type, 1, LONG).await;
+    assert_eq!(
+        gql::assert_blocked(
+            &dispatch::runner_type_view(&client, &admin, &runner_type).await,
+            wire::ACTION_CLEAR_MAX_RUN_DURATION,
+        ),
+        wire::REASON_NO_MAX_RUN_DURATION_SET,
+        "a type on the service default has no maximum of its own to clear",
+    );
     gql::expect_success(
         &dispatch::set_max_run_duration(&client, &admin, &runner_type, NINETY_SIX_HOURS_SECONDS)
             .await,
@@ -647,6 +661,15 @@ async fn clearing_a_runner_types_maximum_returns_it_to_the_service_default() {
     assert_eq!(
         dispatch::runner_type_view(&client, &admin, &runner_type).await["runnerType"]["maxRunDurationSeconds"],
         json!(DEFAULT_MAX_RUN_SECONDS)
+    );
+
+    assert_eq!(
+        gql::assert_blocked(
+            &dispatch::runner_type_view(&client, &admin, &runner_type).await,
+            wire::ACTION_CLEAR_MAX_RUN_DURATION,
+        ),
+        wire::REASON_NO_MAX_RUN_DURATION_SET,
+        "once cleared, nothing is left to clear",
     );
 
     // Then: a run dispatched afterwards is bounded by the service default
