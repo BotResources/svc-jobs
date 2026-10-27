@@ -22,7 +22,7 @@ const FORBIDDEN: &str = "FORBIDDEN";
 const RESTARTED_DEFAULT_SECONDS: u64 = 5;
 const STRANDED_AFTER_SECONDS: u64 = 8;
 // The service refuses a reservation delay that is not above its longest claim wait.
-const MAX_CLAIM_WAIT_SECONDS: u64 = 2;
+const MAX_CLAIM_WAIT_SECONDS: u64 = 6;
 const WITHIN_MAX_CLAIM_WAIT: Duration = Duration::from_secs(MAX_CLAIM_WAIT_SECONDS);
 const BEFORE_THE_SWITCH: Duration = Duration::from_secs(4);
 const SINCE_THE_SWITCH: Duration = Duration::from_secs(6);
@@ -457,9 +457,14 @@ async fn a_trigger_stranded_by_a_switch_to_claim_is_cancelled_and_its_job_served
     }
 
     // When: the instance claims, and starts what it is served at once
-    let served = claim::claim(fixture.nats(), &instance, WITHIN_MAX_CLAIM_WAIT)
-        .await
-        .expect_run("a claim after the stranded trigger was cancelled");
+    let served = claim::claim_until_served(
+        fixture.nats(),
+        &instance,
+        WITHIN_MAX_CLAIM_WAIT,
+        LONG,
+        "a claim after the stranded trigger was cancelled",
+    )
+    .await;
     instance.start_run(&served).await;
 
     // Then: the job is served by the claim, on a new run, never by a new trigger

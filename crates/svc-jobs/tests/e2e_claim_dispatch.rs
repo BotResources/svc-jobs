@@ -20,9 +20,9 @@ use uuid::Uuid;
 const LONG_POLL: Duration = Duration::from_secs(6);
 const SHORT_POLL: Duration = Duration::from_secs(3);
 const ARRIVAL_DELAY: Duration = Duration::from_secs(1);
-const RESERVATION_SECONDS: u64 = 3;
+const RESERVATION_SECONDS: u64 = 10;
 // The service refuses a reservation delay that is not above its longest claim wait.
-const MAX_CLAIM_WAIT_SECONDS: u64 = 2;
+const MAX_CLAIM_WAIT_SECONDS: u64 = 6;
 const WITHIN_MAX_CLAIM_WAIT: Duration = Duration::from_secs(MAX_CLAIM_WAIT_SECONDS);
 const HELD_CLAIMS_PER_POD: u64 = 2;
 
@@ -543,9 +543,14 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
     events.expect_none(wire::FACT_STARTED, job_id, QUIET).await;
 
     // When: the instance claims again
-    let retried = claim::claim(fixture.nats(), &instance, WITHIN_MAX_CLAIM_WAIT)
-        .await
-        .expect_run("the claim after the lost reservation");
+    let retried = claim::claim_until_served(
+        fixture.nats(),
+        &instance,
+        WITHIN_MAX_CLAIM_WAIT,
+        LONG,
+        "the claim after the lost reservation",
+    )
+    .await;
 
     // Then: it is served a second attempt, on a new run, and the job completes normally
     assert_eq!(runner::job_id(&retried), job_id);

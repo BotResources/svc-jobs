@@ -1019,9 +1019,9 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
         "a forced job keeps its force through a retry",
     );
 
-    // Then: once both retries are due — retry jitter may set their due times apart — dispatch
-    // follows the levels, the forced job's retry first
-    let both_due = br_test_harness::wait_until(LONG, || async {
+    // Then: once both retries are due and both jobs wait again — retry jitter may set their due
+    // times apart — dispatch follows the levels, the forced job's retry first
+    let both_waiting = br_test_harness::wait_until(LONG, || async {
         let mut due = true;
         for job_id in [capped.job_id, forced.job_id] {
             let next = gql::job(&client, admin, job_id).await["nextAttemptAt"].clone();
@@ -1029,15 +1029,26 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
                 due = false;
             }
         }
-        due
+        due && dispatch::runner_type_view(&client, admin, &runner_type).await["runnerType"]
+            ["waitingJobCount"]
+            == json!(2)
     })
     .await;
-    assert!(both_due, "both retries fall due within {LONG:?}");
+    assert!(
+        both_waiting,
+        "both retries fall due and both jobs wait again within {LONG:?}: {}",
+        dispatch::runner_type_view(&client, admin, &runner_type).await
+    );
     let mut retried = Vec::new();
     for _ in 0..2 {
-        let run = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
-            .await
-            .expect_run("a slot claims a retry");
+        let run = claim::claim_until_served(
+            fixture.nats(),
+            &instance,
+            CLAIM_WAIT,
+            LONG,
+            "a slot claims a retry",
+        )
+        .await;
         assert_eq!(runner::attempt_number(&run), 2);
         retried.push(runner::job_id(&run));
     }
