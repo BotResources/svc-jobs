@@ -109,3 +109,74 @@ fn key(runner_type: &str) -> KvKey {
     );
     KvKey::new(published).expect("the contract renders a valid KV key")
 }
+
+pub async fn runner_type_raw(fabric: &FabricTestNats, runner_type: &str) -> Option<Vec<u8>> {
+    fabric.pl_get_raw(&key(runner_type)).await
+}
+
+pub async fn dispatch_mode_entry(
+    fabric: &FabricTestNats,
+    runner_type: &str,
+) -> Option<serde_json::Value> {
+    fabric
+        .pl_reader::<serde_json::Value>()
+        .await
+        .get(&dispatch_mode_key(runner_type))
+        .await
+        .unwrap_or_else(|error| panic!("reading the dispatch mode of '{runner_type}': {error}"))
+}
+
+pub async fn wait_for_dispatch_mode(
+    fabric: &FabricTestNats,
+    runner_type: &str,
+    mode: &str,
+    timeout: Duration,
+) -> serde_json::Value {
+    let expected = serde_json::json!({
+        "version": WIRE_VERSION,
+        "runner_type": runner_type,
+        "dispatch_mode": mode,
+    });
+    let arrived = wait_until(timeout, || async {
+        dispatch_mode_entry(fabric, runner_type).await.as_ref() == Some(&expected)
+    })
+    .await;
+    let entry = dispatch_mode_entry(fabric, runner_type).await;
+    assert!(
+        arrived,
+        "the published dispatch mode of '{runner_type}' never became {expected} within \
+         {timeout:?}: {entry:?}"
+    );
+    expected
+}
+
+pub async fn put_dispatch_mode(fabric: &FabricTestNats, runner_type: &str, mode: &str) {
+    fabric
+        .pl_publisher::<serde_json::Value>()
+        .await
+        .put(
+            &dispatch_mode_key(runner_type),
+            &serde_json::json!({
+                "version": WIRE_VERSION,
+                "runner_type": runner_type,
+                "dispatch_mode": mode,
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            panic!("putting a stale dispatch mode of '{runner_type}': {error}")
+        });
+}
+
+pub async fn retract_dispatch_mode(fabric: &FabricTestNats, runner_type: &str) {
+    fabric
+        .pl_publisher::<serde_json::Value>()
+        .await
+        .retract(&dispatch_mode_key(runner_type))
+        .await
+        .unwrap_or_else(|error| panic!("retracting the dispatch mode of '{runner_type}': {error}"));
+}
+
+fn dispatch_mode_key(runner_type: &str) -> KvKey {
+    KvKey::new(wire::dispatch_mode_key(runner_type)).expect("a valid dispatch-mode key")
+}

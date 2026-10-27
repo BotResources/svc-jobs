@@ -99,6 +99,7 @@ pub const FIELD_RETIRE_RUNNER_TYPE: &str = "jobsRetireRunnerType";
 pub const ACTION_FORCE_PRIORITY: &str = "force_priority";
 pub const ACTION_SET_DISPATCH_MODE: &str = "set_dispatch_mode";
 pub const ACTION_SET_MAX_RUN_DURATION: &str = "set_max_run_duration";
+pub const ACTION_CLEAR_MAX_RUN_DURATION: &str = "clear_max_run_duration";
 
 pub const EVT_PRIORITY_FORCED: &str = "JobsJobPriorityForcedEvent";
 pub const EVT_PRIORITY_RECALCULATED: &str = "JobsJobPriorityRecalculatedEvent";
@@ -121,9 +122,12 @@ pub const REASON_MALFORMED_CLAIM: &str = "malformed_claim";
 pub const REASON_INSTANCE_DRAINING: &str = "instance_draining";
 pub const REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
 pub const REASON_PARENT_JOB_TERMINAL: &str = "parent_job_terminal";
+pub const REASON_BUSY: &str = "busy";
+pub const REASON_NO_MAX_RUN_DURATION_SET: &str = "no_max_run_duration_set";
 
 /// The closed vocabulary a refused claim may answer with — nothing else.
-pub const CLAIM_REFUSALS: [&str; 6] = [
+pub const CLAIM_REFUSALS: [&str; 7] = [
+    REASON_BUSY,
     REASON_INSTANCE_UNKNOWN,
     REASON_NOT_CLAIM_MODE,
     REASON_CLAIM_SPENT,
@@ -145,6 +149,7 @@ pub const FIELD_FORCE_JOB_PRIORITY: &str = "jobsForceJobPriority";
 pub const FIELD_SET_DISPATCH_MODE: &str = "jobsSetRunnerTypeDispatchMode";
 pub const FIELD_SET_MAX_RUN_DURATION: &str = "jobsSetRunnerTypeMaxRunDuration";
 pub const FIELD_MY_MAX_PRIORITY: &str = "jobsMyMaxPriority";
+pub const FIELD_CLEAR_MAX_RUN_DURATION: &str = "jobsClearRunnerTypeMaxRunDuration";
 
 pub const CLAIM_PREFIX: &str = "jobs.claim.";
 
@@ -153,6 +158,11 @@ pub fn claim_subject(runner_type: &str) -> String {
 }
 
 pub const RUNNER_TYPE_CATALOG_PREFIX: &str = "jobs.runner_type.";
+pub const DISPATCH_MODE_PREFIX: &str = "jobs.dispatch_mode.";
+
+pub fn dispatch_mode_key(runner_type: &str) -> String {
+    format!("{DISPATCH_MODE_PREFIX}{runner_type}")
+}
 
 pub fn runner_type_catalog_key(runner_type: &str) -> String {
     format!("{RUNNER_TYPE_CATALOG_PREFIX}{runner_type}")

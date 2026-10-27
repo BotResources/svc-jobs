@@ -81,6 +81,23 @@ impl ClaimAnswer {
         );
     }
 
+    /// A claim the pod has no room to hold: refused `busy`, with a positive hint of when to retry.
+    pub fn expect_busy(&self, what: &str) -> u64 {
+        self.expect_refused(wire::REASON_BUSY, what);
+        let retry_after_ms = self.reply["retry_after_ms"].as_u64().unwrap_or_else(|| {
+            panic!(
+                "{what}: a busy refusal carries its retry_after_ms: {}",
+                self.reply
+            )
+        });
+        assert!(
+            retry_after_ms > 0,
+            "{what}: a busy refusal tells the instance to wait before retrying: {}",
+            self.reply
+        );
+        retry_after_ms
+    }
+
     pub fn expect_answered_at_once(&self, wait: Duration, what: &str) {
         assert!(
             self.elapsed < wait / 2,
