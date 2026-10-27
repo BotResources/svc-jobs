@@ -56,13 +56,20 @@ pub fn job_stream(
             if concerning.is_empty() {
                 continue;
             }
-            let refreshed = if concerning.len() > RESET_ABOVE {
-                projection(&state, job_id, &principal).await.map(|found| found.map(Refresh::Reset))
-            } else {
-                touched(&state, job_id, &principal, &current, &concerning)
-                    .await
-                    .map(|found| found.map(Refresh::Deltas))
-            };
+            // The whole tree is read again, once per batch, never patched from
+            // the facts in hand: one transaction's facts may span two batches —
+            // a cascade's root fact can arrive before its descendants' — and a
+            // delta carries the tree as committed, descendants included.
+            let reset = concerning.len() > RESET_ABOVE;
+            let refreshed = projection(&state, job_id, &principal).await.map(|found| {
+                found.map(|projected| {
+                    if reset {
+                        Refresh::Reset(projected)
+                    } else {
+                        Refresh::Deltas(projected)
+                    }
+                })
+            });
             match refreshed {
                 Ok(Some(Refresh::Reset(projected))) => {
                     yield snapshot_of(&projected);
@@ -103,40 +110,6 @@ fn snapshot_of(projected: &Projection) -> GqlJobStreamMessage {
         },
         affordances: projected.affordances.clone(),
     })
-}
-
-/// The projection after a batch, reloading only the Jobs the batch touched:
-/// the root (and its affordances) when it is one of them, each touched
-/// descendant in place in the tree. `None` when the root is gone.
-async fn touched(
-    state: &EdgeState,
-    root: JobId,
-    principal: &PrincipalFacts,
-    current: &Projection,
-    concerning: &[(JobId, Uuid, crate::edge::types::event::GqlJobEvent)],
-) -> Result<Option<Projection>> {
-    let mut ids: Vec<Uuid> = concerning.iter().map(|(job, _, _)| job.as_uuid()).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let mut loaded = state.store.load_batch(&ids).await.map_err(edge_error)?;
-    let reloaded_root = loaded
-        .iter()
-        .position(|job| job.id() == root)
-        .map(|at| loaded.remove(at));
-    let (job, affordances) = match reloaded_root {
-        Some(job) => {
-            let parent = project::parent_of(&state.store, &job).await?;
-            let affordances = project::affordances_of(&job, parent.as_deref(), principal)?;
-            (Arc::new(job), affordances)
-        }
-        None if ids.contains(&root.as_uuid()) => return Ok(None),
-        None => (Arc::clone(&current.job), current.affordances.clone()),
-    };
-    Ok(Some(Projection {
-        job,
-        tree: Arc::new(current.tree.with_replaced(loaded)),
-        affordances,
-    }))
 }
 
 fn concerns_the_tree(

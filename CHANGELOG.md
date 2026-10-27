@@ -133,7 +133,8 @@ in.
   clock. The push pass reads the same index in order.
 - The list and job subscriptions take facts in batches (one store read per
   batch) and send a fresh snapshot when a batch carries more than 64 facts
-  for them; the job tree reloads only the jobs a batch touched. A
+  for them; the job tree is read once per batch, whole — never patched from
+  the facts in hand, since one transaction's facts may span two batches. A
   fact-triggered push pass waits `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS`
   after the previous one.
 - Startup refuses `JOBS_CLAIM_RESERVATION_SECONDS` not above
