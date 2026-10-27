@@ -5,7 +5,8 @@ use br_test_harness::{GraphqlClient, wait_until};
 use serde_json::{Value, json};
 
 use super::docs::{
-    FLEET_DISPATCH, SET_RUNNER_TYPE_DISPATCH_MODE, SET_RUNNER_TYPE_MAX_RUN_DURATION,
+    CLEAR_RUNNER_TYPE_MAX_RUN_DURATION, FLEET_DISPATCH, SET_RUNNER_TYPE_DISPATCH_MODE,
+    SET_RUNNER_TYPE_MAX_RUN_DURATION,
 };
 use super::{gql, wire};
 
@@ -35,6 +36,20 @@ pub async fn set_max_run_duration(
             passport,
             SET_RUNNER_TYPE_MAX_RUN_DURATION,
             json!({ "input": { "runnerType": runner_type, "maxRunDurationSeconds": seconds } }),
+        )
+        .await
+}
+
+pub async fn clear_max_run_duration(
+    client: &GraphqlClient,
+    passport: &Passport,
+    runner_type: &str,
+) -> Value {
+    client
+        .query(
+            passport,
+            CLEAR_RUNNER_TYPE_MAX_RUN_DURATION,
+            json!({ "input": { "runnerType": runner_type } }),
         )
         .await
 }

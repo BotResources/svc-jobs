@@ -178,3 +178,17 @@ mutation($input: JobsSetRunnerTypeMaxRunDurationInput!) {
   jobsSetRunnerTypeMaxRunDuration(input: $input) { success }
 }
 "#;
+
+pub const CLEAR_RUNNER_TYPE_MAX_RUN_DURATION: &str = r#"
+mutation($input: JobsRunnerTypeInput!) {
+  jobsClearRunnerTypeMaxRunDuration(input: $input) { success }
+}
+"#;
+
+pub const JOB_RUN_CANCELLATION: &str = r#"
+query($id: UUID!) {
+  jobsJob(id: $id) {
+    job { id status attemptCount activeRunId runs { id attemptNumber status cancellationReason } }
+  }
+}
+"#;

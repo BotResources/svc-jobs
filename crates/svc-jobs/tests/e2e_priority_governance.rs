@@ -8,7 +8,7 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use support::claim;
 use support::events::EventLog;
-use support::fixture::{self, JobsFixture, impersonating_member, machine_caller};
+use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_caller};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
@@ -890,4 +890,146 @@ fn assert_nothing_leaked(response: &Value, job_id: Uuid, what: &str) {
                 .is_some_and(|fields| fields.values().all(Value::is_null)),
         "{what} must return no data at all: {response}"
     );
+}
+
+#[tokio::test]
+async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current_cap() {
+    // Given: a CLAIM type, a user capped at 4, and two of the user's jobs executing — one at
+    // its admission level, one forced to 5
+    let fixture = JobsFixture::start_with(Knobs {
+        retry_base_delay_seconds: 1,
+        ..Knobs::default()
+    })
+    .await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let user = fixture::ordinary_member();
+    let runner_type = wire::unique_runner_type("retried");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut instance =
+        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(4);
+    instance.connect().await;
+    dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
+    dispatch::switch_to_claim(&client, admin, &runner_type).await;
+    gql::expect_success(
+        &priority::set_user_max_priority(&client, admin, user.actor_id(), 4).await,
+        wire::FIELD_SET_USER_MAX_PRIORITY,
+        "a super user caps the user at 4",
+    );
+    let capped = JobDeclaration::new(&runner_type)
+        .triggered_by_user(user.actor_id())
+        .with_priority(5)
+        .with_max_attempts(2);
+    let forced = JobDeclaration::new(&runner_type)
+        .triggered_by_user(user.actor_id())
+        .with_priority(5)
+        .with_max_attempts(2);
+    let mut watches = Vec::new();
+    for declaration in [&capped, &forced] {
+        producer.declare_v2(declaration).await;
+        events
+            .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+            .await;
+        let mut watch = SseSubscription::open(
+            fixture.url(),
+            admin,
+            &subs::job_changed_with_priority(declaration.job_id),
+        )
+        .await;
+        stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+        watches.push(watch);
+    }
+    gql::expect_success(
+        &priority::force_job_priority(&client, admin, forced.job_id, 5).await,
+        wire::FIELD_FORCE_JOB_PRIORITY,
+        "a super user forces one of the jobs to 5",
+    );
+    let mut runs = Vec::new();
+    for _ in 0..2 {
+        let run = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
+            .await
+            .expect_run("a slot claims one of the jobs");
+        instance.start_run(&run).await;
+        runs.push(run);
+    }
+    for declaration in [&capped, &forced] {
+        events
+            .expect_one(wire::FACT_STARTED, declaration.job_id, LONG)
+            .await;
+    }
+
+    // When: the super user lowers the user's maximum to 2 while both execute
+    gql::expect_success(
+        &priority::set_user_max_priority(&client, admin, user.actor_id(), 2).await,
+        wire::FIELD_SET_USER_MAX_PRIORITY,
+        "a super user lowers the cap while the jobs execute",
+    );
+
+    // Then: an executing job is not waiting, so it keeps its level for now
+    priority::assert_priorities(
+        &priority::job(&client, admin, capped.job_id).await,
+        5,
+        4,
+        None,
+        "an executing job",
+    );
+
+    // When: both runs fail transiently, and the jobs go back to waiting for their retry
+    for run in &runs {
+        instance
+            .fail_run(run, "TRANSIENT", "provider_busy", None)
+            .await;
+    }
+    for (declaration, watch) in [&capped, &forced].into_iter().zip(watches.iter_mut()) {
+        let scheduled = stream::await_delta_of(
+            watch,
+            JOB_CHANGED,
+            wire::EVT_RETRY_SCHEDULED,
+            declaration.job_id,
+            LONG,
+        )
+        .await;
+        delta::event_of(&scheduled, wire::EVT_RETRY_SCHEDULED, declaration.job_id);
+    }
+
+    // Then: the job back to waiting re-derives its effective priority from today's cap; the
+    // forced job keeps its force
+    let rederived = br_test_harness::wait_until(LONG, || async {
+        priority::job(&client, admin, capped.job_id).await["effectivePriority"] == json!(2)
+    })
+    .await;
+    assert!(
+        rederived,
+        "a job back to waiting meets the user's current cap: {}",
+        priority::job(&client, admin, capped.job_id).await
+    );
+    priority::assert_priorities(
+        &priority::job(&client, admin, capped.job_id).await,
+        5,
+        2,
+        None,
+        "a cap lowered while the job ran applies at its retry",
+    );
+    priority::assert_priorities(
+        &priority::job(&client, admin, forced.job_id).await,
+        5,
+        5,
+        Some(5),
+        "a forced job keeps its force through a retry",
+    );
+
+    // Then: dispatch follows the levels — the forced job's retry first
+    let mut retried = Vec::new();
+    for _ in 0..2 {
+        let run = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
+            .await
+            .expect_run("a slot claims a retry");
+        assert_eq!(runner::attempt_number(&run), 2);
+        retried.push(runner::job_id(&run));
+    }
+    assert_eq!(retried, vec![forced.job_id, capped.job_id]);
+
+    events.stop().await;
+    fixture.shutdown().await;
 }

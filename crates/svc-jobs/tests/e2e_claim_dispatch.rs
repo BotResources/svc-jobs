@@ -561,7 +561,7 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
 }
 
 #[tokio::test]
-async fn claims_beyond_the_per_pod_cap_are_answered_empty_at_once() {
+async fn claims_beyond_the_per_pod_cap_are_refused_busy_at_once() {
     // Given: a pod holding at most two unanswered claims, a CLAIM type with four idle instances
     // and nothing waiting
     let fixture = JobsFixture::start_with(Knobs {
@@ -585,7 +585,7 @@ async fn claims_beyond_the_per_pod_cap_are_answered_empty_at_once() {
     let declaration = JobDeclaration::new(&runner_type);
 
     // When: the four instances claim at once with a long wait, and one job arrives a second later
-    let (answers, ()) = tokio::join!(
+    let (answers, _) = tokio::join!(
         join_all(
             slots
                 .iter()
@@ -593,21 +593,26 @@ async fn claims_beyond_the_per_pod_cap_are_answered_empty_at_once() {
         ),
         async {
             tokio::time::sleep(ARRIVAL_DELAY).await;
-            producer.declare_v2(&declaration).await;
+            producer.declare_v2(&declaration).await
         }
     );
 
-    // Then: the claims beyond the cap were answered empty before the job arrived; of the two the
-    // pod held, one is served the job and the other expires empty
-    let mut refused_at_once = 0;
+    // Then: the claims beyond the cap are refused busy before the job arrived — never answered
+    // empty, never held; of the two the pod held, one is served the job and the other expires
+    let mut busy = 0;
     let mut served = Vec::new();
     let mut expired = 0;
     for answer in &answers {
-        if answer.reply["run"].is_object() {
+        if answer.reply["reason"] == json!(wire::REASON_BUSY) {
+            answer.expect_busy("a claim beyond the per-pod cap");
+            assert!(
+                answer.elapsed < ARRIVAL_DELAY,
+                "a claim beyond the cap is refused at once, never held: answered after {:?}",
+                answer.elapsed
+            );
+            busy += 1;
+        } else if answer.reply["run"].is_object() {
             served.push(runner::job_id(&answer.expect_run("a held claim")));
-        } else if answer.elapsed < ARRIVAL_DELAY {
-            answer.expect_empty("a claim beyond the per-pod cap");
-            refused_at_once += 1;
         } else {
             answer.expect_empty("a held claim nothing served");
             answer.expect_held_for_the_wait(LONG_POLL, "a held claim nothing served");
@@ -615,9 +620,13 @@ async fn claims_beyond_the_per_pod_cap_are_answered_empty_at_once() {
         }
     }
     assert_eq!(
-        refused_at_once,
+        busy,
         4 - HELD_CLAIMS_PER_POD as usize,
-        "every claim beyond JOBS_CLAIM_MAX_HELD is answered empty at once, never held",
+        "every claim beyond JOBS_CLAIM_MAX_HELD is refused busy: {:?}",
+        answers
+            .iter()
+            .map(|answer| &answer.reply)
+            .collect::<Vec<_>>(),
     );
     assert_eq!(served, vec![declaration.job_id]);
     assert_eq!(expired, 1);

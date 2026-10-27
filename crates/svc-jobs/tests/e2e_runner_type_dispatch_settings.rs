@@ -10,8 +10,8 @@ use support::fixture::{self, JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
-    FLEET_CHANGED, JOB_CHANGED, LONG, QUIET, SHORT, catalog, delta, dispatch, gql, stream, subs,
-    wire,
+    FLEET_CHANGED, JOB_CHANGED, LONG, QUIET, SHORT, catalog, delta, dispatch, docs, gql, stream,
+    subs, wire,
 };
 
 const CLAIM_WAIT: Duration = Duration::from_secs(6);
@@ -19,7 +19,10 @@ const DEFAULT_MAX_RUN_SECONDS: u64 = 3;
 const NINETY_SIX_HOURS_SECONDS: i64 = 96 * 3_600;
 const PAST_THE_DEFAULT: Duration = Duration::from_secs(9);
 const FORBIDDEN: &str = "FORBIDDEN";
-const STRANDED_AFTER_SECONDS: u64 = 3;
+const RESTARTED_DEFAULT_SECONDS: u64 = 5;
+const STRANDED_AFTER_SECONDS: u64 = 8;
+const BEFORE_THE_SWITCH: Duration = Duration::from_secs(4);
+const SINCE_THE_SWITCH: Duration = Duration::from_secs(6);
 
 #[tokio::test]
 async fn switching_a_runner_type_to_claim_moves_its_new_runs_off_the_trigger_stream() {
@@ -365,9 +368,9 @@ fn assert_settings_offered(view: &serde_json::Value, what: &str) {
 }
 
 #[tokio::test]
-async fn a_trigger_stranded_by_a_switch_to_claim_is_reclaimed_and_retried_by_a_claim() {
-    // Given: a reservation delay of three seconds, a PUSH type whose only instance never consumes
-    // its trigger stream, and a job with two attempts whose trigger is already published
+async fn a_trigger_stranded_by_a_switch_to_claim_is_cancelled_and_its_job_served_by_a_claim() {
+    // Given: a reservation delay clearly longer than every pause of this scenario, a PUSH type
+    // whose only instance never consumes its trigger stream, and a job whose trigger is published
     let fixture = JobsFixture::start_with(Knobs {
         claim_reservation_seconds: STRANDED_AFTER_SECONDS,
         backstop_interval_seconds: 1,
@@ -396,53 +399,290 @@ async fn a_trigger_stranded_by_a_switch_to_claim_is_reclaimed_and_retried_by_a_c
     )
     .await;
     stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    let attempts_before = gql::job(&client, admin, job_id).await["attemptCount"].clone();
 
-    // When: the type is switched to CLAIM with that trigger still unconsumed
+    // When: some time after the dispatch, the type is switched to CLAIM with that trigger still
+    // unconsumed
+    tokio::time::sleep(BEFORE_THE_SWITCH).await;
     dispatch::switch_to_claim(&client, admin, &runner_type).await;
 
-    // Then: after the reservation delay the stranded run fails as transient, reason
-    // trigger_stranded, and a retry is scheduled
-    let failed =
-        stream::await_delta_of(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, job_id, LONG).await;
-    let event = delta::event_of(&failed, wire::EVT_RUN_FAILED, job_id);
-    assert_eq!(event["runId"], json!(stranded_run.to_string()));
-    assert_eq!(event["failureKind"], json!("TRANSIENT"));
-    assert_eq!(event["reasonCode"], json!(wire::REASON_TRIGGER_STRANDED));
-    let scheduled = stream::await_delta_of(
+    // Then: the reservation delay counts from the switch — nothing happens to the stranded run
+    // before it has elapsed since the switch
+    stream::expect_no_delta(
         &mut watch,
         JOB_CHANGED,
-        wire::EVT_RETRY_SCHEDULED,
+        wire::EVT_RUN_CANCELLED,
+        SINCE_THE_SWITCH,
+    )
+    .await;
+
+    // Then: the stranded run is then cancelled, reason trigger_stranded — not failed
+    let cancelled = stream::await_delta_of(
+        &mut watch,
+        JOB_CHANGED,
+        wire::EVT_RUN_CANCELLED,
         job_id,
         LONG,
     )
     .await;
     assert_eq!(
-        delta::event_of(&scheduled, wire::EVT_RETRY_SCHEDULED, job_id)["failedRunId"],
+        delta::event_of(&cancelled, wire::EVT_RUN_CANCELLED, job_id)["runId"],
         json!(stranded_run.to_string())
     );
-    events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
-    events.expect_none(wire::FACT_STARTED, job_id, QUIET).await;
-
-    // When: the instance claims
-    let retried = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
-        .await
-        .expect_run("a claim after the stranded trigger was reclaimed");
-
-    // Then: the retry is served by the claim, never published as a new trigger
-    assert_eq!(runner::job_id(&retried), job_id);
-    assert_eq!(runner::attempt_number(&retried), 2);
-    assert_ne!(runner::run_id(&retried), stranded_run);
-    instance.expect_no_trigger(QUIET).await;
-    let job = gql::job(&client, admin, job_id).await;
-    assert_eq!(job["runs"].as_array().map(Vec::len), Some(2));
+    let job = run_cancellation_view(&client, admin, job_id).await;
+    let run = job["runs"]
+        .as_array()
+        .and_then(|runs| {
+            runs.iter()
+                .find(|run| run["id"] == json!(stranded_run.to_string()))
+                .cloned()
+        })
+        .unwrap_or_else(|| panic!("the stranded run stays in the job's history: {job}"));
+    assert_eq!(run["status"], json!("CANCELLED"));
     assert_eq!(
-        gql::run_by_id(&job, stranded_run)["failureReport"]["reasonCode"],
+        run["cancellationReason"],
         json!(wire::REASON_TRIGGER_STRANDED)
     );
-    instance.start_run(&retried).await;
-    instance.complete_run(&retried).await;
+    assert_eq!(
+        job["attemptCount"], attempts_before,
+        "a stranded trigger costs the job no attempt",
+    );
+    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, QUIET).await;
+    for fact in [wire::FACT_FAILED, wire::FACT_CANCELLED, wire::FACT_STARTED] {
+        events.expect_none(fact, job_id, QUIET).await;
+    }
+
+    // When: the instance claims, and starts what it is served at once
+    let served = claim::claim(fixture.nats(), &instance, CLAIM_WAIT)
+        .await
+        .expect_run("a claim after the stranded trigger was cancelled");
+    instance.start_run(&served).await;
+
+    // Then: the job is served by the claim, on a new run, never by a new trigger
+    assert_eq!(runner::job_id(&served), job_id);
+    assert_ne!(runner::run_id(&served), stranded_run);
+    instance.expect_no_trigger(QUIET).await;
+    instance.complete_run(&served).await;
     producer.finish(job_id).await;
     events.expect_one(wire::FACT_COMPLETED, job_id, LONG).await;
+
+    events.stop().await;
+    fixture.shutdown().await;
+}
+
+async fn run_cancellation_view(
+    client: &br_test_harness::GraphqlClient,
+    admin: &br_core_auth::Passport,
+    job_id: uuid::Uuid,
+) -> serde_json::Value {
+    let response = client
+        .query(
+            admin,
+            docs::JOB_RUN_CANCELLATION,
+            json!({ "id": job_id.to_string() }),
+        )
+        .await;
+    gql::data_of(&response, "jobsJob")["job"].clone()
+}
+
+#[tokio::test]
+async fn the_dispatch_mode_of_each_runner_type_is_published_and_reconciled_at_boot() {
+    // Given: two registered PUSH types and their published catalog entries
+    let mut fixture = JobsFixture::start().await;
+    let client = fixture.gql();
+    let admin = fixture.admin().clone();
+    let switched = wire::unique_runner_type("published");
+    let restored = wire::unique_runner_type("restored");
+    let mut switched_instance = FakeRunner::new(fixture.nats(), &switched, "instance-a");
+    let mut restored_instance = FakeRunner::new(fixture.nats(), &restored, "instance-a");
+    switched_instance.connect().await;
+    restored_instance.connect().await;
+    let mut catalog_bytes = Vec::new();
+    for runner_type in [&switched, &restored] {
+        dispatch::await_live_instances(&client, &admin, runner_type, 1, LONG).await;
+        catalog::wait_for_lifecycle(
+            fixture.fabric(),
+            runner_type,
+            contract_jobs::catalog::RunnerTypeLifecycle::Active,
+            LONG,
+        )
+        .await;
+        catalog_bytes.push(
+            catalog::runner_type_raw(fixture.fabric(), runner_type)
+                .await
+                .expect("a registered type has its catalog entry"),
+        );
+    }
+
+    // When: a platform administrator switches the first type to CLAIM, then back to PUSH
+    dispatch::switch_to_claim(&client, &admin, &switched).await;
+
+    // Then: its dispatch mode is published under jobs.dispatch_mode.{runner_type}
+    catalog::wait_for_dispatch_mode(fixture.fabric(), &switched, wire::MODE_CLAIM, LONG).await;
+    gql::expect_success(
+        &dispatch::set_dispatch_mode(&client, &admin, &switched, wire::MODE_PUSH).await,
+        wire::FIELD_SET_DISPATCH_MODE,
+        "a platform administrator switches the type back to PUSH",
+    );
+    catalog::wait_for_dispatch_mode(fixture.fabric(), &switched, wire::MODE_PUSH, LONG).await;
+
+    // Then: the catalog entry is untouched, byte for byte
+    assert_eq!(
+        catalog::runner_type_raw(fixture.fabric(), &switched).await,
+        Some(catalog_bytes[0].clone()),
+        "the jobs.runner_type. value is a sealed offer: the dispatch mode never rides on it",
+    );
+
+    // Given: the second type switched to CLAIM; then, behind the service's back, the first
+    // type's published mode goes stale and the second type's goes missing
+    dispatch::switch_to_claim(&client, &admin, &restored).await;
+    catalog::wait_for_dispatch_mode(fixture.fabric(), &restored, wire::MODE_CLAIM, LONG).await;
+    catalog::put_dispatch_mode(fixture.fabric(), &switched, wire::MODE_CLAIM).await;
+    catalog::retract_dispatch_mode(fixture.fabric(), &restored).await;
+
+    // When: the service restarts
+    fixture.restart_first(&Knobs::default()).await;
+
+    // Then: boot reconciles both published modes with the ledger, and the catalog entries are
+    // still the bytes they were
+    catalog::wait_for_dispatch_mode(fixture.fabric(), &switched, wire::MODE_PUSH, LONG).await;
+    catalog::wait_for_dispatch_mode(fixture.fabric(), &restored, wire::MODE_CLAIM, LONG).await;
+    for (runner_type, bytes) in [&switched, &restored].into_iter().zip(&catalog_bytes) {
+        assert_eq!(
+            catalog::runner_type_raw(fixture.fabric(), runner_type).await,
+            Some(bytes.clone()),
+            "the catalog entry of '{runner_type}' is unchanged byte for byte",
+        );
+    }
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn clearing_a_runner_types_maximum_returns_it_to_the_service_default() {
+    // Given: a service default maximum run duration of three seconds, and a type set to 96 hours
+    let mut fixture = JobsFixture::start_with(Knobs {
+        run_max_duration_seconds: DEFAULT_MAX_RUN_SECONDS,
+        backstop_interval_seconds: 1,
+        ..Knobs::default()
+    })
+    .await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin().clone();
+    let member = fixture.member().clone();
+    let runner_type = wire::unique_runner_type("cleared");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    instance.connect().await;
+    dispatch::await_live_instances(&client, &admin, &runner_type, 1, LONG).await;
+    gql::expect_success(
+        &dispatch::set_max_run_duration(&client, &admin, &runner_type, NINETY_SIX_HOURS_SECONDS)
+            .await,
+        wire::FIELD_SET_MAX_RUN_DURATION,
+        "a platform administrator sets the type to 96 hours",
+    );
+    let before = dispatch::runner_type_view(&client, &admin, &runner_type).await;
+    assert_eq!(
+        before["runnerType"]["maxRunDurationSeconds"],
+        json!(NINETY_SIX_HOURS_SECONDS)
+    );
+    gql::assert_allowed(&before, wire::ACTION_CLEAR_MAX_RUN_DURATION);
+    let mut fleet_watch = SseSubscription::open(
+        fixture.url(),
+        &admin,
+        &subs::fleet_changed_with_dispatch(&runner_type),
+    )
+    .await;
+    stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
+
+    // When: callers who are not platform administrators try to clear it
+    for (caller, who) in [
+        (member.clone(), "an ordinary member"),
+        (
+            fixture::impersonating_member(&admin),
+            "a member impersonating an administrator",
+        ),
+        (fixture::machine_caller(), "a machine passport"),
+    ] {
+        let refused = dispatch::clear_max_run_duration(&client, &caller, &runner_type).await;
+        assert_eq!(
+            verdict::expect_code_shaped(&refused, &format!("{who} clearing a maximum")),
+            FORBIDDEN,
+        );
+    }
+
+    // Then: nothing moved
+    stream::expect_total_silence(&mut fleet_watch, "a refused clear moves nothing", QUIET).await;
+    assert_eq!(
+        dispatch::runner_type_view(&client, &admin, &runner_type).await,
+        before
+    );
+
+    // When: a platform administrator clears it, then names a type that does not exist
+    gql::expect_success(
+        &dispatch::clear_max_run_duration(&client, &admin, &runner_type).await,
+        wire::FIELD_CLEAR_MAX_RUN_DURATION,
+        "a platform administrator clears the type's maximum",
+    );
+    let unknown =
+        dispatch::clear_max_run_duration(&client, &admin, &wire::unique_runner_type("unknown"))
+            .await;
+    assert_eq!(
+        gql::mutation_error_reason(&unknown, "clearing an unknown runner type"),
+        wire::REASON_RUNNER_TYPE_NOT_FOUND,
+    );
+
+    // Then: the type is back on the service default, on the stream and the read
+    let changed = stream::await_fleet_event(
+        &mut fleet_watch,
+        wire::KIND_TYPE_MAX_RUN_DURATION_CHANGED,
+        LONG,
+    )
+    .await;
+    assert_eq!(
+        delta::fleet_projection(&changed, &runner_type)["maxRunDurationSeconds"],
+        json!(DEFAULT_MAX_RUN_SECONDS)
+    );
+    assert_eq!(
+        dispatch::runner_type_view(&client, &admin, &runner_type).await["runnerType"]["maxRunDurationSeconds"],
+        json!(DEFAULT_MAX_RUN_SECONDS)
+    );
+
+    // Then: a run dispatched afterwards is bounded by the service default
+    let declaration = JobDeclaration::new(&runner_type).with_max_attempts(1);
+    let job_id = declaration.job_id;
+    producer.declare_v2(&declaration).await;
+    let trigger = instance.next_trigger(LONG).await;
+    let mut watch = SseSubscription::open(
+        fixture.url(),
+        &admin,
+        &subs::job_changed_with_priority(job_id),
+    )
+    .await;
+    stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
+    instance.start_run(&trigger).await;
+    let overrun =
+        stream::await_delta_of(&mut watch, JOB_CHANGED, wire::EVT_RUN_FAILED, job_id, LONG).await;
+    assert_eq!(
+        delta::event_of(&overrun, wire::EVT_RUN_FAILED, job_id)["failureKind"],
+        json!("TRANSIENT")
+    );
+
+    // When: the service restarts with another default
+    fixture
+        .restart_first(&Knobs {
+            run_max_duration_seconds: RESTARTED_DEFAULT_SECONDS,
+            backstop_interval_seconds: 1,
+            ..Knobs::default()
+        })
+        .await;
+
+    // Then: a cleared type follows the service default, whatever it becomes
+    assert_eq!(
+        dispatch::runner_type_view(&fixture.gql(), &admin, &runner_type).await["runnerType"]["maxRunDurationSeconds"],
+        json!(RESTARTED_DEFAULT_SECONDS)
+    );
 
     events.stop().await;
     fixture.shutdown().await;
