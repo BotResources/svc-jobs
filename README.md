@@ -386,18 +386,17 @@ failing job by job.
 | `JOBS_CONSUMER_MAX_ACK_PENDING` | `256` | Runner-transport consumer in-flight window. |
 | `JOBS_CONSUMER_MAX_DELIVER` | `-1` (unlimited) | Runner-transport delivery budget; poison frames are terminated explicitly, never dropped on a budget. |
 | `JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS` | `250` | Supervised-task restart backoff start. |
-| `JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS` | `30` | Supervised-task restart backoff ceiling. |
-| `JOBS_TASK_RESTART_BUDGET` | `10` | Restarts before a task leaves the pod NOT READY for an operator. |
-| `JOBS_TASK_STABILITY_SECONDS` | `60` | Uptime after which a task's restart budget resets. |
+| `JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS` | `30` | Supervised-task restart backoff ceiling. Each wait is drawn within `[backoff / 2, backoff]`. There is no restart budget: a task is retried for as long as the process lives. |
+| `JOBS_TASK_STABILITY_SECONDS` | `60` | Uptime after which a task's restart backoff starts over from its initial value. |
 | `JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS` | `180` | Margin below which boot logs the remaining `run_logs` partition horizon as an `error!`. |
 
 ## Probes & operations
 
 | Endpoint | Meaning |
 |---|---|
-| `GET /livez` | Liveness. |
-| `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, until every supervised background task has bound its own source of work, and whenever one of them is dead; the reason names the culprit. |
-| `GET /metrics` | Prometheus metrics. |
+| `GET /livez` | Liveness. Never tied to NATS or PostgreSQL: a dependency outage takes the pod out of rotation, it does not get it restarted. |
+| `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, until every supervised background task has bound its own source of work, and whenever one of them is down; the reason names the culprit. |
+| `GET /metrics` | Prometheus metrics, among them `jobs_background_task_up{task}` (1 while a supervised task is bound, 0 while it is down) and `jobs_background_task_restarts_total{task}`. |
 | `GET /sdl` | The GraphQL SDL the running binary serves. |
 | `GET /graphql` | GraphiQL playground (passport-gated like the rest). |
 | `svc-jobs schema` | Prints the same SDL and exits — for codegen and CI diffing, no infrastructure needed. |
@@ -405,8 +404,12 @@ failing job by job.
 Migrations are embedded in the binary and run at boot via the owner DSN.
 Every background task (command consumers, status/log/presence consumers,
 dispatch and backstop loops, the fact listener) is supervised: a death takes
-readiness DOWN and restarts it with bounded backoff; exhausting the budget
-leaves the pod NOT READY.
+readiness DOWN and restarts it after a capped, jittered exponential backoff,
+for as long as the process lives — there is no restart budget. Readiness comes
+back on its own once every task has bound again, however long the outage
+lasted (a lost NATS, the node under it). Each loss is logged at `warn` with the
+task, the attempt and the next delay, each recovery at `info` with how long the
+task was down; alert on `jobs_background_task_up == 0` held for minutes.
 
 The known functional limitations (the lost-trigger gap, the narrow
 presence-loss window, a job waiting forever on a runner type that never

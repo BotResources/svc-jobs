@@ -29,6 +29,10 @@ pub struct Knobs {
     pub claim_max_wait_seconds: u64,
     /// `None` leaves JOBS_CLAIM_MAX_HELD unset, so the service default applies.
     pub claim_max_held: Option<u64>,
+    /// `None` leaves JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS unset.
+    pub task_restart_initial_backoff_milliseconds: Option<u64>,
+    /// `None` leaves JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS unset.
+    pub task_restart_max_backoff_seconds: Option<u64>,
 }
 
 impl Default for Knobs {
@@ -45,6 +49,8 @@ impl Default for Knobs {
             claim_reservation_seconds: 600,
             claim_max_wait_seconds: 30,
             claim_max_held: None,
+            task_restart_initial_backoff_milliseconds: None,
+            task_restart_max_backoff_seconds: None,
         }
     }
 }
@@ -250,7 +256,7 @@ pub fn machine_caller() -> Passport {
         .build_service()
 }
 
-async fn spawn_instance(
+pub async fn spawn_instance(
     db: &E2eDatabase,
     nats_url: &str,
     knobs: &Knobs,
@@ -272,6 +278,12 @@ async fn spawn_instance(
     let claim_reservation = knobs.claim_reservation_seconds.to_string();
     let claim_max_wait = knobs.claim_max_wait_seconds.to_string();
     let claim_max_held = knobs.claim_max_held.map(|held| held.to_string());
+    let restart_initial = knobs
+        .task_restart_initial_backoff_milliseconds
+        .map(|milliseconds| milliseconds.to_string());
+    let restart_max = knobs
+        .task_restart_max_backoff_seconds
+        .map(|seconds| seconds.to_string());
 
     let mut env: Vec<(&str, &str)> = vec![
         ("DATABASE_URL", app_url.as_str()),
@@ -303,6 +315,12 @@ async fn spawn_instance(
     }
     if let Some(held) = claim_max_held.as_deref() {
         env.push(("JOBS_CLAIM_MAX_HELD", held));
+    }
+    if let Some(initial) = restart_initial.as_deref() {
+        env.push(("JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS", initial));
+    }
+    if let Some(max) = restart_max.as_deref() {
+        env.push(("JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS", max));
     }
 
     let mut service = SpawnedProcess::spawn(BIN, &[], &env);

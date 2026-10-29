@@ -9,6 +9,47 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.5.1 - 2026-10-29
+
+Background NATS consumers recover from a bus outage of any length, on their
+own. No change to the GraphQL surface, the published contract or the schema.
+
+### Fixed
+
+- A supervised background task (the command consumers, the runner status,
+  log and presence consumers, the claim responder, the outbox relay…) was
+  restarted at most `JOBS_TASK_RESTART_BUDGET` (10) times in a row, then given
+  up for good. Any NATS outage longer than that — about two minutes on the
+  shipped backoff — left the pod NOT READY until an operator restarted it,
+  while `/livez` kept answering, so Kubernetes never did: no job was created,
+  cancelled, completed or dispatched in the meantime. A task is now restarted
+  for as long as the process lives; once the bus is back every task binds
+  again and `/readyz` turns ready by itself. Readiness keeps its meaning (a
+  task is down from the end of an attempt until it binds again) and `/livez`
+  stays independent of the bus.
+
+### Changed
+
+- Each restart wait is drawn within `[backoff / 2, backoff]` (still doubling
+  from `JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS` and capped at
+  `JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS`), so the tasks one outage drops do
+  not hit the bus back in the same instant. An attempt that lived
+  `JOBS_TASK_STABILITY_SECONDS` still starts the backoff over.
+- A lost task is logged once per attempt at `warn` (task, attempt, next delay,
+  cause; `error` for a panic), and its recovery at `info` with how long it was
+  down.
+
+### Added
+
+- Metrics `jobs_background_task_up{task}` (1 while a supervised task is bound
+  to its source of work, 0 while it is down) and
+  `jobs_background_task_restarts_total{task}`, both exposed from boot.
+
+### Removed
+
+- `JOBS_TASK_RESTART_BUDGET` is no longer read. A deployment that still sets
+  it is unaffected; drop it from its environment.
+
 ## 0.5.0 - 2026-10-29
 
 Administrators read users' maximum priorities. Additive: every 0.4 behaviour
