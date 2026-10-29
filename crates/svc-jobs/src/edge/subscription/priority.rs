@@ -17,29 +17,35 @@ pub fn my_max_priority_stream(
 ) -> impl Stream<Item = GqlMyMaxPriorityStreamMessage> + Send {
     let mut facts = state.hub.subscribe();
     async_stream::stream! {
-        match priority::applicable_max(&state.jobs, user_id).await {
-            Ok(maximum) => yield GqlMyMaxPriorityStreamMessage::Snapshot(GqlMyMaxPrioritySnapshot {
-                cursor: cursor(Uuid::now_v7()),
-                max_priority: i32::from(maximum.get()),
-            }),
+        // The revision the snapshot was read at: a change committed before the
+        // read but delivered after it is no later than it, and is dropped.
+        let mut sent = match priority::applicable_max_revised(&state.jobs, user_id).await {
+            Ok((maximum, revision)) => {
+                yield GqlMyMaxPriorityStreamMessage::Snapshot(GqlMyMaxPrioritySnapshot {
+                    cursor: cursor(Uuid::now_v7()),
+                    max_priority: i32::from(maximum.get()),
+                });
+                revision
+            }
             Err(error) => {
                 tracing::warn!(error = %error, "the maximum priority snapshot could not be built");
                 return;
             }
-        }
+        };
         while let Some(fact) = next_unbroken_fact(&mut facts).await {
             let Fact::User {
                 event_id,
                 user_id: carried,
+                revision,
                 event,
-                ..
             } = fact
             else {
                 continue;
             };
-            if carried.as_uuid() != user_id {
+            if carried.as_uuid() != user_id || revision <= sent {
                 continue;
             }
+            sent = revision;
             let maximum = priority::applicable(
                 &UserMaxPriority::new(carried, event.resulting_maximum()),
                 &state.jobs,

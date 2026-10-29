@@ -45,6 +45,13 @@ is kept, except the refusal of a clear that has nothing to clear (below).
   as `jobsClearRunnerTypeMaxRunDuration` already does with
   `no_max_run_duration_set`.
 
+### Fixed
+
+- `jobsMyMaxPriorityChanged` could push a stale maximum right after its
+  snapshot: a change committed before the snapshot was read but delivered
+  after it. The snapshot now carries the user's revision and a change no later
+  than it is dropped.
+
 ## 0.4.0 - 2026-10-26
 
 Priorities and claim-based dispatch. Every 0.3 behaviour of a `PUSH` runner

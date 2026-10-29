@@ -20,7 +20,7 @@ use bc_jobs::commands::user::{
 use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::ids::{JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::priority::{Priority, UserMaxPriority};
+use bc_jobs::domain::priority::{MaxPriorityRevision, Priority, UserMaxPriority, UserSelection};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::policies::priority::{forcing_cascade, recalculate_for_user};
 use bc_jobs::ports::user::UserMaxPriorityReader;
@@ -136,6 +136,21 @@ pub fn applicable(user: &UserMaxPriority, jobs: &Jobs) -> Priority {
 pub async fn applicable_max(jobs: &Jobs, user_id: Uuid) -> Result<Priority, ServiceError> {
     let user = UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user_id)?).await?;
     Ok(applicable(&user, jobs))
+}
+
+/// The applicable maximum of a user and the revision it was read at — the
+/// user surface's snapshot, against which a later change is told from a late
+/// one.
+pub async fn applicable_max_revised(
+    jobs: &Jobs,
+    user_id: Uuid,
+) -> Result<(Priority, MaxPriorityRevision), ServiceError> {
+    let selection = UserSelection::one(KnownUserId::new(user_id)?);
+    let read = UserMaxPriorityReader::load_selected(&jobs.store, &selection).await?;
+    let found = read.first().ok_or_else(|| {
+        ServiceError::Infra("a selected user is missing from its own read".to_owned())
+    })?;
+    Ok((applicable(&found.maximum, jobs), found.revision))
 }
 
 async fn change_max<F>(
