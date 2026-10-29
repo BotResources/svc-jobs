@@ -1,33 +1,3 @@
-# CI — the canonical green gate, bootstrapped by runkit.
-#
-# Every job here is a required status check on `main`, declared in
-# .github/required-checks.json and applied by
-# scripts/setup-branch-protection.sh. A merge is impossible until they report.
-#
-# Trigger: pull_request to main only. Pushes to main are the release side's
-# business, and re-running the gate there would only slow it down for no
-# information the pull request did not already give.
-#
-# ── Runner ──────────────────────────────────────────────────────────
-# GitHub-hosted `ubuntu-latest`, and no container. A standalone service
-# repository is not on the ARC self-hosted pool the backend monorepo rides
-# (`arc-ubuntu` + `ghcr.io/botresources/br-arc-runner`) — naming a pool that
-# does not exist for this repository queues every job forever, which reads
-# exactly like a hung check. The per-service e2e job runkit adds later copies
-# whatever this job says rather than carrying its own answer.
-#
-# ── The `changes` job is an anchor bed ──────────────────────────────
-# Each service runkit scaffolds is spliced into five places inside it — a
-# paths-filter group, an `outputs:` entry, a lock-closure argument, a fail-open
-# echo, and a `P_`/`C_` pair the loop merges — and gains one `e2e-<service>` job
-# at the end of this file. Those anchors are a shape the generator locates, not
-# decoration: rename the job, drop `fail_open()` or collapse the merge step and
-# the next scaffold run refuses rather than guessing where its lines belong.
-#
-# Until the first service is registered the machinery computes exactly one
-# verdict — `lock` — and no job reads it. That is the empty state, not a broken
-# one.
-
 name: ci
 
 on:
@@ -39,8 +9,6 @@ permissions:
   contents: read
   packages: read
 
-# Cancel superseded runs on the same ref: a second push should not pay for the
-# first one's remaining jobs.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -51,10 +19,6 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  # ── Formatting gate (auto-fix on pull requests) ────────────────────
-  # Runs `cargo fmt --all` and commits any fix it had to make, then exits 1 so
-  # every downstream job (they all `needs: fmt`) stops. The fix is already on
-  # the branch, so the developer only re-runs.
   fmt:
     name: cargo fmt (auto-fix)
     runs-on: ubuntu-latest
@@ -93,7 +57,6 @@ jobs:
           echo "::error::Code was auto-formatted and pushed. Please re-run CI."
           exit 1
 
-  # ── Workspace: lint + unit tests ───────────────────────────────────
   check:
     name: cargo clippy + test
     needs: fmt
@@ -114,9 +77,6 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # `--lib --bins` only: the e2e suites need a real Postgres and a real
-      # NATS, and each service's own `e2e-<service>` job is where they get them.
-      # They still compile under `--all-targets` above, which gates type drift.
       - name: cargo check contract-jobs (runner footprint, no br-rust-common)
         run: cargo check -p contract-jobs --locked --no-default-features
 
@@ -135,11 +95,6 @@ jobs:
       - name: helm template dry-run
         run: helm template ci charts/br-svc-jobs --debug > /dev/null
 
-  # ── Supply chain: advisories, licences/bans/sources, unused deps ───
-  # Three checks in one job — the fixed per-job overhead is worth more than the
-  # separation, and taiki-e/install-action fetches prebuilt binaries in seconds.
-  # cargo-audit and cargo-deny both run on purpose: audit catches a few
-  # advisory shapes deny's resolver misses.
   supply-chain:
     name: supply chain (audit + deny + machete)
     needs: fmt
@@ -154,30 +109,15 @@ jobs:
         with:
           tool: cargo-audit,cargo-deny,cargo-machete
 
-      # --ignore RUSTSEC-2023-0071 — rsa (Marvin Attack timing sidechannel),
-      # listed in Cargo.lock through sqlx-macros-core → sqlx-mysql but never
-      # resolved into the build graph (postgres-only sqlx features), so rsa is
-      # not compiled and upstream has no fixed version. Mirrored, with the full
-      # Why block and the dated upstream check, in deny.toml [advisories].
       - name: cargo audit (RustSec)
         run: cargo audit --ignore RUSTSEC-2023-0071
 
-      # Every check kind (advisories | bans | licences | sources). The defaults
-      # already do that; spelling it out survives an upstream default change.
-      # Configured in deny.toml, whose licence allow-list and `allow-git` both
-      # fail closed.
       - name: cargo deny check
         run: cargo deny --all-features check
 
       - name: cargo machete (unused deps)
         run: cargo machete
 
-  # ── Published-language stability gate ──────────────────────────────
-  # contract-jobs is the only crate consumers import (as a git dependency on
-  # its `contract-jobs/v*` tag), so it is the only crate semver-gated.
-  # bc-jobs and svc-jobs are internal to this repository and never tagged
-  # per-crate. Before the first contract tag exists there is no baseline and
-  # the job passes vacuously.
   semver:
     name: cargo semver-checks (contract)
     needs: fmt
@@ -202,7 +142,6 @@ jobs:
           echo "Baseline: $baseline"
           cargo semver-checks check-release -p contract-jobs --baseline-rev "$baseline"
 
-  # ── Release notes exist for the version each crate declares ────────
   changelog:
     name: changelog entry present (per crate)
     runs-on: ubuntu-latest
@@ -260,7 +199,15 @@ jobs:
 
           [[ "${gated}" -eq 1 ]] || echo "No tracked service version bump in this PR — nothing to gate."
 
-  # ── CI orchestration is shell, and deserves its own lint ───────────
+      - name: Gate tracked libraries against the Libraries registry
+        env:
+          BR_REGISTRY_KEY: ${{ secrets.BR_REGISTRY_KEY }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: bash scripts/library-pr-gate.sh
+
+      - name: Library registry wiring tests
+        run: bash scripts/test-library-registry.sh
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
@@ -271,12 +218,6 @@ jobs:
           scandir: ./scripts
           severity: warning
 
-  # ── Secret scan (full history) ─────────────────────────────────────
-  # `--results=verified,unknown` rather than `--only-verified`: a credential
-  # trufflehog cannot reach the issuer to verify is reported as *unknown*, not
-  # as clean, and a repository's first workflow is the wrong place to decide
-  # that unknown means fine. Narrowing this is a decision to take deliberately,
-  # with the noise in front of you — not one to inherit from a generator.
   secrets:
     name: trufflehog (secret scan)
     runs-on: ubuntu-latest
@@ -291,7 +232,6 @@ jobs:
           head: HEAD
           extra_args: --results=verified,unknown
 
-  # ── Which suites this pull request has to pay for ──────────────────
   changes:
     name: e2e path filter
     runs-on: ubuntu-latest
@@ -398,23 +338,6 @@ jobs:
             fi
           done
 
-  # ── Jobs e2e — the executable spec ────────────────────────────────
-  # Scaffolded by runkit with the jobs unit: the real svc-jobs
-  # binary against a job-local PostgreSQL and a per-scenario ephemeral
-  # `nats-server`, driving the four observation channels.
-  #
-  # `--tests` rather than an enumerated `--test` list (the shape
-  # e2e-charter uses): the skeleton ships no scenario yet, so an
-  # enumeration would name targets that do not exist — and it is exactly
-  # the kind of list the first real scenario gets forgotten from,
-  # silently un-gating itself. cargo passes with zero test targets, so
-  # this job is green until there is something to be red about.
-  #
-  # --test-threads=1: each scenario spawns its own service process and
-  # its own nats-server, and mints roles and DBs on the shared cluster.
-  # Same serial posture as the identity, projects and charter chains.
-  # --no-fail-fast: report every scenario binary in one run instead of
-  # stopping at the first failing target.
   e2e-jobs:
     name: e2e jobs (reality chains)
     needs: [fmt, changes]
@@ -427,9 +350,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Exports E2E_PG_ADMIN_URL (admin Postgres) and puts `nats-server` on
-      # PATH — the suite mints its own roles and DBs from the former and
-      # spawns the latter per scenario. Nothing jobs-specific.
       - name: provision e2e infra (postgres + nats-server)
         run: bash scripts/provision-e2e-infra.sh
 
