@@ -3,6 +3,7 @@ pub mod fleet;
 pub mod job;
 pub mod log;
 pub mod transport;
+pub mod user;
 
 use thiserror::Error;
 

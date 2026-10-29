@@ -2,16 +2,16 @@ mod support;
 
 use br_core_auth::{Passport, PassportHeader};
 use br_test_harness::{GraphqlClient, SseSubscription, verdict};
-use reqwest::StatusCode;
 use serde_json::{Value, json};
 use support::db::{self, Durable};
 use support::events::EventLog;
 use support::fixture::{JobsFixture, impersonating_admin, impersonating_member, machine_caller};
 use support::producer::{JobDeclaration, Producer};
+use support::refusal::{subscription_refusal, unauthenticated_refusal};
 use support::runner::{self, FakeRunner};
 use support::{
     FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, docs, gql,
-    stream, subs, wire,
+    refusal, stream, subs, wire,
 };
 use uuid::Uuid;
 
@@ -129,6 +129,11 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
             json!({ "runnerType": runner_type.clone() }),
             "the fleet read",
         ),
+        (
+            docs::USER_MAX_PRIORITIES,
+            json!({ "userIds": [member.actor_id().to_string()] }),
+            "the users' maxima read",
+        ),
     ] {
         let refused = client.query(member, document, variables).await;
         read_refusals.push(verdict::expect_code_shaped(&refused, what));
@@ -173,12 +178,16 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         assert_no_jobs_state_leaked(&refused, running_id, "a non-administrator read");
     }
 
-    // When: an ordinary member tries to establish any of the four subscriptions
+    // When: an ordinary member tries to establish any of the administrator subscriptions
     for (what, document) in [
         ("the job stream", subs::job_changed(running_id)),
         ("the list stream", subs::jobs_changed(&runner_type)),
         ("the log tail", subs::log_tail(running_id)),
         ("the fleet stream", subs::fleet_changed(&runner_type)),
+        (
+            "the users' maxima stream",
+            subs::user_max_priorities_changed(&[member.actor_id()]),
+        ),
     ] {
         let (status, body) = client
             .post_raw(
@@ -235,6 +244,42 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
             &format!("a subscription carrying {what}"),
         ));
         assert_no_jobs_state_leaked(&body, running_id, "an unauthenticated subscription");
+
+        let mut bare: Vec<(&str, &str)> = Vec::new();
+        if let Some(value) = forged {
+            bare.push(("X-Passport", value));
+        }
+        let (status, body) = client
+            .post_raw(
+                "/graphql",
+                &bare,
+                json!({
+                    "query": docs::USER_MAX_PRIORITIES,
+                    "variables": { "userIds": [member.actor_id().to_string()] },
+                }),
+            )
+            .await;
+        anonymous_refusals.push(unauthenticated_refusal(
+            status,
+            &body,
+            &format!("the users' maxima read carrying {what}"),
+        ));
+        assert_no_jobs_state_leaked(&body, running_id, "an unauthenticated maxima read");
+
+        bare.push(("Accept", "text/event-stream"));
+        let (status, body) = client
+            .post_raw(
+                "/graphql",
+                &bare,
+                json!({ "query": subs::user_max_priorities_changed(&[member.actor_id()]) }),
+            )
+            .await;
+        anonymous_refusals.push(unauthenticated_refusal(
+            status,
+            &body,
+            &format!("the users' maxima stream carrying {what}"),
+        ));
+        assert_no_jobs_state_leaked(&body, running_id, "an unauthenticated maxima stream");
     }
     let closed_door = anonymous_refusals[0].clone();
     for code in &anonymous_refusals {
@@ -408,53 +453,14 @@ async fn resolution_of(client: &GraphqlClient, admin: &Passport, job_id: Uuid) -
     .expect("a resolution id is a UUID")
 }
 
-fn unauthenticated_refusal(status: StatusCode, body: &Value, what: &str) -> String {
-    assert_eq!(
-        status,
-        StatusCode::UNAUTHORIZED,
-        "{what} must be closed at the trust boundary, never answered on a permissive default: \
-         {body}"
-    );
-    let code = verdict::mutation_error_code(body).unwrap_or_else(|| {
-        panic!("{what}: a refusal at the boundary still owes a structured code: {body}")
-    });
-    assert!(
-        verdict::is_code_shaped(&code),
-        "{what}: the refusal code must be a stable code, not prose: {code}"
-    );
-    code
-}
-
-fn subscription_refusal(status: StatusCode, body: &Value, what: &str) -> String {
-    assert_ne!(
-        status,
-        StatusCode::OK,
-        "{what} must be refused during establishment, never opened: {body}"
-    );
-    let code = verdict::mutation_error_code(body).unwrap_or_else(|| {
-        panic!("{what}: a refused subscription still owes a structured code: {body}")
-    });
-    assert!(
-        verdict::is_code_shaped(&code),
-        "{what}: the refusal code must be a stable code, not prose: {code}"
-    );
-    code
-}
-
 fn assert_no_jobs_state_leaked(response: &Value, job_id: Uuid, what: &str) {
-    let rendered = response.to_string();
-    for secret in [job_id.to_string().as_str(), "IN_PROGRESS", "COMPLETED"] {
-        assert!(
-            !rendered.contains(secret),
-            "{what} must not leak Jobs state to a caller who may not read it ({secret}): {response}"
-        );
-    }
-    let data = &response["data"];
-    assert!(
-        data.is_null()
-            || data
-                .as_object()
-                .is_some_and(|fields| fields.values().all(Value::is_null)),
-        "{what} must return no Jobs data at all: {response}"
+    refusal::assert_nothing_leaked(
+        response,
+        &[
+            job_id.to_string(),
+            "IN_PROGRESS".to_owned(),
+            "COMPLETED".to_owned(),
+        ],
+        what,
     );
 }

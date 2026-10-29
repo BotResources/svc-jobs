@@ -20,13 +20,14 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 6] = [
+const DECLARED_QUERIES: [&str; 7] = [
     "jobs",
     "jobsFleet",
     "jobsJob",
     "jobsJobBySource",
     "jobsLogs",
     "jobsMyMaxPriority",
+    "jobsUserMaxPriorities",
 ];
 
 const DECLARED_MUTATIONS: [&str; 12] = [
@@ -44,12 +45,13 @@ const DECLARED_MUTATIONS: [&str; 12] = [
     "jobsSetUserMaxPriority",
 ];
 
-const DECLARED_SUBSCRIPTIONS: [&str; 5] = [
+const DECLARED_SUBSCRIPTIONS: [&str; 6] = [
     "jobsChanged",
     "jobsFleetChanged",
     "jobsJobChanged",
     "jobsJobLogTail",
     "jobsMyMaxPriorityChanged",
+    "jobsUserMaxPrioritiesChanged",
 ];
 
 #[tokio::test]

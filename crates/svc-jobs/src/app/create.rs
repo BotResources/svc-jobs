@@ -8,6 +8,7 @@ use bc_jobs::domain::priority::{Priority, PriorityBasis};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
+use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::{EventMetadata, UserId};
 use contract_jobs::command::{CreateJob as Wire, CreateJobV2};
 use contract_jobs::event::{
@@ -73,9 +74,7 @@ async fn decide(
     };
     let user_maximum = match &command.triggered_by {
         Some(user) => Some(
-            jobs.store
-                .user_max_priority(KnownUserId::new(user.id().0)?)
-                .await?,
+            UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user.id().0)?).await?,
         ),
         None => None,
     };

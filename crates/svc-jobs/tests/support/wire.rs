@@ -100,6 +100,8 @@ pub const ACTION_FORCE_PRIORITY: &str = "force_priority";
 pub const ACTION_SET_DISPATCH_MODE: &str = "set_dispatch_mode";
 pub const ACTION_SET_MAX_RUN_DURATION: &str = "set_max_run_duration";
 pub const ACTION_CLEAR_MAX_RUN_DURATION: &str = "clear_max_run_duration";
+pub const ACTION_SET_MAX_PRIORITY: &str = "set_max_priority";
+pub const ACTION_CLEAR_MAX_PRIORITY: &str = "clear_max_priority";
 
 pub const EVT_PRIORITY_FORCED: &str = "JobsJobPriorityForcedEvent";
 pub const EVT_PRIORITY_RECALCULATED: &str = "JobsJobPriorityRecalculatedEvent";
@@ -124,6 +126,10 @@ pub const REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
 pub const REASON_PARENT_JOB_TERMINAL: &str = "parent_job_terminal";
 pub const REASON_BUSY: &str = "busy";
 pub const REASON_NO_MAX_RUN_DURATION_SET: &str = "no_max_run_duration_set";
+pub const REASON_NO_MAX_PRIORITY_SET: &str = "no_max_priority_set";
+pub const REASON_NOT_SUPER_USER: &str = "not_super_user";
+pub const REASON_VALUE_TOO_LONG: &str = "value_too_long";
+pub const REASON_NOT_UUID_V7: &str = "not_uuid_v7";
 
 /// The closed vocabulary a refused claim may answer with — nothing else.
 pub const CLAIM_REFUSALS: [&str; 7] = [
@@ -149,6 +155,7 @@ pub const FIELD_FORCE_JOB_PRIORITY: &str = "jobsForceJobPriority";
 pub const FIELD_SET_DISPATCH_MODE: &str = "jobsSetRunnerTypeDispatchMode";
 pub const FIELD_SET_MAX_RUN_DURATION: &str = "jobsSetRunnerTypeMaxRunDuration";
 pub const FIELD_MY_MAX_PRIORITY: &str = "jobsMyMaxPriority";
+pub const FIELD_USER_MAX_PRIORITIES: &str = "jobsUserMaxPriorities";
 pub const FIELD_CLEAR_MAX_RUN_DURATION: &str = "jobsClearRunnerTypeMaxRunDuration";
 
 pub const CLAIM_PREFIX: &str = "jobs.claim.";

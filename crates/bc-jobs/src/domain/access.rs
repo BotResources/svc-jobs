@@ -2,9 +2,10 @@
 //! decisions every surface takes from them.
 //!
 //! The facts come from the Passport the trusted frontier injects; this module
-//! never sees the Passport itself. Platform administrators read and operate
-//! the ledger. Super users additionally govern priorities. Any active human may
-//! read their own maximum priority — and nothing else.
+//! never sees the Passport itself. Super users — the admins of the platform
+//! org, who are the platform administrators — read and operate the ledger and
+//! govern priorities. Any active human may read their own maximum priority —
+//! and nothing else.
 
 use crate::error::JobsError;
 
@@ -14,29 +15,39 @@ pub enum PrincipalKind {
     Service,
 }
 
+/// The role a principal holds on the platform. A platform administrator and a
+/// super user are one population: the admins of the platform org. The decisions
+/// that ask for either stay distinct, each refusing under its own code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlatformRole {
+    Member,
+    SuperUser,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrincipalFacts {
     kind: PrincipalKind,
     is_active: bool,
-    is_super_admin: bool,
+    role: PlatformRole,
 }
 
 impl PrincipalFacts {
-    pub fn new(kind: PrincipalKind, is_active: bool, is_super_admin: bool) -> Self {
+    pub fn new(kind: PrincipalKind, is_active: bool, role: PlatformRole) -> Self {
         Self {
             kind,
             is_active,
-            is_super_admin,
+            role,
         }
     }
 
-    fn is_active_human(&self) -> bool {
-        self.kind == PrincipalKind::Human && self.is_active
+    fn is_active_human_holding(&self, role: PlatformRole) -> bool {
+        self.kind == PrincipalKind::Human && self.is_active && self.role >= role
     }
 
-    /// Every administrator gesture and every read of the ledger.
+    /// Every administrator gesture and every read of the ledger, users'
+    /// maximum priorities included.
     pub fn guard_platform_administrator(&self) -> Result<(), JobsError> {
-        if self.is_active_human() && self.is_super_admin {
+        if self.is_active_human_holding(PlatformRole::SuperUser) {
             Ok(())
         } else {
             Err(JobsError::NotPlatformAdministrator)
@@ -44,12 +55,9 @@ impl PrincipalFacts {
     }
 
     /// Setting or clearing a user's maximum priority, and forcing a Job's
-    /// priority: reserved to the admins of the platform org. The Passport
-    /// carries one platform-org privilege, so this population is today the
-    /// platform administrators'; the decision stays its own so the two can part
-    /// without touching any caller.
+    /// priority: reserved to the admins of the platform org.
     pub fn guard_super_user(&self) -> Result<(), JobsError> {
-        if self.is_active_human() && self.is_super_admin {
+        if self.is_active_human_holding(PlatformRole::SuperUser) {
             Ok(())
         } else {
             Err(JobsError::NotSuperUser)
@@ -59,7 +67,7 @@ impl PrincipalFacts {
     /// Reading one's own maximum priority: any active human, never a service
     /// account.
     pub fn guard_reads_own_max_priority(&self) -> Result<(), JobsError> {
-        if self.is_active_human() {
+        if self.is_active_human_holding(PlatformRole::Member) {
             Ok(())
         } else {
             Err(JobsError::NotActiveHuman)
@@ -71,12 +79,20 @@ impl PrincipalFacts {
 mod tests {
     use super::*;
 
+    fn role(is_super_admin: bool) -> PlatformRole {
+        if is_super_admin {
+            PlatformRole::SuperUser
+        } else {
+            PlatformRole::Member
+        }
+    }
+
     fn human(is_active: bool, is_super_admin: bool) -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, is_active, is_super_admin)
+        PrincipalFacts::new(PrincipalKind::Human, is_active, role(is_super_admin))
     }
 
     fn service(is_super_admin: bool) -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Service, true, is_super_admin)
+        PrincipalFacts::new(PrincipalKind::Service, true, role(is_super_admin))
     }
 
     #[test]

@@ -1,10 +1,15 @@
 //! The local facts priority decisions read: the maximum stored for a
 //! KnownUser, and the Jobs a change of that maximum reaches.
 
+use std::collections::HashMap;
+
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::priority::{Priority, UserMaxPriority};
+use bc_jobs::domain::priority::{MaxPriorityRevision, Priority, UserMaxPriority, UserSelection};
+use bc_jobs::event::user::KNOWN_USER_AGGREGATE_TYPE;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::user::{RevisedUserMaxPriority, UserMaxPriorityReader};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
@@ -26,18 +31,6 @@ const SHARED_LOCK_SQL: &str =
     "SELECT pg_advisory_xact_lock_shared(hashtext('user_max_priorities'), hashtext($1::text))";
 
 impl PgStore {
-    /// The stored maximum of a user, Jobs knowing them or not.
-    pub async fn user_max_priority(
-        &self,
-        user_id: KnownUserId,
-    ) -> Result<UserMaxPriority, PortError> {
-        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        Ok(UserMaxPriority::new(
-            user_id,
-            maximum(&mut connection, user_id).await?,
-        ))
-    }
-
     /// Locks the user for a change of their maximum and reads the maximum
     /// stored under that lock.
     pub async fn lock_user_max_priority(
@@ -170,6 +163,63 @@ impl PgStore {
 
     pub async fn load_jobs_in(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Job>, PortError> {
         load_many(tx, ids).await
+    }
+}
+
+#[async_trait]
+impl UserMaxPriorityReader for PgStore {
+    /// One statement for the whole selection, so every maximum and its
+    /// revision come from the same snapshot of the store: the users with a
+    /// maximum of their own are rows, every other one is on the default; the
+    /// revision is the version of the user's last recorded change.
+    async fn load_selected(
+        &self,
+        users: &UserSelection,
+    ) -> Result<Vec<RevisedUserMaxPriority>, PortError> {
+        if users.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids: Vec<Uuid> = users.ids().iter().map(KnownUserId::as_uuid).collect();
+        let rows = sqlx::query(
+            "SELECT u.id AS user_id, m.max_priority::smallint AS max_priority, \
+                coalesce((SELECT max(e.aggregate_version) FROM domain_events e \
+                    WHERE e.aggregate_type = $2 AND e.aggregate_id = u.id), 0) AS revision \
+             FROM unnest($1::uuid[]) AS u(id) \
+             LEFT JOIN user_max_priorities m ON m.user_id = u.id",
+        )
+        .bind(&ids)
+        .bind(KNOWN_USER_AGGREGATE_TYPE)
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        let mut stored: HashMap<Uuid, (Option<Priority>, MaxPriorityRevision)> =
+            HashMap::with_capacity(rows.len());
+        for row in rows {
+            let maximum: Option<i16> = row.get("max_priority");
+            stored.insert(
+                row.get("user_id"),
+                (
+                    maximum.map(rows::priority).transpose()?,
+                    MaxPriorityRevision::new(row.get("revision"))?,
+                ),
+            );
+        }
+        users
+            .ids()
+            .iter()
+            .map(|user_id| {
+                let (maximum, revision) =
+                    stored.get(&user_id.as_uuid()).copied().ok_or_else(|| {
+                        PortError::Unavailable {
+                            detail: "a selected user is missing from its own read".to_owned(),
+                        }
+                    })?;
+                Ok(RevisedUserMaxPriority {
+                    maximum: UserMaxPriority::new(*user_id, maximum),
+                    revision,
+                })
+            })
+            .collect()
     }
 }
 
