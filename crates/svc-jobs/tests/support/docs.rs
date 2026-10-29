@@ -142,6 +142,15 @@ pub const MY_MAX_PRIORITY_FOR_SUPPLIED_USER: &str = r#"
 query($userId: UUID!) { jobsMyMaxPriority(userId: $userId) { maxPriority } }
 "#;
 
+pub const USER_MAX_PRIORITIES: &str = r#"
+query($userIds: [UUID!]!) {
+  jobsUserMaxPriorities(userIds: $userIds) {
+    userId maxPriority isDefault
+    affordances { action allowed reasonCode params }
+  }
+}
+"#;
+
 pub const SET_USER_MAX_PRIORITY: &str = r#"
 mutation($input: JobsSetUserMaxPriorityInput!) { jobsSetUserMaxPriority(input: $input) { success } }
 "#;

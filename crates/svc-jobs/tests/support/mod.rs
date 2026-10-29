@@ -33,3 +33,4 @@ pub const JOBS_CHANGED: &str = "jobsChanged";
 pub const LOG_TAIL: &str = "jobsJobLogTail";
 pub const FLEET_CHANGED: &str = "jobsFleetChanged";
 pub const MY_MAX_PRIORITY_CHANGED: &str = "jobsMyMaxPriorityChanged";
+pub const USER_MAX_PRIORITIES_CHANGED: &str = "jobsUserMaxPrioritiesChanged";
