@@ -9,12 +9,12 @@ use uuid::Uuid;
 
 use super::error::edge_error;
 use super::project;
-use super::state::{EdgeState, administrator, own_user};
+use super::state::{EdgeState, administrator, own_user, principal};
 use super::types::fleet::GqlRunnerTypeView;
 use super::types::input::GqlJobFilterInput;
 use super::types::job::{GqlJobSummaryView, GqlJobView};
 use super::types::log::GqlRunLog;
-use super::types::priority::GqlMyMaxPriority;
+use super::types::priority::{GqlMyMaxPriority, GqlUserMaxPriority};
 use crate::db::list;
 use crate::db::logs::LogWindow;
 use crate::edge::log_page::log_connection;
@@ -141,5 +141,21 @@ impl QueryRoot {
         Ok(GqlMyMaxPriority {
             max_priority: i32::from(maximum.get()),
         })
+    }
+
+    /// The maximum priority of each user asked for — their own or the service
+    /// default, and which of the two applies — with the caller's affordances
+    /// of setting and clearing it. Platform administrators only; at most 200
+    /// users per read, each answered once.
+    async fn jobs_user_max_priorities(
+        &self,
+        ctx: &Context<'_>,
+        user_ids: Vec<Uuid>,
+    ) -> Result<Vec<GqlUserMaxPriority>> {
+        let state = ctx.data::<EdgeState>()?;
+        let views = crate::app::user_max_priorities::read(&state.jobs, &principal(ctx)?, &user_ids)
+            .await
+            .map_err(edge_error)?;
+        Ok(views.into_iter().map(GqlUserMaxPriority::from).collect())
     }
 }

@@ -10,7 +10,7 @@
 use async_graphql::parser::parse_query;
 use async_graphql::parser::types::Selection;
 use axum::http::StatusCode;
-use bc_jobs::domain::access::{PrincipalFacts, PrincipalKind};
+use bc_jobs::domain::access::{PlatformPrivileges, PrincipalFacts, PrincipalKind};
 use br_core_auth::Passport;
 use br_util_graphql::EdgeError;
 
@@ -24,7 +24,15 @@ pub fn principal_of(passport: &Passport) -> PrincipalFacts {
         Passport::Human { .. } => PrincipalKind::Human,
         Passport::Service { .. } => PrincipalKind::Service,
     };
-    PrincipalFacts::new(kind, passport.is_active(), passport.is_super_admin())
+    // The Passport carries one platform privilege, the admin flag of the
+    // platform org: it makes its bearer both a platform administrator and a
+    // super user. The two stay distinct facts so they can part here alone.
+    let privileges = if passport.is_super_admin() {
+        PlatformPrivileges::PLATFORM_ORG_ADMIN
+    } else {
+        PlatformPrivileges::NONE
+    };
+    PrincipalFacts::new(kind, passport.is_active(), privileges)
 }
 
 pub fn admit(passport: &Passport, query: &str) -> Result<(), (StatusCode, EdgeError)> {

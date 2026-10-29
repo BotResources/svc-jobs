@@ -3,6 +3,7 @@ pub mod job;
 pub mod list;
 pub mod logs;
 pub mod priority;
+pub mod user_max_priorities;
 
 use async_graphql::{Context, Result, Subscription};
 use bc_jobs::domain::ids::{JobId, RunId};
@@ -14,7 +15,7 @@ use uuid::Uuid;
 use super::error::edge_error;
 use super::state::{EdgeState, administrator, own_user, principal};
 use super::types::input::{GqlConnectionWindowInput, GqlJobFilterInput, GqlLogTailWindowInput};
-use super::types::priority::GqlMyMaxPriorityStreamMessage;
+use super::types::priority::{GqlMyMaxPriorityStreamMessage, GqlUserMaxPrioritiesStreamMessage};
 use super::types::stream::{
     GqlFleetStreamMessage, GqlJobLogStreamMessage, GqlJobStreamMessage, GqlJobsStreamMessage,
 };
@@ -93,6 +94,23 @@ impl SubscriptionRoot {
         let user_id = own_user(ctx)?;
         let state = ctx.data::<EdgeState>()?.clone();
         Ok(priority::my_max_priority_stream(state, user_id))
+    }
+
+    /// The maximum priority of each user watched — a snapshot equal to
+    /// `jobsUserMaxPriorities`, then the complete new view of a user each time
+    /// their maximum changes. Platform administrators only.
+    async fn jobs_user_max_priorities_changed(
+        &self,
+        ctx: &Context<'_>,
+        user_ids: Vec<Uuid>,
+    ) -> Result<impl Stream<Item = GqlUserMaxPrioritiesStreamMessage>> {
+        let principal = principal(ctx)?;
+        let users =
+            crate::app::user_max_priorities::select(&principal, &user_ids).map_err(edge_error)?;
+        let state = ctx.data::<EdgeState>()?.clone();
+        Ok(user_max_priorities::user_max_priorities_stream(
+            state, principal, users,
+        ))
     }
 }
 

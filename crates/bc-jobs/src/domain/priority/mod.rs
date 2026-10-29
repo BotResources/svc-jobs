@@ -9,8 +9,12 @@ pub mod basis;
 pub mod job_priority;
 pub mod level;
 pub mod user_max;
+pub mod user_selection;
+pub mod user_view;
 
 pub use basis::PriorityBasis;
 pub use job_priority::JobPriority;
 pub use level::Priority;
 pub use user_max::UserMaxPriority;
+pub use user_selection::UserSelection;
+pub use user_view::UserMaxPriorityView;

@@ -69,6 +69,7 @@ impl JobsError {
             | Self::NotClaimMode { runner_type }
             | Self::NotPushMode { runner_type }
             | Self::MaxRunDurationNotSet { runner_type } => json!({ "runnerType": runner_type }),
+            Self::MaxPriorityNotSet { user_id } => json!({ "userId": user_id }),
             Self::RunnerTypeNotActive { lifecycle }
             | Self::RunnerTypeNotDeprecated { lifecycle } => json!({ "lifecycle": lifecycle }),
             Self::RunnerTypeHasNonTerminalJobs { count } => json!({ "count": count }),

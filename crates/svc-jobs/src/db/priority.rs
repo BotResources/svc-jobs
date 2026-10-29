@@ -1,10 +1,14 @@
 //! The local facts priority decisions read: the maximum stored for a
 //! KnownUser, and the Jobs a change of that maximum reaches.
 
+use std::collections::HashMap;
+
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::priority::{Priority, UserMaxPriority};
+use bc_jobs::domain::priority::{Priority, UserMaxPriority, UserSelection};
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::user::UserMaxPriorityReader;
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
@@ -170,6 +174,41 @@ impl PgStore {
 
     pub async fn load_jobs_in(tx: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Job>, PortError> {
         load_many(tx, ids).await
+    }
+}
+
+#[async_trait]
+impl UserMaxPriorityReader for PgStore {
+    /// One statement for the whole selection: the users with a maximum of
+    /// their own are rows, every other one is on the default.
+    async fn load_selected(
+        &self,
+        users: &UserSelection,
+    ) -> Result<Vec<UserMaxPriority>, PortError> {
+        if users.is_empty() {
+            return Ok(vec![]);
+        }
+        let ids: Vec<Uuid> = users.ids().iter().map(KnownUserId::as_uuid).collect();
+        let rows = sqlx::query(
+            "SELECT m.user_id::uuid AS user_id, m.max_priority::smallint AS max_priority \
+             FROM user_max_priorities m WHERE m.user_id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        let mut stored: HashMap<Uuid, Priority> = HashMap::with_capacity(rows.len());
+        for row in rows {
+            stored.insert(
+                row.get("user_id"),
+                rows::priority(row.get("max_priority")).map_err(PortError::from)?,
+            );
+        }
+        Ok(users
+            .ids()
+            .iter()
+            .map(|user_id| UserMaxPriority::new(*user_id, stored.get(&user_id.as_uuid()).copied()))
+            .collect())
     }
 }
 

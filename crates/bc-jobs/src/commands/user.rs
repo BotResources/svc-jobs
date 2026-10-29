@@ -21,7 +21,7 @@ pub fn set_max_priority(
     command: SetMaxPriority,
     principal: &PrincipalFacts,
 ) -> Result<UserCommandResult, JobsError> {
-    current.guard_govern(principal)?;
+    current.guard_set(principal)?;
     if current.maximum() == Some(command.max_priority) {
         return Ok(CommandResult::nothing_happened(
             CommandWarning::CommandAlreadyApplied {
@@ -43,14 +43,7 @@ pub fn clear_max_priority(
     command: ClearMaxPriority,
     principal: &PrincipalFacts,
 ) -> Result<UserCommandResult, JobsError> {
-    current.guard_govern(principal)?;
-    if !current.is_set() {
-        return Ok(CommandResult::nothing_happened(
-            CommandWarning::CommandAlreadyApplied {
-                command: "clear_max_priority",
-            },
-        ));
-    }
+    current.guard_clear(principal)?;
     Ok(CommandResult::from_event(UserEvent::MaxPriorityCleared(
         UserMaxPriorityCleared {
             user_id: current.user_id(),
@@ -62,7 +55,7 @@ pub fn clear_max_priority(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::PrincipalKind;
+    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
     use crate::domain::ids::KnownUserId;
     use crate::fixtures::user;
     use uuid::Uuid;
@@ -72,11 +65,15 @@ mod tests {
     }
 
     fn super_user() -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, true, true)
+        PrincipalFacts::new(
+            PrincipalKind::Human,
+            true,
+            PlatformPrivileges::PLATFORM_ORG_ADMIN,
+        )
     }
 
     fn member() -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, true, false)
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformPrivileges::NONE)
     }
 
     fn capped(maximum: Option<i64>) -> UserMaxPriority {
@@ -158,18 +155,59 @@ mod tests {
     }
 
     #[test]
-    fn clearing_a_maximum_that_is_not_set_records_nothing() {
-        // Given: a user on the default
+    fn clearing_a_maximum_that_is_not_set_is_refused_with_the_code_the_affordance_shows() {
+        // Given: a user on the default, and the super user's affordance on them
         let current = capped(None);
-        // When/Then: clearing records nothing
-        assert!(
-            clear_max_priority(
-                &current,
-                ClearMaxPriority { cleared_by: user() },
-                &super_user()
-            )
-            .unwrap()
-            .is_empty()
+        let affordance = current.can_clear(&super_user());
+        // When: the super user clears anyway
+        let result = clear_max_priority(
+            &current,
+            ClearMaxPriority { cleared_by: user() },
+            &super_user(),
         );
+        // Then: the command refuses on the very code the affordance announced
+        assert_eq!(
+            result,
+            Err(JobsError::MaxPriorityNotSet {
+                user_id: current.user_id().as_uuid()
+            })
+        );
+        assert_eq!(affordance.reason_code(), Some("no_max_priority_set"));
+    }
+
+    #[test]
+    fn each_command_is_accepted_exactly_when_its_affordance_is_allowed() {
+        // Given: users with and without a maximum, and callers with and without the right
+        let administrator_only = PrincipalFacts::new(
+            PrincipalKind::Human,
+            true,
+            PlatformPrivileges {
+                platform_administrator: true,
+                super_user: false,
+            },
+        );
+        for current in [capped(Some(2)), capped(None)] {
+            for principal in [super_user(), administrator_only, member()] {
+                // When: the affordance is decided and the command attempted
+                let set = set_max_priority(&current, set(5), &principal);
+                let clear = clear_max_priority(
+                    &current,
+                    ClearMaxPriority { cleared_by: user() },
+                    &principal,
+                );
+                // Then: acceptance and refusal follow the one decision, refusal code included
+                for (availability, outcome) in [
+                    (current.can_set(&principal), set.map(|_| ())),
+                    (current.can_clear(&principal), clear.map(|_| ())),
+                ] {
+                    match outcome {
+                        Ok(()) => assert!(availability.is_available()),
+                        Err(refusal) => {
+                            assert_eq!(availability.reason_code(), Some(refusal.code()))
+                        }
+                    }
+                }
+            }
+        }
     }
 }

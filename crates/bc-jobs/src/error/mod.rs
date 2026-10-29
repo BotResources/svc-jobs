@@ -123,6 +123,9 @@ pub enum JobsError {
     MaxRunDurationNotSet {
         runner_type: String,
     },
+    MaxPriorityNotSet {
+        user_id: Uuid,
+    },
     RunnerTypeMismatch {
         expected: String,
         claimed: String,

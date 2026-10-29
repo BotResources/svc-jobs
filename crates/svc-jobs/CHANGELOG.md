@@ -10,6 +10,41 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.5.0 - 2026-10-29
+
+Administrators read users' maximum priorities. Additive: every 0.4 behaviour
+is kept, except the refusal of a clear that has nothing to clear (below).
+
+### Added
+
+- `jobsUserMaxPriorities(userIds: [UUID!]!): [JobsUserMaxPriority!]!` —
+  platform administrators read, for the users they name, the maximum priority
+  that applies to each: `maxPriority`, and `isDefault` when it is
+  `JOBS_DEFAULT_MAX_PRIORITY` rather than the user's own. A user Jobs has
+  never observed reads at the default. Each user is answered once, in the
+  order first asked for; at most 200 users per read (`value_too_long`), and a
+  user id that is not a UUIDv7 refuses the read (`not_uuid_v7`). There is no
+  listing of every user.
+- Each entry carries the caller's affordances `set_max_priority` and
+  `clear_max_priority`, decided by the very guards `jobsSetUserMaxPriority`
+  and `jobsClearUserMaxPriority` enforce: both are super-user gestures
+  (`not_super_user` otherwise), and clearing is blocked
+  `no_max_priority_set` (params `userId`) while the user has no maximum of
+  their own.
+- `jobsUserMaxPrioritiesChanged(userIds: [UUID!]!)` — the same read as a
+  subscription: a `JobsUserMaxPrioritiesSnapshot` equal to the query, then a
+  `JobsUserMaxPriorityDelta` carrying the complete new view of a watched user
+  each time their maximum changes. Changes of unwatched users, and a change
+  that leaves the view as it was, push nothing.
+
+### Changed
+
+- `jobsClearUserMaxPriority` on a user who has no maximum of their own is
+  refused `no_max_priority_set` (`INVALID_STATE`, params `userId`) instead of
+  being acknowledged as a no-op, so the mutation and its affordance agree —
+  as `jobsClearRunnerTypeMaxRunDuration` already does with
+  `no_max_run_duration_set`.
+
 ## 0.4.0 - 2026-10-26
 
 Priorities and claim-based dispatch. Every 0.3 behaviour of a `PUSH` runner

@@ -8,6 +8,24 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.7.0 - 2026-10-29
+
+- `PrincipalFacts::new` takes `PlatformPrivileges { platform_administrator,
+  super_user }` instead of one `is_super_admin` flag: each decision reads its
+  own fact, so the two populations can part at the frontier alone
+  (`PlatformPrivileges::PLATFORM_ORG_ADMIN` holds both, `NONE` neither).
+- The decisions on a user's maximum: `UserMaxPriority::guard_set` /
+  `guard_clear` (replacing `guard_govern`), `can_set` / `can_clear` and
+  `affordances` (`set_max_priority`, `clear_max_priority`). Clearing needs a
+  maximum to clear: `JobsError::MaxPriorityNotSet` (`no_max_priority_set`).
+  `clear_max_priority` enforces it instead of recording nothing.
+- `UserMaxPriorityView` (`UserMaxPriority::view`): the level that applies,
+  whether it is the default, and the caller's affordances — the projection the
+  administrator's read and its live changes share.
+- `UserSelection`: the users one read answers for — UUIDv7 ids, each once, in
+  the order first asked for, at most 200.
+- Port `UserMaxPriorityReader::load_selected`.
+
 ## 0.6.0 - 2026-10-26
 
 - Priorities: the `Priority` value (1–5), `JobPriority` (requested,

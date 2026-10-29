@@ -301,7 +301,10 @@ recorded is always the passport's own id.
   `jobsJobBySource` (the single non-terminal job for a source reference),
   `jobsLogs` (cursor-paginated, by job or run), `jobsFleet` (runner types and
   live instances, each with its `dispatchMode` and `maxRunDurationSeconds`),
-  `jobsMyMaxPriority` (the caller's own maximum). Job views carry
+  `jobsMyMaxPriority` (the caller's own maximum), `jobsUserMaxPriorities`
+  (the maximum of each user asked for — their own or the default, and which —
+  with the caller's `set_max_priority` / `clear_max_priority` affordances; at
+  most 200 users per read, each answered once). Job views carry
   `requestedPriority`, `effectivePriority` and `forcedPriority`.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a
@@ -316,7 +319,9 @@ recorded is always the passport's own id.
 - **Subscriptions** (GraphQL over SSE: `POST /graphql` with
   `Accept: text/event-stream`) — `jobsChanged`, `jobsJobChanged` (the whole
   job tree), `jobsJobLogTail`, `jobsFleetChanged`, and
-  `jobsMyMaxPriorityChanged` (the caller's own maximum). Every subscription first
+  `jobsMyMaxPriorityChanged` (the caller's own maximum), and
+  `jobsUserMaxPrioritiesChanged` (the maxima of the users watched, each change
+  pushed as the user's complete new view). Every subscription first
   sends a snapshot equivalent to its initial read, then typed deltas;
   reconnecting starts with a fresh snapshot, so clients never need a separate
   refetch. Watching a job watches its whole tree. A subscription takes the
@@ -327,7 +332,10 @@ recorded is always the passport's own id.
   affordances (`cancel`, `manual_retry`, `delete`, `force_priority` — allowed
   or blocked with a reason code); when affordances change without a job state
   change, a dedicated `JobsJobAffordancesChangedEvent` is emitted. Clients
-  render these decisions, they never derive them.
+  render these decisions, they never derive them. A user's maximum, as an
+  administrator reads it, carries `set_max_priority` (super users) and
+  `clear_max_priority` (super users, blocked `no_max_priority_set` while the
+  user is on the default) — the very decisions the two mutations enforce.
   Every runner-type view and fleet delta likewise carries the complete
   `deprecate`, `reactivate`, `retire`, `set_dispatch_mode`,
   `set_max_run_duration` and `clear_max_run_duration` decisions (the last
