@@ -34,7 +34,7 @@ impl UserMaxPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
+    use crate::domain::access::{PlatformRole, PrincipalKind};
     use crate::domain::actions::user::CLEAR_MAX_PRIORITY;
     use uuid::Uuid;
 
@@ -43,11 +43,7 @@ mod tests {
     }
 
     fn super_user() -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Human,
-            true,
-            PlatformPrivileges::PLATFORM_ORG_ADMIN,
-        )
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::SuperUser)
     }
 
     fn user(maximum: Option<i64>) -> UserMaxPriority {

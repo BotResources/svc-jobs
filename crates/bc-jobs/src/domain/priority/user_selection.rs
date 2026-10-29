@@ -14,23 +14,32 @@ pub struct UserSelection(Vec<KnownUserId>);
 impl UserSelection {
     pub const MAXIMUM: usize = 200;
 
+    /// Stops at the first id that is not a UUIDv7, or as soon as more distinct
+    /// users than one read holds are named — whatever the length of the
+    /// request, the work and the memory stay bounded by [`Self::MAXIMUM`].
     pub fn new(requested: &[Uuid]) -> Result<Self, JobsError> {
-        let mut seen: HashSet<KnownUserId> = HashSet::with_capacity(requested.len());
-        let mut users: Vec<KnownUserId> = Vec::new();
+        let bound = requested.len().min(Self::MAXIMUM + 1);
+        let mut seen: HashSet<KnownUserId> = HashSet::with_capacity(bound);
+        let mut users: Vec<KnownUserId> = Vec::with_capacity(bound);
         for id in requested {
             let user_id = KnownUserId::new(*id)?;
             if seen.insert(user_id) {
                 users.push(user_id);
+                if users.len() > Self::MAXIMUM {
+                    return Err(JobsError::ValueTooLong {
+                        field: "user_ids",
+                        length: users.len(),
+                        maximum: Self::MAXIMUM,
+                    });
+                }
             }
         }
-        if users.len() > Self::MAXIMUM {
-            return Err(JobsError::ValueTooLong {
-                field: "user_ids",
-                length: users.len(),
-                maximum: Self::MAXIMUM,
-            });
-        }
         Ok(Self(users))
+    }
+
+    /// The selection of one user.
+    pub fn one(user_id: KnownUserId) -> Self {
+        Self(vec![user_id])
     }
 
     pub fn ids(&self) -> &[KnownUserId] {
@@ -99,6 +108,23 @@ mod tests {
             })
         );
         assert!(UserSelection::new(&repeated).is_ok());
+    }
+
+    #[test]
+    fn a_huge_request_is_refused_at_the_first_user_past_the_bound() {
+        // Given: a request naming far more distinct users than one read holds
+        let huge: Vec<Uuid> = (0..10 * UserSelection::MAXIMUM)
+            .map(|_| Uuid::now_v7())
+            .collect();
+        // When/Then: the refusal reports the first user past the bound, not the whole request
+        assert_eq!(
+            UserSelection::new(&huge),
+            Err(JobsError::ValueTooLong {
+                field: "user_ids",
+                length: UserSelection::MAXIMUM + 1,
+                maximum: UserSelection::MAXIMUM,
+            })
+        );
     }
 
     #[test]

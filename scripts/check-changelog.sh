@@ -85,6 +85,23 @@ EOF
     fi
 done
 
+# The release pipeline (cd.yml detect-bump) decides whether svc-jobs ships by
+# grepping the ROOT CHANGELOG.md for the service version, not the crate's own.
+# A version present in the crate changelog alone passes the loop above and
+# then publishes nothing on merge — so the root heading is checked too.
+service_cargo="crates/svc-jobs/Cargo.toml"
+if [[ -f "${service_cargo}" ]]; then
+    service_version="$(read_version "${service_cargo}")"
+    if [[ "${service_version}" != "0.0.0-dev" ]]; then
+        if grep -qE "^## ${service_version//./\\.}(\$| )" CHANGELOG.md; then
+            echo "OK   (root) svc-jobs: version ${service_version} <-> '## ${service_version}' in CHANGELOG.md"
+        else
+            echo "FAIL (root) svc-jobs: CHANGELOG.md at the repository root has no '## ${service_version}' heading — cd.yml would publish nothing"
+            failures=$((failures + 1))
+        fi
+    fi
+fi
+
 echo
 if [[ "${checked}" -eq 0 ]]; then
     echo "No crate found under crates/ — nothing to check, and an empty workspace is not a pass."

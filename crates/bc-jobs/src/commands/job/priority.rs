@@ -114,7 +114,7 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
+    use crate::domain::access::{PlatformRole, PrincipalKind};
     use crate::domain::job::resolution::JobResolution;
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts, user};
     use uuid::Uuid;
@@ -124,11 +124,7 @@ mod tests {
     }
 
     fn super_user() -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Human,
-            true,
-            PlatformPrivileges::PLATFORM_ORG_ADMIN,
-        )
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::SuperUser)
     }
 
     fn force(value: i64) -> ForcePriority {
@@ -169,7 +165,7 @@ mod tests {
     fn a_member_forcing_a_priority_is_refused_with_the_affordance_code() {
         // Given: a waiting job and an ordinary member
         let job = JobBuilder::new().build();
-        let member = PrincipalFacts::new(PrincipalKind::Human, true, PlatformPrivileges::NONE);
+        let member = PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::Member);
         // When: the member forces it
         let result = job.force_priority(force(5), &member);
         // Then: the refusal is the one the affordance advertises

@@ -9,7 +9,6 @@ use async_graphql::{Context, Result, Subscription};
 use bc_jobs::domain::ids::{JobId, RunId};
 use futures::Stream;
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use super::error::edge_error;
@@ -20,6 +19,7 @@ use super::types::stream::{
     GqlFleetStreamMessage, GqlJobLogStreamMessage, GqlJobStreamMessage, GqlJobsStreamMessage,
 };
 use crate::stream::Fact;
+pub use crate::stream::next_unbroken_fact;
 
 pub struct SubscriptionRoot;
 
@@ -107,9 +107,12 @@ impl SubscriptionRoot {
         let principal = principal(ctx)?;
         let users =
             crate::app::user_max_priorities::select(&principal, &user_ids).map_err(edge_error)?;
-        let state = ctx.data::<EdgeState>()?.clone();
+        let state = ctx.data::<EdgeState>()?;
         Ok(user_max_priorities::user_max_priorities_stream(
-            state, principal, users,
+            state.jobs.clone(),
+            &state.hub,
+            principal,
+            users,
         ))
     }
 }
@@ -146,19 +149,4 @@ pub async fn next_fact_batch(facts: &mut Receiver<Fact>, limit: usize) -> Option
         }
     }
     Some(batch)
-}
-
-pub async fn next_unbroken_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {
-    match facts.recv().await {
-        Ok(fact) => Some(fact),
-        Err(RecvError::Lagged(missed)) => {
-            tracing::warn!(
-                missed,
-                "a subscriber fell behind the durable fact stream; its subscription ends so the \
-                 client reconnects onto a fresh snapshot"
-            );
-            None
-        }
-        Err(RecvError::Closed) => None,
-    }
 }

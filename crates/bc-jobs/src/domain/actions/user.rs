@@ -51,25 +51,18 @@ impl UserMaxPriority {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
+    use crate::domain::access::{PlatformRole, PrincipalKind};
     use crate::domain::ids::KnownUserId;
     use crate::domain::priority::Priority;
     use serde_json::json;
     use uuid::Uuid;
 
-    fn human(privileges: PlatformPrivileges) -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, true, privileges)
+    fn human(role: PlatformRole) -> PrincipalFacts {
+        PrincipalFacts::new(PrincipalKind::Human, true, role)
     }
 
     fn super_user() -> PrincipalFacts {
-        human(PlatformPrivileges::PLATFORM_ORG_ADMIN)
-    }
-
-    fn administrator_only() -> PrincipalFacts {
-        human(PlatformPrivileges {
-            platform_administrator: true,
-            super_user: false,
-        })
+        human(PlatformRole::SuperUser)
     }
 
     fn user(maximum: Option<i64>) -> UserMaxPriority {
@@ -120,13 +113,12 @@ mod tests {
     }
 
     #[test]
-    fn a_platform_administrator_who_is_not_a_super_user_is_refused_both_on_every_user() {
-        // Given: users A (maximum 5) and B (none), and an administrator without super-user rights
+    fn a_member_is_refused_both_on_every_user_for_their_rights_not_the_users_state() {
+        // Given: users A (maximum 5) and B (none), and an ordinary member
         for target in [user(Some(5)), user(None)] {
             // When: their affordances are decided
-            let affordances = target.affordances(&administrator_only());
-            // Then: setting and clearing are both refused for the caller's rights, not the user's
-            // state
+            let affordances = target.affordances(&human(PlatformRole::Member));
+            // Then: setting and clearing are both refused on the super-user code
             for action in [SET_MAX_PRIORITY, CLEAR_MAX_PRIORITY] {
                 assert_eq!(
                     decided(&affordances, action),
@@ -141,17 +133,9 @@ mod tests {
     fn callers_without_any_platform_privilege_are_refused_on_the_super_user_code() {
         // Given: an ordinary member, a deactivated super user and a service account
         let callers = [
-            human(PlatformPrivileges::NONE),
-            PrincipalFacts::new(
-                PrincipalKind::Human,
-                false,
-                PlatformPrivileges::PLATFORM_ORG_ADMIN,
-            ),
-            PrincipalFacts::new(
-                PrincipalKind::Service,
-                true,
-                PlatformPrivileges::PLATFORM_ORG_ADMIN,
-            ),
+            human(PlatformRole::Member),
+            PrincipalFacts::new(PrincipalKind::Human, false, PlatformRole::SuperUser),
+            PrincipalFacts::new(PrincipalKind::Service, true, PlatformRole::SuperUser),
         ];
         for caller in callers {
             // When/Then: neither gesture is open on a user with a maximum to clear

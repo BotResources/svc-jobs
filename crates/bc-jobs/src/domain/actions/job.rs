@@ -94,22 +94,18 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
+    use crate::domain::access::{PlatformRole, PrincipalKind};
     use crate::domain::job::resolution::{JobFailureCause, JobResolution};
     use crate::domain::run::failure::RunFailureKind;
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
     use serde_json::json;
 
     fn super_user() -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Human,
-            true,
-            PlatformPrivileges::PLATFORM_ORG_ADMIN,
-        )
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::SuperUser)
     }
 
     fn member() -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, true, PlatformPrivileges::NONE)
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::Member)
     }
 
     fn failed_job() -> JobBuilder {
@@ -320,11 +316,7 @@ mod tests {
         let job = JobBuilder::new().build();
         for principal in [
             member(),
-            PrincipalFacts::new(
-                PrincipalKind::Service,
-                true,
-                PlatformPrivileges::PLATFORM_ORG_ADMIN,
-            ),
+            PrincipalFacts::new(PrincipalKind::Service, true, PlatformRole::SuperUser),
         ] {
             // When/Then: the decision refuses with the super-user code
             assert_eq!(

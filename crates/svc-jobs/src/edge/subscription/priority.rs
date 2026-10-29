@@ -28,7 +28,13 @@ pub fn my_max_priority_stream(
             }
         }
         while let Some(fact) = next_unbroken_fact(&mut facts).await {
-            let Fact::User { event_id, user_id: carried, event } = fact else {
+            let Fact::User {
+                event_id,
+                user_id: carried,
+                event,
+                ..
+            } = fact
+            else {
                 continue;
             };
             if carried.as_uuid() != user_id {

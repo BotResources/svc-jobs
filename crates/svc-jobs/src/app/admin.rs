@@ -11,6 +11,7 @@ use bc_jobs::domain::priority::PriorityBasis;
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
+use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::{Actor, EventMetadata};
 use uuid::Uuid;
 
@@ -77,9 +78,7 @@ pub async fn manual_retry(
     );
     let user_maximum = match predecessor.triggered_by() {
         Some(user) => Some(
-            jobs.store
-                .user_max_priority(KnownUserId::new(user.id().0)?)
-                .await?,
+            UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user.id().0)?).await?,
         ),
         None => None,
     };

@@ -239,11 +239,13 @@ pub async fn opening_maxima(watch: &mut SseSubscription, timeout: Duration) -> V
         .clone()
 }
 
+/// The next view of `user_id` pushed to the watcher, and the cursor it came
+/// under.
 pub async fn await_maximum_upsert(
     watch: &mut SseSubscription,
     user_id: Uuid,
     timeout: Duration,
-) -> Value {
+) -> (Value, String) {
     let message = stream::await_message(
         watch,
         USER_MAX_PRIORITIES_CHANGED,
@@ -258,5 +260,10 @@ pub async fn await_maximum_upsert(
         json!(user_id.to_string()),
         "the only change pushed here is the one of {user_id}: {message}"
     );
-    entry
+    let cursor = message["cursor"]
+        .as_str()
+        .filter(|cursor| !cursor.is_empty())
+        .unwrap_or_else(|| panic!("every pushed view carries its cursor: {message}"))
+        .to_owned();
+    (entry, cursor)
 }

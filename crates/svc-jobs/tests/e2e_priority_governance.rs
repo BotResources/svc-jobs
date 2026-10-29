@@ -11,8 +11,8 @@ use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_c
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{
-    JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, docs, gql, priority, stream,
-    subs, wire,
+    JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, docs, gql, priority, refusal,
+    stream, subs, wire,
 };
 use support::{claim, clock};
 use uuid::Uuid;
@@ -878,18 +878,7 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
 }
 
 fn assert_nothing_leaked(response: &Value, job_id: Uuid, what: &str) {
-    assert!(
-        !response.to_string().contains(&job_id.to_string()),
-        "{what} must not leak the job: {response}"
-    );
-    let data = &response["data"];
-    assert!(
-        data.is_null()
-            || data
-                .as_object()
-                .is_some_and(|fields| fields.values().all(Value::is_null)),
-        "{what} must return no data at all: {response}"
-    );
+    refusal::assert_nothing_leaked(response, &[job_id.to_string()], what);
 }
 
 #[tokio::test]

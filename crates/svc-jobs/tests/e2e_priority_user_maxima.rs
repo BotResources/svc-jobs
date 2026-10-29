@@ -4,21 +4,29 @@
 
 mod support;
 
-use br_test_harness::{SseSubscription, verdict};
+use br_core_auth::{Passport, PassportHeader};
+use br_test_harness::{GraphqlClient, SseSubscription, verdict};
 use reqwest::StatusCode;
-use serde_json::{Value, json};
-use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_caller};
+use serde_json::json;
+use support::events::EventLog;
+use support::fixture::{
+    self, JobsFixture, Knobs, deactivated_super_user, impersonating_member, machine_caller,
+};
+use support::producer::{JobDeclaration, Producer};
+use support::refusal::{self, subscription_refusal};
 use support::{LONG, QUIET, SHORT, gql, priority, stream, subs, wire};
 use uuid::Uuid;
 
 const FORBIDDEN: &str = "FORBIDDEN";
 const BAD_USER_INPUT: &str = "BAD_USER_INPUT";
+const INVALID_STATE: &str = "INVALID_STATE";
 
 #[tokio::test]
 async fn administrators_read_users_maximums_with_their_affordances() {
-    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (the default is 3), user A with a maximum of 5
-    // and user B with none
+    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (the default is 3), user A with a maximum of 5,
+    // and user B with none — B is no stranger to Jobs: a job already runs on their behalf
     let fixture = JobsFixture::start().await;
+    let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
     let super_user = fixture.admin();
     let user_a = fixture::ordinary_member();
@@ -29,6 +37,13 @@ async fn administrators_read_users_maximums_with_their_affordances() {
         wire::FIELD_SET_USER_MAX_PRIORITY,
         "a super user gives user A a maximum of 5",
     );
+    let of_b = JobDeclaration::new(&wire::unique_runner_type("maxima")).triggered_by_user(b);
+    Producer::new(fixture.fabric(), "projects")
+        .declare_v2(&of_b)
+        .await;
+    events
+        .expect_one(wire::FACT_QUEUED, of_b.job_id, LONG)
+        .await;
     let mut own_b =
         SseSubscription::open(fixture.url(), &user_b, &subs::my_max_priority_changed()).await;
     assert_eq!(
@@ -36,17 +51,10 @@ async fn administrators_read_users_maximums_with_their_affordances() {
         wire::SERVICE_DEFAULT_MAX_PRIORITY
     );
 
-    // When: a platform administrator who is not a super user reads A and B.
-    // The Passport carries one administrator bit (is_super_admin): today every platform
-    // administrator is a super user, so this caller cannot be forged — the same open question as
-    // the 0.4 scenario `only_super_users_force_a_priority_or_set_a_maximum`. The domain decision
-    // table (bc-jobs `domain::actions::user`) pins that a platform administrator who is not a super
-    // user reads both maxima with setting and clearing refused `not_super_user`.
-
     // When: a super user reads A and B
     let read = priority::user_max_priorities(&client, super_user, &[a, b]).await;
 
-    // Then: A at 5, its own; B at 3, the default — in the order asked for
+    // Then: A at 5, their own; B at 3, the default — in the order asked for
     assert_eq!(
         read.iter()
             .map(|entry| entry["userId"].clone())
@@ -77,7 +85,12 @@ async fn administrators_read_users_maximums_with_their_affordances() {
     // When: the super user clears B's maximum anyway
     let refused = priority::clear_user_max_priority(&client, super_user, b).await;
 
-    // Then: the command refuses with the very code the affordance announced, and nothing moves
+    // Then: the command refuses as a state refusal, on the very code the affordance announced,
+    // with no data, and nothing moves
+    assert_eq!(
+        verdict::expect_code_shaped(&refused, "clearing a maximum that is not set"),
+        INVALID_STATE,
+    );
     assert_eq!(
         gql::mutation_error_reason(&refused, "clearing a maximum that is not set"),
         wire::REASON_NO_MAX_PRIORITY_SET,
@@ -86,6 +99,7 @@ async fn administrators_read_users_maximums_with_their_affordances() {
         gql::mutation_error_params(&refused, "clearing a maximum that is not set"),
         json!({ "userId": b.to_string() }),
     );
+    refusal::assert_nothing_leaked(&refused, &[], "a refused clear");
     stream::expect_total_silence(&mut own_b, "a refused clear changes no maximum", QUIET).await;
     assert_eq!(
         priority::user_max_priorities(&client, super_user, &[a, b]).await,
@@ -129,7 +143,8 @@ async fn administrators_read_users_maximums_with_their_affordances() {
         unknown,
     );
 
-    // Then: it reads at the default, settable, with nothing to clear
+    // Then: it reads at the default, settable, with nothing to clear — exactly as B, whom Jobs
+    // knows
     priority::assert_maximum(&read_unknown, 3, true, "an unknown user is on the default");
     gql::assert_allowed(&read_unknown, wire::ACTION_SET_MAX_PRIORITY);
     assert_eq!(
@@ -137,27 +152,71 @@ async fn administrators_read_users_maximums_with_their_affordances() {
         wire::REASON_NO_MAX_PRIORITY_SET,
     );
 
-    // When: a plain user — user B themselves — and every other caller who is not a platform
-    // administrator read A and B
-    let hostile = [
-        (user_b.clone(), "a plain user"),
+    // When: a plain user reads A and B, or only themselves through the administrator read
+    // Then: the read is refused under one closed code and carries no maximum at all
+    for (caller, ids, who) in [
+        (user_b.clone(), vec![a, b], "a plain user reading A and B"),
+        (
+            user_b.clone(),
+            vec![b],
+            "a plain user reading only themselves",
+        ),
+    ] {
+        assert_read_refused(&client, &caller, &ids, &[a, b], who).await;
+    }
+
+    // When: every other caller who is not an active super user reads A and B
+    for (caller, who) in [
         (
             impersonating_member(super_user),
             "a member impersonating an administrator",
         ),
+        (deactivated_super_user(), "a deactivated super user"),
         (machine_caller(), "a machine passport"),
-    ];
-    for (caller, who) in &hostile {
-        let response = priority::user_max_priorities_response(&client, caller, &[a, b]).await;
-
-        // Then: the read is refused under one closed code and carries no maximum at all
-        assert_eq!(
-            verdict::expect_code_shaped(&response, &format!("{who} reading users' maxima")),
-            FORBIDDEN,
-            "reading users' maxima is an administrator gesture",
-        );
-        assert_nothing_read(&response, &[a, b], who);
+    ] {
+        // Then: refused the same way
+        assert_read_refused(&client, &caller, &[a, b], &[a, b], who).await;
     }
+
+    events.stop().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_read_says_which_maximum_applies_whatever_the_service_default() {
+    // Given: JOBS_DEFAULT_MAX_PRIORITY set to 2, user C capped explicitly at 2, user D without a
+    // maximum — both end up at the same level
+    let fixture = JobsFixture::start_with(Knobs {
+        default_max_priority: Some(2),
+        ..Knobs::default()
+    })
+    .await;
+    let client = fixture.gql();
+    let super_user = fixture.admin();
+    let user_d = fixture::ordinary_member();
+    let (c, d) = (Uuid::now_v7(), user_d.actor_id());
+    gql::expect_success(
+        &priority::set_user_max_priority(&client, super_user, c, 2).await,
+        wire::FIELD_SET_USER_MAX_PRIORITY,
+        "a super user caps C at the very level of the default",
+    );
+
+    // When: a super user reads C and D
+    let read = priority::user_max_priorities(&client, super_user, &[c, d]).await;
+
+    // Then: the level alone cannot tell them apart; isDefault and the clear affordance do
+    let read_c = priority::maximum_of(&read, c);
+    let read_d = priority::maximum_of(&read, d);
+    priority::assert_maximum(&read_c, 2, false, "C's own maximum, equal to the default");
+    gql::assert_allowed(&read_c, wire::ACTION_CLEAR_MAX_PRIORITY);
+    priority::assert_maximum(&read_d, 2, true, "D on JOBS_DEFAULT_MAX_PRIORITY");
+    assert_eq!(
+        gql::assert_blocked(&read_d, wire::ACTION_CLEAR_MAX_PRIORITY),
+        wire::REASON_NO_MAX_PRIORITY_SET,
+    );
+
+    // Then: D reads the same default on their own surface
+    assert_eq!(priority::my_max_priority(&client, &user_d).await, 2);
 
     fixture.shutdown().await;
 }
@@ -176,12 +235,16 @@ async fn the_maxima_read_answers_each_user_once_and_refuses_malformed_or_oversiz
         "a super user caps a user at 2",
     );
 
-    // When: the same users are asked for twice, and nobody is asked for
+    // When: the same users are asked for twice, nobody is asked for, and exactly 200 users are
     let repeated =
         priority::user_max_priorities(&client, super_user, &[other, capped, other, capped]).await;
     let nobody = priority::user_max_priorities(&client, super_user, &[]).await;
+    let mut full: Vec<Uuid> = (0..199).map(|_| Uuid::now_v7()).collect();
+    full.push(capped);
+    let at_the_bound = priority::user_max_priorities(&client, super_user, &full).await;
 
-    // Then: each user is answered once, in the order first asked for; nobody asked, nobody read
+    // Then: each user is answered once, in the order first asked for; nobody asked, nobody read;
+    // 200 users are one read
     assert_eq!(
         repeated
             .iter()
@@ -193,6 +256,13 @@ async fn the_maxima_read_answers_each_user_once_and_refuses_malformed_or_oversiz
     assert!(
         nobody.is_empty(),
         "an empty request reads nothing: {nobody:?}"
+    );
+    assert_eq!(at_the_bound.len(), 200, "exactly 200 users fit in one read");
+    priority::assert_maximum(
+        &priority::maximum_of(&at_the_bound, capped),
+        2,
+        false,
+        "the last of 200",
     );
 
     // When: a request names an id that is not a UUIDv7, or more users than one read answers
@@ -219,11 +289,27 @@ async fn the_maxima_read_answers_each_user_once_and_refuses_malformed_or_oversiz
             reason,
             "{what}"
         );
-        assert!(
-            response["data"].is_null()
-                || response["data"][wire::FIELD_USER_MAX_PRIORITIES].is_null(),
-            "{what}: a refused read answers no maximum: {response}"
+        refusal::assert_nothing_leaked(&response, &[capped.to_string()], what);
+
+        // Then: the subscription asking for the same users is refused the same way, opening nothing
+        let (status, body) = client
+            .post_raw(
+                "/graphql",
+                &[
+                    ("X-Passport", super_user.to_header().as_str()),
+                    ("Accept", "text/event-stream"),
+                ],
+                json!({ "query": subs::user_max_priorities_changed(&ids) }),
+            )
+            .await;
+        let frame = refusal::first_stream_frame(&body, what);
+        assert_eq!(
+            (status, verdict::expect_code_shaped(&frame, what)),
+            (StatusCode::OK, BAD_USER_INPUT.to_owned()),
+            "{what}: the stream's one frame is the refusal",
         );
+        assert_eq!(gql::mutation_error_reason(&frame, what), reason, "{what}");
+        refusal::assert_nothing_leaked(&frame, &[capped.to_string()], what);
     }
 
     fixture.shutdown().await;
@@ -268,8 +354,9 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
     );
 
     // Then: the complete new view of A is pushed — level, origin and affordances — with no refetch
-    let lowered = priority::await_maximum_upsert(&mut watch, a, LONG).await;
+    let (lowered, lowered_cursor) = priority::await_maximum_upsert(&mut watch, a, LONG).await;
     priority::assert_maximum(&lowered, 4, false, "the pushed view of A");
+    gql::assert_allowed(&lowered, wire::ACTION_SET_MAX_PRIORITY);
     gql::assert_allowed(&lowered, wire::ACTION_CLEAR_MAX_PRIORITY);
     assert_eq!(
         lowered,
@@ -307,12 +394,25 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
         "a super user clears user A's maximum",
     );
 
-    // Then: A is pushed back on the default, its clear affordance now blocked
-    let cleared = priority::await_maximum_upsert(&mut watch, a, LONG).await;
+    // Then: A is pushed back on the default, still settable, its clear affordance now blocked —
+    // the view the read gives, under a new cursor
+    let (cleared, cleared_cursor) = priority::await_maximum_upsert(&mut watch, a, LONG).await;
     priority::assert_maximum(&cleared, 3, true, "the pushed view of a cleared A");
+    gql::assert_allowed(&cleared, wire::ACTION_SET_MAX_PRIORITY);
     assert_eq!(
         gql::assert_blocked(&cleared, wire::ACTION_CLEAR_MAX_PRIORITY),
         wire::REASON_NO_MAX_PRIORITY_SET,
+    );
+    assert_eq!(
+        cleared,
+        priority::maximum_of(
+            &priority::user_max_priorities(&client, super_user, &[a]).await,
+            a
+        ),
+    );
+    assert_ne!(
+        cleared_cursor, lowered_cursor,
+        "each change is delivered under its own cursor"
     );
 
     // When: the watcher reconnects
@@ -330,16 +430,17 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
         priority::user_max_priorities(&client, super_user, &[a, b]).await,
     );
 
-    // When: callers who are not platform administrators try to open the same subscription
+    // When: callers who are not active super users try to open the same subscription
     for (caller, who) in [
         (fixture::ordinary_member(), "a plain user"),
         (
             impersonating_member(super_user),
             "a member impersonating an administrator",
         ),
+        (deactivated_super_user(), "a deactivated super user"),
         (machine_caller(), "a machine passport"),
     ] {
-        let header = br_core_auth::PassportHeader::to_header(&caller);
+        let header = caller.to_header();
         let (status, body) = client
             .post_raw(
                 "/graphql",
@@ -351,32 +452,32 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
             )
             .await;
 
-        // Then: it is refused during establishment and reads nothing
-        assert_ne!(
-            status,
-            StatusCode::OK,
-            "{who} is refused the subscription during establishment: {body}"
+        // Then: it is closed at the door — 403 with the structured authorization code — and reads
+        // nothing
+        assert_eq!(
+            (status, subscription_refusal(status, &body, who)),
+            (StatusCode::FORBIDDEN, FORBIDDEN.to_owned()),
+            "{who}",
         );
-        assert_nothing_read(&body, &[a, b], who);
+        refusal::assert_nothing_leaked(&body, &[a.to_string(), b.to_string()], who);
     }
 
     fixture.shutdown().await;
 }
 
-fn assert_nothing_read(response: &Value, users: &[Uuid], who: &str) {
-    let rendered = response.to_string();
-    for user in users {
-        assert!(
-            !rendered.contains(&user.to_string()),
-            "{who}: a refused read leaks no user it was asked about: {response}"
-        );
-    }
-    let data = &response["data"];
-    assert!(
-        data.is_null()
-            || data
-                .as_object()
-                .is_some_and(|fields| fields.values().all(Value::is_null)),
-        "{who}: a refused read returns no data at all: {response}"
+async fn assert_read_refused(
+    client: &GraphqlClient,
+    caller: &Passport,
+    ids: &[Uuid],
+    secrets: &[Uuid],
+    who: &str,
+) {
+    let response = priority::user_max_priorities_response(client, caller, ids).await;
+    assert_eq!(
+        verdict::expect_code_shaped(&response, who),
+        FORBIDDEN,
+        "{who}: reading users' maxima is an administrator gesture",
     );
+    let secrets: Vec<String> = secrets.iter().map(Uuid::to_string).collect();
+    refusal::assert_nothing_leaked(&response, &secrets, who);
 }

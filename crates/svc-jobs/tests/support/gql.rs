@@ -379,6 +379,11 @@ pub fn assert_allowed(view: &Value, action: &str) {
         json!(true),
         "affordance '{action}' must be allowed here: {entry}"
     );
+    assert!(
+        entry["reasonCode"].is_null(),
+        "an allowed affordance carries no reason — a reason beside allowed: true is a refusal \
+         the client would never render: {entry}"
+    );
 }
 
 pub fn assert_blocked(view: &Value, action: &str) -> String {

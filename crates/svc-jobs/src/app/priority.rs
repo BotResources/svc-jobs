@@ -23,6 +23,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::priority::{Priority, UserMaxPriority};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::policies::priority::{forcing_cascade, recalculate_for_user};
+use bc_jobs::ports::user::UserMaxPriorityReader;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -133,10 +134,7 @@ pub fn applicable(user: &UserMaxPriority, jobs: &Jobs) -> Priority {
 }
 
 pub async fn applicable_max(jobs: &Jobs, user_id: Uuid) -> Result<Priority, ServiceError> {
-    let user = jobs
-        .store
-        .user_max_priority(KnownUserId::new(user_id)?)
-        .await?;
+    let user = UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user_id)?).await?;
     Ok(applicable(&user, jobs))
 }
 

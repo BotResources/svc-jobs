@@ -2,9 +2,9 @@
 //! for, the level that applies — their own or the service default, and which
 //! of the two — with the caller's affordances of setting and clearing it.
 //!
-//! The snapshot and the live changes share one projection,
-//! `UserMaxPriority::view`, which takes its affordances from the very
-//! decisions the set and clear commands enforce.
+//! The read and its live changes (`user_max_priorities_live`) share one
+//! projection, `UserMaxPriority::view`, which takes its affordances from the
+//! very decisions the set and clear commands enforce.
 
 use bc_jobs::domain::access::PrincipalFacts;
 use bc_jobs::domain::priority::{UserMaxPriorityView, UserSelection};
@@ -25,26 +25,16 @@ pub fn select(
 }
 
 /// The read itself: the views of the users asked for, each once, in the order
-/// first asked for.
+/// first asked for, read in one statement.
 pub async fn read(
     jobs: &Jobs,
     principal: &PrincipalFacts,
     user_ids: &[Uuid],
 ) -> Result<Vec<UserMaxPriorityView>, ServiceError> {
     let users = select(principal, user_ids)?;
-    snapshot(jobs, principal, &users).await
-}
-
-/// The views of the selected users, in the selection's order, read in one
-/// statement — the read's answer and a live view's opening snapshot alike.
-pub async fn snapshot(
-    jobs: &Jobs,
-    principal: &PrincipalFacts,
-    users: &UserSelection,
-) -> Result<Vec<UserMaxPriorityView>, ServiceError> {
-    let maxima = UserMaxPriorityReader::load_selected(&jobs.store, users).await?;
+    let maxima = UserMaxPriorityReader::load_selected(&jobs.store, &users).await?;
     Ok(maxima
         .iter()
-        .map(|user| user.view(principal, &jobs.limits))
+        .map(|found| found.maximum.view(principal, &jobs.limits))
         .collect())
 }

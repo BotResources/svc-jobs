@@ -204,6 +204,15 @@ pub fn platform_admin() -> Passport {
         .build()
 }
 
+pub fn deactivated_super_user() -> Passport {
+    PassportBuilder::new()
+        .user_id(Uuid::now_v7())
+        .super_admin(true)
+        .active(false)
+        .claim("display_name", "Deactivated Administrator")
+        .build()
+}
+
 pub fn ordinary_member() -> Passport {
     PassportBuilder::new()
         .user_id(Uuid::now_v7())

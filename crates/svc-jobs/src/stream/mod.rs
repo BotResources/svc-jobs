@@ -1,6 +1,7 @@
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard};
 
 use bc_jobs::domain::ids::{JobId, KnownUserId, RunId, RunLogId};
+use bc_jobs::domain::priority::MaxPriorityRevision;
 use bc_jobs::event::fleet::{FleetEvent, RUNNER_TYPE_AGGREGATE_TYPE};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::event::user::{KNOWN_USER_AGGREGATE_TYPE, UserEvent};
@@ -8,6 +9,8 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgListener;
 use sqlx::{PgPool, Row};
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use crate::db::notify::{DOMAIN_EVENT_CHANNEL, DomainEventSignal, RUN_LOG_CHANNEL, RunLogSignal};
@@ -37,6 +40,8 @@ pub enum Fact {
     User {
         event_id: Uuid,
         user_id: KnownUserId,
+        /// The user's maximum revision this change produced.
+        revision: MaxPriorityRevision,
         event: Arc<UserEvent>,
     },
 }
@@ -106,10 +111,12 @@ pub async fn listen(pool: PgPool, hub: Hub, established: Established) -> Result<
 
 async fn domain_event(pool: &PgPool, hub: &Hub, payload: &str) -> Result<(), ServiceError> {
     let signal: DomainEventSignal = serde_json::from_str(payload)?;
-    let row = sqlx::query("SELECT payload, occurred_at FROM domain_events WHERE id = $1")
-        .bind(signal.event_id)
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query(
+        "SELECT payload, occurred_at, aggregate_version FROM domain_events WHERE id = $1",
+    )
+    .bind(signal.event_id)
+    .fetch_optional(pool)
+    .await?;
     let Some(row) = row else {
         return Ok(());
     };
@@ -120,6 +127,7 @@ async fn domain_event(pool: &PgPool, hub: &Hub, payload: &str) -> Result<(), Ser
         hub.publish(Fact::User {
             event_id: signal.event_id,
             user_id: KnownUserId::new(signal.aggregate_id)?,
+            revision: MaxPriorityRevision::new(row.get("aggregate_version"))?,
             event: Arc::new(event),
         });
     } else if signal.aggregate_type == RUNNER_TYPE_AGGREGATE_TYPE {
@@ -149,4 +157,22 @@ fn run_log(hub: &Hub, payload: &str) -> Result<(), ServiceError> {
         run_id: RunId::new(signal.run_id)?,
     });
     Ok(())
+}
+
+/// The next fact of the durable stream. `None` ends the subscription that
+/// asked: the stream closed, or the subscriber fell behind and must reconnect
+/// onto a fresh snapshot.
+pub async fn next_unbroken_fact(facts: &mut Receiver<Fact>) -> Option<Fact> {
+    match facts.recv().await {
+        Ok(fact) => Some(fact),
+        Err(RecvError::Lagged(missed)) => {
+            tracing::warn!(
+                missed,
+                "a subscriber fell behind the durable fact stream; its subscription ends so the \
+                 client reconnects onto a fresh snapshot"
+            );
+            None
+        }
+        Err(RecvError::Closed) => None,
+    }
 }

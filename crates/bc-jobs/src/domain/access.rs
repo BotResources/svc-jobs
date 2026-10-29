@@ -2,8 +2,8 @@
 //! decisions every surface takes from them.
 //!
 //! The facts come from the Passport the trusted frontier injects; this module
-//! never sees the Passport itself. Platform administrators read and operate
-//! the ledger, users' maximum priorities included. Super users additionally
+//! never sees the Passport itself. Super users — the admins of the platform
+//! org, who are the platform administrators — read and operate the ledger and
 //! govern priorities. Any active human may read their own maximum priority —
 //! and nothing else.
 
@@ -15,52 +15,39 @@ pub enum PrincipalKind {
     Service,
 }
 
-/// The platform privileges a principal holds. Two facts, decided apart: the
-/// frontier maps both from what the Passport carries, so the two populations
-/// can part without touching any decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlatformPrivileges {
-    pub platform_administrator: bool,
-    pub super_user: bool,
-}
-
-impl PlatformPrivileges {
-    pub const NONE: Self = Self {
-        platform_administrator: false,
-        super_user: false,
-    };
-
-    /// An admin of the platform org: a platform administrator and a super user.
-    pub const PLATFORM_ORG_ADMIN: Self = Self {
-        platform_administrator: true,
-        super_user: true,
-    };
+/// The role a principal holds on the platform. A platform administrator and a
+/// super user are one population: the admins of the platform org. The decisions
+/// that ask for either stay distinct, each refusing under its own code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlatformRole {
+    Member,
+    SuperUser,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrincipalFacts {
     kind: PrincipalKind,
     is_active: bool,
-    privileges: PlatformPrivileges,
+    role: PlatformRole,
 }
 
 impl PrincipalFacts {
-    pub fn new(kind: PrincipalKind, is_active: bool, privileges: PlatformPrivileges) -> Self {
+    pub fn new(kind: PrincipalKind, is_active: bool, role: PlatformRole) -> Self {
         Self {
             kind,
             is_active,
-            privileges,
+            role,
         }
     }
 
-    fn is_active_human(&self) -> bool {
-        self.kind == PrincipalKind::Human && self.is_active
+    fn is_active_human_holding(&self, role: PlatformRole) -> bool {
+        self.kind == PrincipalKind::Human && self.is_active && self.role >= role
     }
 
     /// Every administrator gesture and every read of the ledger, users'
     /// maximum priorities included.
     pub fn guard_platform_administrator(&self) -> Result<(), JobsError> {
-        if self.is_active_human() && self.privileges.platform_administrator {
+        if self.is_active_human_holding(PlatformRole::SuperUser) {
             Ok(())
         } else {
             Err(JobsError::NotPlatformAdministrator)
@@ -70,7 +57,7 @@ impl PrincipalFacts {
     /// Setting or clearing a user's maximum priority, and forcing a Job's
     /// priority: reserved to the admins of the platform org.
     pub fn guard_super_user(&self) -> Result<(), JobsError> {
-        if self.is_active_human() && self.privileges.super_user {
+        if self.is_active_human_holding(PlatformRole::SuperUser) {
             Ok(())
         } else {
             Err(JobsError::NotSuperUser)
@@ -80,7 +67,7 @@ impl PrincipalFacts {
     /// Reading one's own maximum priority: any active human, never a service
     /// account.
     pub fn guard_reads_own_max_priority(&self) -> Result<(), JobsError> {
-        if self.is_active_human() {
+        if self.is_active_human_holding(PlatformRole::Member) {
             Ok(())
         } else {
             Err(JobsError::NotActiveHuman)
@@ -92,27 +79,20 @@ impl PrincipalFacts {
 mod tests {
     use super::*;
 
-    fn privileges(platform_administrator: bool, super_user: bool) -> PlatformPrivileges {
-        PlatformPrivileges {
-            platform_administrator,
-            super_user,
+    fn role(is_super_admin: bool) -> PlatformRole {
+        if is_super_admin {
+            PlatformRole::SuperUser
+        } else {
+            PlatformRole::Member
         }
     }
 
     fn human(is_active: bool, is_super_admin: bool) -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Human,
-            is_active,
-            privileges(is_super_admin, is_super_admin),
-        )
+        PrincipalFacts::new(PrincipalKind::Human, is_active, role(is_super_admin))
     }
 
     fn service(is_super_admin: bool) -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Service,
-            true,
-            privileges(is_super_admin, is_super_admin),
-        )
+        PrincipalFacts::new(PrincipalKind::Service, true, role(is_super_admin))
     }
 
     #[test]
@@ -163,30 +143,5 @@ mod tests {
         assert!(deactivated.guard_platform_administrator().is_err());
         assert!(deactivated.guard_super_user().is_err());
         assert!(deactivated.guard_reads_own_max_priority().is_err());
-    }
-
-    #[test]
-    fn a_platform_administrator_who_is_not_a_super_user_administers_but_governs_no_priority() {
-        // Given: an active human holding the administrator privilege alone
-        let administrator =
-            PrincipalFacts::new(PrincipalKind::Human, true, privileges(true, false));
-        // When/Then: the ledger is open, priority governance is not
-        assert_eq!(administrator.guard_platform_administrator(), Ok(()));
-        assert_eq!(
-            administrator.guard_super_user(),
-            Err(JobsError::NotSuperUser)
-        );
-    }
-
-    #[test]
-    fn the_super_user_privilege_alone_opens_no_administrator_read() {
-        // Given: an active human holding the super-user privilege alone
-        let governor = PrincipalFacts::new(PrincipalKind::Human, true, privileges(false, true));
-        // When/Then: each decision reads its own fact
-        assert_eq!(governor.guard_super_user(), Ok(()));
-        assert_eq!(
-            governor.guard_platform_administrator(),
-            Err(JobsError::NotPlatformAdministrator)
-        );
     }
 }

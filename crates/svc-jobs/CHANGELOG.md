@@ -34,8 +34,9 @@ is kept, except the refusal of a clear that has nothing to clear (below).
 - `jobsUserMaxPrioritiesChanged(userIds: [UUID!]!)` — the same read as a
   subscription: a `JobsUserMaxPrioritiesSnapshot` equal to the query, then a
   `JobsUserMaxPriorityDelta` carrying the complete new view of a watched user
-  each time their maximum changes. Changes of unwatched users, and a change
-  that leaves the view as it was, push nothing.
+  each time their maximum changes. Changes of unwatched users, a change that
+  leaves the view as it was, and a change no later than the view already sent
+  (ordered by the user's revision) push nothing.
 
 ### Changed
 

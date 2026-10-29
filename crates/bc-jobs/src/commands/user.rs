@@ -55,7 +55,7 @@ pub fn clear_max_priority(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::access::{PlatformPrivileges, PrincipalKind};
+    use crate::domain::access::{PlatformRole, PrincipalKind};
     use crate::domain::ids::KnownUserId;
     use crate::fixtures::user;
     use uuid::Uuid;
@@ -65,15 +65,11 @@ mod tests {
     }
 
     fn super_user() -> PrincipalFacts {
-        PrincipalFacts::new(
-            PrincipalKind::Human,
-            true,
-            PlatformPrivileges::PLATFORM_ORG_ADMIN,
-        )
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::SuperUser)
     }
 
     fn member() -> PrincipalFacts {
-        PrincipalFacts::new(PrincipalKind::Human, true, PlatformPrivileges::NONE)
+        PrincipalFacts::new(PrincipalKind::Human, true, PlatformRole::Member)
     }
 
     fn capped(maximum: Option<i64>) -> UserMaxPriority {
@@ -178,16 +174,9 @@ mod tests {
     #[test]
     fn each_command_is_accepted_exactly_when_its_affordance_is_allowed() {
         // Given: users with and without a maximum, and callers with and without the right
-        let administrator_only = PrincipalFacts::new(
-            PrincipalKind::Human,
-            true,
-            PlatformPrivileges {
-                platform_administrator: true,
-                super_user: false,
-            },
-        );
+        let deactivated = PrincipalFacts::new(PrincipalKind::Human, false, PlatformRole::SuperUser);
         for current in [capped(Some(2)), capped(None)] {
-            for principal in [super_user(), administrator_only, member()] {
+            for principal in [super_user(), member(), deactivated] {
                 // When: the affordance is decided and the command attempted
                 let set = set_max_priority(&current, set(5), &principal);
                 let clear = clear_max_priority(

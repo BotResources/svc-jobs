@@ -10,10 +10,10 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.7.0 - 2026-10-29
 
-- `PrincipalFacts::new` takes `PlatformPrivileges { platform_administrator,
-  super_user }` instead of one `is_super_admin` flag: each decision reads its
-  own fact, so the two populations can part at the frontier alone
-  (`PlatformPrivileges::PLATFORM_ORG_ADMIN` holds both, `NONE` neither).
+- `PrincipalFacts::new` takes a `PlatformRole` (`Member` < `SuperUser`)
+  instead of the `is_super_admin` flag. A platform administrator is a super
+  user — the admins of the platform org; `guard_platform_administrator` and
+  `guard_super_user` stay two decisions, each refusing under its own code.
 - The decisions on a user's maximum: `UserMaxPriority::guard_set` /
   `guard_clear` (replacing `guard_govern`), `can_set` / `can_clear` and
   `affordances` (`set_max_priority`, `clear_max_priority`). Clearing needs a
@@ -23,8 +23,13 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   whether it is the default, and the caller's affordances — the projection the
   administrator's read and its live changes share.
 - `UserSelection`: the users one read answers for — UUIDv7 ids, each once, in
-  the order first asked for, at most 200.
-- Port `UserMaxPriorityReader::load_selected`.
+  the order first asked for, at most 200 (refused as soon as a 201st distinct
+  user is named); `UserSelection::one`.
+- `MaxPriorityRevision`: the count of a user's recorded maximum changes, which
+  orders a user's changes for live views.
+- Port `UserMaxPriorityReader`: `load_selected` (maxima with their revision,
+  one statement) and `load_one`, the single non-transactional read path of a
+  user's maximum.
 
 ## 0.6.0 - 2026-10-26
 
