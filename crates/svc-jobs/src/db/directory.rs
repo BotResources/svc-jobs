@@ -33,10 +33,10 @@ const STANDING_SQL: &str = "SELECT rt.type_key, ri.instance_key, \
      LEFT JOIN directory_removed_runs dr ON dr.run_id = r.id \
      WHERE r.id = $1";
 
-async fn standing(
+pub async fn standing(
     tx: &mut PgConnection,
     run_id: RunId,
-    runner_type: &str,
+    runner_type: Option<&str>,
     instance_key: &str,
 ) -> Result<RunStanding, PortError> {
     let sql = STANDING_SQL.replace("{root}", &super::lineage::root_of("j"));
@@ -51,11 +51,16 @@ async fn standing(
     if row.get::<bool, _>("removed") {
         return Ok(RunStanding::Removed);
     }
-    if !row.get::<bool, _>("started") || row.get::<bool, _>("ended") {
+    if !row.get::<bool, _>("started") {
         return Ok(RunStanding::NotStarted);
     }
+    if row.get::<bool, _>("ended") {
+        return Ok(RunStanding::Ended);
+    }
     let held_by: Option<String> = row.get("instance_key");
-    if row.get::<String, _>("type_key") != runner_type || held_by.as_deref() != Some(instance_key) {
+    let type_matches =
+        runner_type.is_none_or(|expected| row.get::<String, _>("type_key") == expected);
+    if !type_matches || held_by.as_deref() != Some(instance_key) {
         return Ok(RunStanding::StartedOnAnotherInstance);
     }
     Ok(RunStanding::Started {
@@ -63,7 +68,7 @@ async fn standing(
     })
 }
 
-async fn lock_tree(tx: &mut PgConnection, initial_job_id: JobId) -> Result<(), PortError> {
+pub async fn lock_tree(tx: &mut PgConnection, initial_job_id: JobId) -> Result<(), PortError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("directory:{}", initial_job_id.as_uuid()))
         .execute(&mut *tx)
@@ -82,11 +87,11 @@ impl PgStore {
         at: DateTime<Utc>,
     ) -> Result<Result<(), RegistrationRefusal>, PortError> {
         let mut tx = self.begin().await?;
-        let first = standing(&mut tx, run_id, runner_type, instance_key).await?;
+        let first = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
         if let RunStanding::Started { initial_job_id } = first {
             lock_tree(&mut tx, initial_job_id).await?;
         }
-        let current = standing(&mut tx, run_id, runner_type, instance_key).await?;
+        let current = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
         let held = held_agents(&mut tx, declarations).await?;
         let registration = match decide_registration(run_id, current, declarations, &held) {
             Ok(registration) => registration,
@@ -137,7 +142,7 @@ impl PgStore {
         instance_key: &str,
     ) -> Result<Result<Vec<ListedRow>, RegistrationRefusal>, PortError> {
         let mut tx = self.begin().await?;
-        let current = standing(&mut tx, run_id, runner_type, instance_key).await?;
+        let current = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
         let initial_job_id = match require_live(current) {
             Ok(initial_job_id) => initial_job_id,
             Err(refusal) => return Ok(Err(refusal)),
@@ -145,6 +150,8 @@ impl PgStore {
         let rows = sqlx::query(
             "SELECT d.agent_id::uuid AS agent_id, d.run_id::uuid AS run_id, rt.type_key, \
                 d.state, d.has_inbox, d.declares_restart, \
+                EXISTS (SELECT 1 FROM saved_state_agents s \
+                        WHERE s.agent_id = d.agent_id) AS holds_saved_state, \
                 coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
                 EXISTS (SELECT 1 FROM job_resolutions jr \
                         WHERE jr.job_id = coalesce(j.parent_job_id, j.id)) AS parent_terminal \
@@ -173,7 +180,7 @@ fn listed(row: &sqlx::postgres::PgRow) -> Result<ListedRow, PortError> {
             state: AgentState::from_db_str(&row.get::<String, _>("state"))?,
             has_inbox: row.get("has_inbox"),
             declares_restart: row.get("declares_restart"),
-            holds_saved_state: false,
+            holds_saved_state: row.get("holds_saved_state"),
         },
         runner_type_retired: row.get("retired"),
         parent_job_terminal: row.get("parent_terminal"),
@@ -237,5 +244,10 @@ async fn upsert(
     if written.rows_affected() == 0 {
         return Err(PortError::ConcurrentModification);
     }
+    sqlx::query("DELETE FROM directory_removed_addresses WHERE agent_id = $1")
+        .bind(declaration.agent_id.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
     Ok(())
 }

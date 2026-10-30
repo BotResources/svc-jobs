@@ -56,32 +56,44 @@ uuid_v7_id!(SourceEntityId, "source_entity_id");
 uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
+uuid_v7_id!(ItemId, "item_id");
+uuid_v7_id!(ResultId, "result_id");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(from = "Uuid", into = "Uuid")]
-pub struct AgentId(Uuid);
+macro_rules! any_uuid_id {
+    ($name:ident) => {
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+        )]
+        #[serde(from = "Uuid", into = "Uuid")]
+        pub struct $name(Uuid);
 
-impl AgentId {
-    pub fn new(value: Uuid) -> Self {
-        Self(value)
-    }
+        impl $name {
+            pub fn new(value: Uuid) -> Self {
+                Self(value)
+            }
 
-    pub fn as_uuid(&self) -> Uuid {
-        self.0
-    }
+            pub fn as_uuid(&self) -> Uuid {
+                self.0
+            }
+        }
+
+        impl From<$name> for Uuid {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+
+        impl From<Uuid> for $name {
+            fn from(value: Uuid) -> Self {
+                Self(value)
+            }
+        }
+    };
 }
 
-impl From<AgentId> for Uuid {
-    fn from(value: AgentId) -> Self {
-        value.0
-    }
-}
-
-impl From<Uuid> for AgentId {
-    fn from(value: Uuid) -> Self {
-        Self(value)
-    }
-}
+any_uuid_id!(AgentId);
+any_uuid_id!(MailId);
+any_uuid_id!(AttachmentId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "Uuid", into = "Uuid")]

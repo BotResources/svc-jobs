@@ -22,6 +22,7 @@ pub mod resolve;
 pub mod resolve_v3;
 pub mod run_end;
 pub mod run_facts;
+pub mod runner;
 pub mod runner_type_catalog;
 pub mod runner_type_impacts;
 pub mod runner_type_lifecycle;

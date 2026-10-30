@@ -7,6 +7,7 @@ use crate::error::JobsError;
 const BASIS: i64 = 10_000;
 
 pub const DEFAULT_INLINE_PAYLOAD_MAX_BYTES: usize = 524_288;
+pub const DEFAULT_SAVED_STATE_MAX_BYTES: usize = 1_048_576;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Jitter(i64);
@@ -40,6 +41,7 @@ pub struct ServiceLimits {
     retirement_quiet_period: TimeDelta,
     default_max_priority: Priority,
     inline_payload_max_bytes: usize,
+    saved_state_max_bytes: usize,
 }
 
 impl Default for ServiceLimits {
@@ -52,6 +54,7 @@ impl Default for ServiceLimits {
             retirement_quiet_period: TimeDelta::hours(24),
             default_max_priority: Priority::DEFAULT,
             inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
+            saved_state_max_bytes: DEFAULT_SAVED_STATE_MAX_BYTES,
         }
     }
 }
@@ -73,6 +76,7 @@ impl ServiceLimits {
             retirement_quiet_period: positive("retirement_quiet_period", retirement_quiet_period)?,
             default_max_priority: Priority::DEFAULT,
             inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
+            saved_state_max_bytes: DEFAULT_SAVED_STATE_MAX_BYTES,
         })
     }
 
@@ -88,6 +92,16 @@ impl ServiceLimits {
     pub fn with_inline_payload_max_bytes(mut self, maximum: usize) -> Self {
         self.inline_payload_max_bytes = maximum;
         self
+    }
+
+    #[must_use]
+    pub fn with_saved_state_max_bytes(mut self, maximum: usize) -> Self {
+        self.saved_state_max_bytes = maximum;
+        self
+    }
+
+    pub fn saved_state_max_bytes(&self) -> usize {
+        self.saved_state_max_bytes
     }
 
     pub fn inline_payload_max_bytes(&self) -> usize {

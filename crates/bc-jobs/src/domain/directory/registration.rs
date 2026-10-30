@@ -7,6 +7,7 @@ use crate::domain::ids::{JobId, RunId};
 pub enum RunStanding {
     Unknown,
     NotStarted,
+    Ended,
     Removed,
     StartedOnAnotherInstance,
     Started { initial_job_id: JobId },
@@ -91,7 +92,7 @@ pub struct Registration {
 pub fn require_live(standing: RunStanding) -> Result<JobId, RegistrationRefusal> {
     match standing {
         RunStanding::Unknown => Err(RegistrationRefusal::RunUnknown),
-        RunStanding::NotStarted => Err(RegistrationRefusal::RunNotStarted),
+        RunStanding::NotStarted | RunStanding::Ended => Err(RegistrationRefusal::RunNotStarted),
         RunStanding::Removed => Err(RegistrationRefusal::RunRemoved),
         RunStanding::StartedOnAnotherInstance => Err(RegistrationRefusal::InstanceMismatch),
         RunStanding::Started { initial_job_id } => Ok(initial_job_id),

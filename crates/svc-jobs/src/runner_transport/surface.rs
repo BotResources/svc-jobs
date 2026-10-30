@@ -20,6 +20,7 @@ pub async fn respond(
     let mut requests = futures::stream::select_all(vec![
         subscribe(&client, wire::REGISTER_AGENTS_FILTER).await?,
         subscribe(&client, wire::LIST_AGENTS_FILTER).await?,
+        subscribe(&client, wire::MARK_READ_FILTER).await?,
     ]);
     established.signal();
     while let Some(message) = requests.next().await {
@@ -58,6 +59,13 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
     if let Some(runner_type) = subject.strip_prefix(wire::REGISTER_AGENTS_PREFIX) {
         let reply = match decode::<wire::RegisterAgents>(payload) {
             Some(request) => directory::register_agents(jobs, runner_type, request).await?,
+            None => malformed(),
+        };
+        return Some(encode(&reply));
+    }
+    if let Some(runner_type) = subject.strip_prefix(wire::MARK_READ_PREFIX) {
+        let reply = match decode::<wire::MarkRead>(payload) {
+            Some(request) => directory::mark_read(jobs, runner_type, request).await?,
             None => malformed(),
         };
         return Some(encode(&reply));

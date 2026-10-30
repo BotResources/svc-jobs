@@ -39,6 +39,41 @@ pub async fn register_agents(
     }
 }
 
+pub async fn mark_read(
+    jobs: &Jobs,
+    runner_type: &str,
+    request: wire::MarkRead,
+) -> Option<wire::SurfaceReply> {
+    let Ok(run_id) = RunId::new(request.run_id) else {
+        return Some(refused(RegistrationRefusal::Malformed));
+    };
+    if let Err(error) = catch_up::apply_acknowledged_start(jobs, run_id).await {
+        tracing::warn!(error = %error, "the acknowledged start of a run could not be applied");
+        return None;
+    }
+    let outcome = jobs
+        .store
+        .mark_read(
+            request.run_id,
+            &request.instance_key,
+            runner_type,
+            &request.item_ids,
+            jobs.clock.now(),
+        )
+        .await;
+    match outcome {
+        Ok(Ok(())) => Some(wire::SurfaceReply::accepted()),
+        Ok(Err(refusal)) => Some(wire::SurfaceReply::refused(
+            refusal.code(),
+            refusal.message(),
+        )),
+        Err(error) => {
+            tracing::warn!(error = %error, "a read marker could not be stored");
+            None
+        }
+    }
+}
+
 pub async fn list_agents(
     jobs: &Jobs,
     runner_type: &str,
