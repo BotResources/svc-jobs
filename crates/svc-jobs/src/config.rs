@@ -24,7 +24,6 @@ const DEFAULT_CONSUMER_MAX_ACK_PENDING: i64 = 256;
 const DEFAULT_CONSUMER_MAX_DELIVER: i64 = -1;
 const DEFAULT_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS: u64 = 250;
 const DEFAULT_TASK_RESTART_MAX_BACKOFF_SECONDS: u64 = 30;
-const DEFAULT_TASK_RESTART_BUDGET: u32 = 10;
 const DEFAULT_TASK_STABILITY_SECONDS: u64 = 60;
 const DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS: i64 = 180;
 const DEFAULT_RETIREMENT_QUIET_PERIOD_SECONDS: i64 = 86_400;
@@ -271,7 +270,6 @@ fn restart_policy() -> Result<RestartPolicy, ServiceError> {
     Ok(RestartPolicy {
         initial_backoff: Duration::from_millis(initial_backoff_milliseconds.max(1)),
         max_backoff: Duration::from_secs(max_backoff_seconds.max(1)),
-        budget: read("JOBS_TASK_RESTART_BUDGET", DEFAULT_TASK_RESTART_BUDGET)?,
         stability: Duration::from_secs(stability_seconds.max(1)),
     })
 }
