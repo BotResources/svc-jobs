@@ -11,7 +11,6 @@ pub mod codes;
 pub mod contention;
 pub mod db;
 pub mod delta;
-pub mod directory;
 pub mod dispatch;
 pub mod docs;
 pub mod events;

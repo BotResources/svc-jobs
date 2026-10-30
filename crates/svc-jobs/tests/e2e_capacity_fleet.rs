@@ -68,10 +68,10 @@ async fn a_capacity_lowered_by_a_heartbeat_holds_the_claim_until_a_live_run_ends
     held.expect_empty("the other claim stays held: no second Job waits");
     instance.start_run(&first).await;
 
-    instance.announce_capacity(1).await;
-    await_total_capacity(&client, admin, &runner_type, 1).await;
     let (unserved, ()) = tokio::join!(claim::claim(fixture.nats(), &instance, CLAIM_WAIT), async {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        instance.announce_capacity(1).await;
+        await_total_capacity(&client, admin, &runner_type, 1).await;
         producer
             .declare_v2(&JobDeclaration::new(&runner_type))
             .await;
@@ -151,6 +151,7 @@ async fn push_capacity_follows_the_ready_instances_of_the_fleet() {
     draining.connect_as(wire::STATUS_DRAINING).await;
     dispatch::await_live_instances(&client, admin, &runner_type, 2, LONG).await;
     first.expect_no_trigger(QUIET).await;
+    await_total_capacity(&client, admin, &runner_type, 2).await;
     assert_eq!(
         gql::status_of(&client, admin, fourth.job_id).await,
         "PENDING",
@@ -166,10 +167,12 @@ async fn push_capacity_follows_the_ready_instances_of_the_fleet() {
         fourth.job_id,
         "a second Instance frees a slot"
     );
+    await_total_capacity(&client, admin, &runner_type, 3).await;
     let published = first.trigger_count().await;
 
     second.crash();
     dispatch::await_live_instances(&client, admin, &runner_type, 2, LONG).await;
+    await_total_capacity(&client, admin, &runner_type, 2).await;
     first.expect_no_trigger(QUIET).await;
     assert_eq!(
         first.trigger_count().await,

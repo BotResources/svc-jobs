@@ -240,6 +240,29 @@ impl<'a> FakeRunner<'a> {
         seen
     }
 
+    pub async fn raw_triggers(&self) -> Vec<String> {
+        let stream = self
+            .nats
+            .jetstream()
+            .get_stream(wire::TRIGGER_STREAM)
+            .await
+            .expect("the trigger stream is declared before the service boots");
+        let subject = wire::trigger_subject(&self.runner_type);
+        let mut raw = Vec::new();
+        let mut sequence = 1;
+        while let Ok(message) = stream
+            .raw_message_builder()
+            .next_by_subject(&subject)
+            .sequence(sequence)
+            .send()
+            .await
+        {
+            raw.push(String::from_utf8_lossy(&message.payload).into_owned());
+            sequence = message.sequence + 1;
+        }
+        raw
+    }
+
     async fn read_from(&self, subject: &str, from: u64) -> Option<(u64, Value)> {
         let stream = self
             .nats

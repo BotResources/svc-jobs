@@ -42,8 +42,3 @@ pub trait AgentDirectory: Send + Sync {
         decide: StandingDecision<'_>,
     ) -> Result<Result<Vec<ListedEntry>, RegistrationRefusal>, PortError>;
 }
-
-#[async_trait]
-pub trait TreeDirectory: Send + Sync {
-    async fn entries_of_tree(&self, job_id: JobId) -> Result<Option<Vec<ListedEntry>>, PortError>;
-}

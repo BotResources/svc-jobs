@@ -33,7 +33,7 @@ async fn config_and_payload_travel_apart_and_reach_every_successor_unchanged() {
         "attachments": [{ "name": "a.txt", "content_type": "text/plain", "content": "aGk=" }] });
 
     let both = JobDeclaration::new(&x.runner_type)
-        .with_config(json!({ "model": "m" }))
+        .with_config(json!({ "model": "m", "a": 1 }))
         .with_max_attempts(1);
     producer
         .declare_payload(with_payload(&both, Some(inline.clone())))
@@ -42,10 +42,19 @@ async fn config_and_payload_travel_apart_and_reach_every_successor_unchanged() {
     assert_eq!(runner::job_id(&trigger), both.job_id);
     assert_eq!(
         trigger["config"],
-        json!({ "model": "m" }),
+        json!({ "model": "m", "a": 1 }),
         "the config as given"
     );
     assert_eq!(trigger["payload"], inline, "the payload as given");
+    let raw = x.raw_triggers().await;
+    let sent = raw
+        .iter()
+        .find(|text| text.contains(&both.job_id.to_string()))
+        .expect("the trigger of the Job is on the stream");
+    assert!(
+        sent.contains(r#""config":{"a":1,"model":"m"}"#),
+        "the config reaches the runner byte for byte as the producer serialized it: {sent}"
+    );
     let view = fixture
         .gql()
         .query(
@@ -56,7 +65,7 @@ async fn config_and_payload_travel_apart_and_reach_every_successor_unchanged() {
         .await;
     assert_eq!(
         view["data"]["jobsJob"]["job"]["config"],
-        json!({ "model": "m" })
+        json!({ "model": "m", "a": 1 })
     );
     assert_eq!(
         view["data"]["jobsJob"]["job"]["payload"]["message"],

@@ -3,7 +3,6 @@ mod support;
 use br_test_harness::{PassportBuilder, verdict};
 use serde_json::json;
 use support::db::Durable;
-use support::directory::{listed, tree_agents};
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail, Work};
 use support::producer::{JobDeclaration, Producer};
@@ -133,18 +132,6 @@ async fn an_administrator_sees_the_form_of_a_kept_payload_and_the_directory_but_
         "the administrator's attempt read nothing away"
     );
 
-    let directory = listed(&tree_agents(&fixture, admin, root.job_id).await);
-    let mut seen: Vec<String> = directory
-        .iter()
-        .map(|agent| agent["agentId"].as_str().unwrap_or_default().to_owned())
-        .collect();
-    seen.sort();
-    let mut expected = vec![sender_id.to_string(), receiver_id.to_string()];
-    expected.sort();
-    assert_eq!(
-        seen, expected,
-        "the administrator sees the agent directory of the Tree"
-    );
     durable.close().await;
     fixture.shutdown().await;
 }

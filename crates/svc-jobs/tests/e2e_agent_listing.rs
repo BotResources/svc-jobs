@@ -2,7 +2,6 @@ mod support;
 
 use serde_json::{Value, json};
 use support::db::Durable;
-use support::directory::{entry_of, listed, tree_agents};
 use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::restart::{FINISHED_OF_RUN, save_state};
@@ -57,15 +56,16 @@ async fn finished_child(
     (id, job)
 }
 
+fn entry_of<'a>(agents: &'a [Value], agent: Uuid, key: &str) -> Option<&'a Value> {
+    agents
+        .iter()
+        .find(|listed| listed[key] == agent.to_string())
+}
+
 fn state_of(agents: &[Value], agent: Uuid) -> (Value, Value) {
     let entry = entry_of(agents, agent, "agent_id")
-        .or_else(|| entry_of(agents, agent, "agentId"))
         .unwrap_or_else(|| panic!("{agent} is listed: {agents:?}"));
-    let restartable = entry
-        .get("restartable_now")
-        .or_else(|| entry.get("restartableNow"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let restartable = entry.get("restartable_now").cloned().unwrap_or(Value::Null);
     (entry["state"].clone(), restartable)
 }
 
@@ -186,23 +186,6 @@ async fn the_agent_list_shows_the_running_and_restartable_agents_of_the_own_tree
     let not_own = surface::list(fixture.nats(), &pair.child, g_run).await;
     assert_eq!(surface::reason(&not_own), "instance_mismatch");
 
-    let directory = listed(&tree_agents(&fixture, fixture.admin(), root.job_id).await);
-    let mut seen: Vec<String> = directory
-        .iter()
-        .map(|a| a["agentId"].as_str().unwrap().to_owned())
-        .collect();
-    seen.sort();
-    assert_eq!(
-        seen,
-        surface::agent_ids(&listing),
-        "the administrator sees the directory of the Tree"
-    );
-    assert_eq!(state_of(&directory, l), (json!("FINISHED"), json!(false)));
-    let member = tree_agents(&fixture, fixture.member(), root.job_id).await;
-    assert!(
-        member["errors"].is_array(),
-        "only administrators inspect the directory: {member}"
-    );
     durable.close().await;
     fixture.shutdown().await;
 }

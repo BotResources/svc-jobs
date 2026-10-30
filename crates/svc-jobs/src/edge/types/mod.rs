@@ -1,4 +1,3 @@
-pub mod directory;
 pub mod enums;
 pub mod event;
 pub mod fleet;

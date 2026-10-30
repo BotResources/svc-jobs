@@ -114,7 +114,11 @@ async fn a_runner_uses_only_its_own_runs_addresses_and_jobs() {
         &[Agent::with_inbox()],
     )
     .await;
-    assert!(!surface::reason(&registered).is_empty(), "{registered}");
+    assert_eq!(
+        surface::reason(&registered),
+        "instance_mismatch",
+        "{registered}"
+    );
     assert_eq!(
         reason_of(&upload_answer(&fixture, &x_job).await, "jobsUploadResult"),
         "job_not_of_run"

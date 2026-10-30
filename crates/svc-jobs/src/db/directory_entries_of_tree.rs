@@ -1,25 +1,12 @@
-use async_trait::async_trait;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::directory::{ListedEntry, TreeDirectory};
+use bc_jobs::ports::directory::ListedEntry;
 use sqlx::PgConnection;
 
-use super::PgStore;
 use super::directory_entry::{ENTRY_TABLES, entry_columns, entry_of};
 use super::hydrate::unavailable;
 
-#[async_trait]
-impl TreeDirectory for PgStore {
-    async fn entries_of_tree(&self, job_id: JobId) -> Result<Option<Vec<ListedEntry>>, PortError> {
-        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        let Some(tree) = PgStore::initial_job_of(&mut connection, job_id).await? else {
-            return Ok(None);
-        };
-        entries_in(&mut connection, tree).await.map(Some)
-    }
-}
-
-pub async fn entries_in(
+pub(super) async fn entries_in(
     connection: &mut PgConnection,
     tree: JobId,
 ) -> Result<Vec<ListedEntry>, PortError> {

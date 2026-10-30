@@ -338,10 +338,7 @@ recorded is always the passport's own id.
   `jobsMyMaxPriority` (the caller's own maximum), `jobsUserMaxPriorities`
   (the maximum of each user asked for — their own or the default, and which —
   with the caller's `set_max_priority` / `clear_max_priority` affordances; at
-  most 200 users per read, each answered once), `jobsTreeAgents` (the agent
-  directory of the Tree of a Job: the running agents and the finished agents
-  that can restart, as the runner listing shows them; a snapshot, with no live
-  delta). Job views carry
+  most 200 users per read, each answered once). Job views carry
   `requestedPriority`, `effectivePriority` and `forcedPriority`.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a

@@ -11,17 +11,11 @@ form to decide whether a version ships.
 
 ### Fixed
 
-- Administrators could not see the agent directory of a Tree, which the
-  sealed 0.6 gives them: `jobsTreeAgents(jobId)` reads it for the Tree of a
-  Job, as the runner listing shows it (the running agents and the finished
-  agents that can restart). It is a snapshot; no live delta carries it.
 - A Run start and every write that can put an item in an inbox (a mail, a cc
   notice, a call notice) take the Tree lock, so an item that reaches an agent
   whose restart Run starts at the same moment is either rung to that Run or
   listed by the first read the Run makes after its start; before, it could be
   neither (`regression_ring_start_race`).
-- `jobsSaveState` refuses a state above the setting (`state_too_large`) before
-  it checks the work under the Tree lock.
 
 ### Tests
 
@@ -77,8 +71,7 @@ sealed 0.6 tests that it proved only in part:
 - A sync runner call ends with the answer or the failure in the Caller's Run,
   stays in progress until the Caller finishes it, and is cancelled with it.
 - Acts-for is transitive across two restarts; a plain retry gets none of it.
-- Administrators do not read mail, Results or kept payloads, and see the agent
-  directory of the Tree.
+- Administrators do not read mail, Results or kept payloads.
 - Agent registration is answered and fail-closed: a refused registration
   registers nothing; an ended Run registers no agent.
 - An item is announced to the Run and nothing is lost on reconnection: cc
@@ -259,6 +252,8 @@ kept payloads.
 - Marking items read checks only the requested items.
 - Saving a state takes the Tree lock, so a save no longer leaves a state behind
   a Run that was removed at the same time.
+- `jobsSaveState` refuses a state above the setting (`state_too_large`) before
+  it checks the work under the Tree lock.
 - Two uploads of the same attachment id, or two mails of the same mail id, from
   two Trees at once keep one content and one uploader; the other is refused with
   `mail_id_reused`.
