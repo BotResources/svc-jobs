@@ -10,7 +10,7 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
-## Unreleased
+## 0.6.1 - 2026-10-30
 
 ### Fixed
 

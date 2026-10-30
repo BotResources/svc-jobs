@@ -8,7 +8,7 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
-## Unreleased
+## 0.8.1 - 2026-10-30
 
 - `domain::runner::call_notices::may_notify_a_caller`: the events after which
   a Caller can receive a notice; `CallNotices::plan` plans nothing for any

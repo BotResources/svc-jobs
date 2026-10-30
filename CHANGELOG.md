@@ -9,6 +9,8 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.6.1 - 2026-10-30
+
 ### Fixed
 
 - A Run start and every write that can put an item in an inbox (a mail, a cc
