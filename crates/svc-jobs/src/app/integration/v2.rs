@@ -46,12 +46,20 @@ pub fn requester_ref(requester: &Requester, service_key: &str) -> wire::Requeste
     }
 }
 
+fn v2_reason_code(domain_code: &str) -> &str {
+    match domain_code {
+        "parent_job_terminal" => wire::REASON_PARENT_TERMINAL,
+        other => other,
+    }
+}
+
 pub fn creation_rejected(
     job_id: Uuid,
     lineage: Lineage,
     reason_code: &str,
     params: Value,
 ) -> Result<Published, ServiceError> {
+    let reason_code = v2_reason_code(reason_code);
     published(
         contract_jobs::evt_job_creation_rejected_v2_coords(),
         contract_jobs::event::EVENT_TYPE_CREATION_REJECTED,

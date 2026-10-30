@@ -252,3 +252,42 @@ async fn the_requester_cancels_a_job_and_is_told_it_was_accepted_even_when_it_is
     answers.stop().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_child_under_a_terminal_parent_is_refused_as_parent_terminal_in_v2_and_keeps_its_v1_code()
+{
+    let fixture = JobsFixture::start().await;
+    let answers = EventLog::open_v2(fixture.fabric()).await;
+    let events = EventLog::open(fixture.fabric()).await;
+    let requester = Producer::new(fixture.fabric(), "projects");
+    let runner_type = wire::unique_runner_type("terminal-parent");
+    let parent = JobDeclaration::new(&runner_type);
+    requester.declare(&parent).await;
+    answers
+        .expect_one(wire::FACT_QUEUED, parent.job_id, LONG)
+        .await;
+    requester
+        .send_v3(
+            wire::VERB_CANCEL,
+            json!({ "job_id": parent.job_id.to_string() }),
+        )
+        .await;
+    answers
+        .expect_one(wire::FACT_CANCELLED, parent.job_id, LONG)
+        .await;
+
+    let orphan = JobDeclaration::new(&runner_type).with_parent(parent.job_id);
+    requester.declare(&orphan).await;
+
+    let rejected = answers
+        .expect_one(wire::FACT_CREATION_REJECTED, orphan.job_id, LONG)
+        .await;
+    assert_eq!(rejected.payload()["reason_code"], "parent_terminal");
+    let legacy = events
+        .expect_one(wire::FACT_CREATION_REJECTED, orphan.job_id, LONG)
+        .await;
+    assert_eq!(legacy.payload()["reason_code"], "parent_job_terminal");
+    answers.stop().await;
+    events.stop().await;
+    fixture.shutdown().await;
+}

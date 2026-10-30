@@ -65,3 +65,32 @@ pub fn record(
     OutboxRecord::stage_event(record_id, published.coords, &envelope)
         .map_err(|error| ServiceError::Infra(error.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_terminal_parent_is_refused_under_parent_terminal_in_v2_and_keeps_its_v1_code() {
+        let job_id = Uuid::now_v7();
+        let lineage = Lineage::declared(job_id, None, None);
+        let published = rejection(job_id, lineage, "parent_job_terminal", json!({})).unwrap();
+        let codes: Vec<(u8, String)> = published
+            .iter()
+            .map(|event| {
+                (
+                    event.schema_version,
+                    event.payload["reason_code"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert!(codes.contains(&(1, "parent_job_terminal".to_owned())));
+        assert!(codes.contains(&(2, "parent_terminal".to_owned())));
+        let v2 = published
+            .iter()
+            .find(|event| event.schema_version == 2)
+            .unwrap();
+        assert_eq!(v2.payload["message"], "The parent job has already ended.");
+    }
+}
