@@ -6,7 +6,6 @@ use bc_jobs::domain::ownership::{
     ActorRef, CancelRequester, DeclarationClaim, ResolutionRequester,
 };
 use bc_jobs::policies::cascade::cancellation_cascade;
-use bc_jobs::ports::job::JobReader;
 use br_core_events::EventMetadata;
 
 use super::Jobs;
@@ -180,7 +179,7 @@ async fn cancel_once(
         resolution_id,
         requester,
     })?;
-    let descendants = JobReader::load_descendants(&jobs.store, job_id).await?;
+    let descendants = jobs.store.load_cancel_reach(job_id).await?;
     let mut cascaded: Vec<JobChange> = Vec::new();
     for order in cancellation_cascade(&job, &descendants) {
         let Some(descendant) = descendants

@@ -134,7 +134,7 @@ pub fn of_event(
                     initial_job_id: lineage.initial_job_id,
                     runner_type: fact.runner_type.as_str().to_owned(),
                     requester: requester_ref(&requester, fact.producer.as_str()),
-                    restart_of_job_id: None,
+                    restart_of_job_id: fact.restart_of_job_id.map(|id: JobId| id.as_uuid()),
                     retry_of_job_id: fact.predecessor_job_id.map(|id: JobId| id.as_uuid()),
                 },
             )?)

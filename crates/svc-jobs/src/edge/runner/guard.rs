@@ -9,7 +9,11 @@ pub const RUNNER_SCOPE: &str = "jobs:runner";
 
 pub fn holds_runner_scope(passport: &Passport) -> bool {
     ScopeKey::new(RUNNER_SCOPE)
-        .map(|scope| passport.is_active() && passport.has_scope(&scope))
+        .map(|scope| {
+            matches!(passport, Passport::Service { .. })
+                && passport.is_active()
+                && passport.has_scope(&scope)
+        })
         .unwrap_or(false)
 }
 

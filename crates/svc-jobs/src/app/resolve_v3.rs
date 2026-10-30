@@ -115,10 +115,10 @@ async fn try_cancel(
         (Requester::Service(None), None) => {
             CancelRequester::Owner(resolve::owner_claim(jobs, &job, metadata).await?)
         }
-        _ => CancelRequester::Caller {
-            caller: caller_of(&job, acting, metadata),
-            acts_for: ActsFor::default(),
-        },
+        _ => {
+            let (caller, acts_for) = caller_of(&job, acting, metadata);
+            CancelRequester::Caller { caller, acts_for }
+        }
     };
     let accepted = integration::cancel_accepted(wire.job_id, Lineage::of_job(&job))?;
     resolve::cancel_answered(
@@ -144,21 +144,25 @@ async fn resolution_requester(
             resolve::owner_claim(jobs, job, metadata).await?,
         ));
     }
-    Ok(ResolutionRequester::Caller {
-        caller: caller_of(job, acting, metadata),
-        acts_for: ActsFor::default(),
-    })
+    let (caller, acts_for) = caller_of(job, acting, metadata);
+    Ok(ResolutionRequester::Caller { caller, acts_for })
 }
 
-fn caller_of(job: &Job, acting: Option<ActingRun>, metadata: &EventMetadata) -> Caller {
+fn caller_of(job: &Job, acting: Option<ActingRun>, metadata: &EventMetadata) -> (Caller, ActsFor) {
     match acting {
-        None => Caller::Service(ActorRef::new(metadata.actor.id())),
-        Some(acting) => Caller::Run {
-            run_id: acting.run_id,
-            works_the_job: job
-                .active_run()
-                .is_some_and(|run| run.id() == acting.run_id),
-        },
+        None => (
+            Caller::Service(ActorRef::new(metadata.actor.id())),
+            ActsFor::default(),
+        ),
+        Some(acting) => (
+            Caller::Run {
+                run_id: acting.run_id,
+                works_the_job: job
+                    .active_run()
+                    .is_some_and(|run| run.id() == acting.run_id),
+            },
+            acting.acts_for,
+        ),
     }
 }
 

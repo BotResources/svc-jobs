@@ -14,6 +14,18 @@ use super::PgStore;
 use super::hydrate::unavailable;
 use super::work::{WorkNamed, require_work};
 
+const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
+        SELECT $1::uuid, 0 \
+      UNION ALL \
+        SELECT coalesce(j.predecessor_job_id, origin.job_id), s.depth + 1 FROM src s \
+        JOIN jobs j ON j.id = s.job_id \
+        LEFT JOIN restart_origins ro ON ro.job_id = j.id \
+        LEFT JOIN runs origin ON origin.id = ro.restarts_run_id \
+        WHERE s.depth < 64 \
+          AND coalesce(j.predecessor_job_id, origin.job_id) IS NOT NULL) \
+    SELECT kp.job_id FROM src s JOIN kept_payloads kp ON kp.job_id = s.job_id \
+    ORDER BY s.depth LIMIT 1";
+
 pub enum Uploader<'a> {
     Run(WorkNamed<'a>),
     Service(ActorRef),
@@ -92,6 +104,11 @@ impl PgStore {
         Ok(Ok(admission))
     }
 
+    pub async fn stored_payload(&self, job_id: Uuid) -> Result<Option<StoredPayload>, PortError> {
+        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
+        stored(&mut connection, job_id).await
+    }
+
     pub async fn fetch_payload(
         &self,
         work: WorkNamed<'_>,
@@ -101,7 +118,15 @@ impl PgStore {
             Ok(context) => context,
             Err(refusal) => return Ok(Err(refusal.into())),
         };
-        let found = stored(&mut tx, context.job_id.as_uuid()).await?;
+        let source: Option<Uuid> = sqlx::query_scalar(PAYLOAD_SOURCE_SQL)
+            .bind(context.job_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        let found = match source {
+            Some(source) => stored(&mut tx, source).await?,
+            None => None,
+        };
         Ok(found
             .map(|found| found.payload)
             .ok_or(RunnerRefusal::NoKeptPayload))

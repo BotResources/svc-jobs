@@ -5,7 +5,8 @@ use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::event::job::JobEvent;
 
-use super::job_changes::{JobChange, RoutedRunnerType};
+use super::job_changes::JobChange;
+use super::routing::RoutedRunnerType;
 use crate::app::fingerprint;
 use crate::db::fleet::capacity;
 use crate::db::{PgStore, apply};
@@ -42,7 +43,7 @@ pub(super) async fn guard_descendants_unchanged(
     let Some(decided_on) = &change.descendants_premise else {
         return Ok(());
     };
-    let mut current = PgStore::descendant_ids_in(tx, &[change.job_id.as_uuid()]).await?;
+    let mut current = PgStore::cancel_reach_in(tx, &[change.job_id.as_uuid()]).await?;
     current.sort_unstable();
     if &current == decided_on {
         Ok(())
@@ -110,6 +111,9 @@ pub(super) async fn lock_directory_trees(
 ) -> Result<(), ServiceError> {
     let mut trees: Vec<JobId> = Vec::new();
     for change in changes {
+        if let Some(restart) = &change.restart {
+            trees.push(restart.tree);
+        }
         if !change.removes_directory && !change.events.iter().any(ends_a_run) {
             continue;
         }
@@ -123,6 +127,19 @@ pub(super) async fn lock_directory_trees(
     trees.dedup();
     for tree in trees {
         crate::db::directory::lock_tree(tx, tree).await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn guard_restarts_still_due(
+    tx: &mut sqlx::PgConnection,
+    changes: &[JobChange],
+) -> Result<(), ServiceError> {
+    for restart in changes.iter().filter_map(|change| change.restart.as_ref()) {
+        if !crate::db::restart::restart_still_due(tx, restart.origin_run).await? {
+            return Err(ServiceError::RestartNotDue);
+        }
+        crate::db::restart::consume_wake(tx, restart.origin_run).await?;
     }
     Ok(())
 }

@@ -9,16 +9,4 @@ pub use guard::{RUNNER_SCOPE, holds_runner_scope};
 pub use mutation::RunnerMutation;
 pub use query::RunnerQuery;
 
-pub const RUNNER_SURFACE: &[&str] = &[
-    "jobsUploadPayload",
-    "jobsPayload",
-    "jobsUploadResult",
-    "jobsReadResult",
-    "jobsUploadAttachment",
-    "jobsAttachment",
-    "jobsSendMail",
-    "jobsUnread",
-    "jobsMail",
-    "jobsSaveState",
-    "jobsSavedState",
-];
+pub const RUNNER_SURFACE: &[&str] = &contract_jobs::graphql_roots::RUNNER_ROOTS;

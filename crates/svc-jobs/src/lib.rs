@@ -59,6 +59,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/graphql", post(edge::graphql_route).get(edge::playground))
         .layer(axum::middleware::from_fn(edge::auth::passport_layer))
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .route("/livez", liveness_route())
         .route("/readyz", readiness_route(readiness))
         .route("/metrics", metrics_route(metrics))

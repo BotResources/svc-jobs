@@ -4,7 +4,7 @@ use bc_jobs::domain::mail::content::{AttachmentRef, MailContent};
 use uuid::Uuid;
 
 use super::{Jobs, Outcome, WorkIds, started};
-use crate::app::service_metadata;
+use crate::app::{restart, service_metadata};
 use crate::db::mail::{AttachmentContent, MailRead, Minting, SendMail, Sent, UploadAttachment};
 
 pub struct SendMailInput {
@@ -50,7 +50,7 @@ pub async fn send_mail(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
     }
     .canonical();
     let metadata = service_metadata();
-    Ok(jobs
+    let sent = jobs
         .store
         .send_mail(
             SendMail {
@@ -63,7 +63,13 @@ pub async fn send_mail(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
                 at: jobs.clock.now(),
             },
         )
-        .await?)
+        .await?;
+    if let Ok(sent) = &sent
+        && sent.wakes_restart
+    {
+        restart::process_wakes(jobs).await?;
+    }
+    Ok(sent)
 }
 
 #[allow(clippy::too_many_arguments)]

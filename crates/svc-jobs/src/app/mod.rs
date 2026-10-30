@@ -20,6 +20,7 @@ pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
 pub mod resolve_v3;
+pub mod restart;
 pub mod run_end;
 pub mod run_facts;
 pub mod runner;
@@ -89,6 +90,12 @@ impl Jobs {
         metadata: &EventMetadata,
     ) -> Result<(), ServiceError> {
         let at = self.clock.now();
+        let may_wake_a_restart = changes.iter().any(|change| {
+            change
+                .events
+                .iter()
+                .any(|event| matches!(event, JobEvent::RunCompleted(_) | JobEvent::JobFailed(_)))
+        });
         let effects: Vec<(JobId, Vec<JobEvent>)> = changes
             .iter()
             .map(|change| (change.job_id, change.events.clone()))
@@ -111,6 +118,9 @@ impl Jobs {
         }
         for run in &ended {
             Box::pin(run_end::cancel_jobs_requested_by(self, run, metadata)).await?;
+        }
+        if may_wake_a_restart && let Err(error) = Box::pin(restart::process_wakes(self)).await {
+            tracing::warn!(error = %error, "starting the due restarts failed; the sweep retries");
         }
         Ok(())
     }

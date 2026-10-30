@@ -2,6 +2,7 @@ use bc_jobs::JobsError;
 use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::InstanceKey;
+use bc_jobs::domain::requester::ActsFor;
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use contract_jobs::command_v3::acting_run;
 use uuid::Uuid;
@@ -13,6 +14,7 @@ use crate::error::ServiceError;
 pub struct ActingRun {
     pub run_id: RunId,
     pub job: Job,
+    pub acts_for: ActsFor,
 }
 
 impl ActingRun {
@@ -49,5 +51,10 @@ async fn live(jobs: &Jobs, run_id: Uuid, instance_key: &str) -> Result<ActingRun
     if run.is_terminal() || !run.is_executed_by(&instance) {
         return Err(JobsError::ActingRunNotLive.into());
     }
-    Ok(ActingRun { run_id, job })
+    let acts_for = jobs.store.acts_for(run_id).await?;
+    Ok(ActingRun {
+        run_id,
+        job,
+        acts_for,
+    })
 }

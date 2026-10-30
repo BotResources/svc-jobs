@@ -167,7 +167,7 @@ pub async fn completed(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     terminal(tx, fact.run_id.as_uuid(), "COMPLETED", at, None).await?;
-    super::directory::run_finished(tx, fact.run_id.as_uuid()).await
+    super::directory::run_finished(tx, fact.run_id.as_uuid(), at).await
 }
 
 pub async fn cancelled(
@@ -203,7 +203,7 @@ pub async fn failed(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     terminal(tx, fact.run_id.as_uuid(), "FAILED", at, Some(&fact.report)).await?;
-    super::directory::remove_run_subtree(tx, fact.run_id.as_uuid(), at).await
+    super::directory::run_failed(tx, fact.run_id.as_uuid(), at).await
 }
 
 async fn terminal(

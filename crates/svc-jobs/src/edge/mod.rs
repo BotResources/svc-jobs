@@ -145,3 +145,16 @@ fn wants_event_stream(headers: &HeaderMap) -> bool {
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("text/event-stream"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_runner_root_of_the_contract_is_a_root_of_the_schema() {
+        let sdl = sdl();
+        for root in contract_jobs::graphql_roots::RUNNER_ROOTS {
+            assert!(sdl.contains(&format!("{root}(")), "{root} is not a root");
+        }
+    }
+}

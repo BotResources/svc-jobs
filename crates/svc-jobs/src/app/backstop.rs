@@ -6,16 +6,11 @@ use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::DueWorkReader;
 
 use super::write::JobChange;
-use super::{Jobs, reconcile, service_metadata};
+use super::{Jobs, reconcile, restart, service_metadata};
 use crate::error::ServiceError;
 
-/// How far back a sweep looks for facts that may have left an access path
-/// wrong — far more than a sweep interval, so a fact recorded by any pod, a
-/// 0.3 one included, is repaired by several sweeps before it falls out.
 const REPAIR_LOOKBACK: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
 
-/// Repairs the access paths of every Job that may be on one, at boot: the
-/// facts a 0.3 pod recorded before this pod existed are covered too.
 pub async fn repair_every_access_path(jobs: &Jobs) -> Result<(), ServiceError> {
     let candidates = jobs.store.every_job_on_a_path().await?;
     let repaired = jobs.store.repair_access_paths(&candidates).await?;
@@ -52,6 +47,8 @@ pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
              the backstops that need PostgreSQL alone, and the next sweep reconciles again"
         );
     }
+    jobs.store.purge_expired_results(jobs.clock.now()).await?;
+    restart::process_wakes(jobs).await?;
     reclaim_outrun_runs(jobs).await?;
     reclaim_lost_claims(jobs).await?;
     reclaim_stranded_triggers(jobs).await?;
@@ -112,9 +109,6 @@ async fn reclaim_lost_claims(jobs: &Jobs) -> Result<(), ServiceError> {
     Ok(())
 }
 
-/// Runs published on the trigger stream that nobody took, their type claimed
-/// from for the whole reservation delay since the switch: each is withdrawn
-/// without spending an attempt, and its Job waits to be claimed.
 async fn reclaim_stranded_triggers(jobs: &Jobs) -> Result<(), ServiceError> {
     let now = jobs.clock.now();
     let delay = jobs.claims.reservation_delay;
@@ -142,8 +136,6 @@ async fn reclaim_stranded_triggers(jobs: &Jobs) -> Result<(), ServiceError> {
     Ok(())
 }
 
-/// One job a backstop settles: a write race on it is logged and the sweep
-/// moves on — the next sweep sees it again — while an outage still stops it.
 async fn settle_one(
     jobs: &Jobs,
     job: &Job,

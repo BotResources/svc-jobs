@@ -22,6 +22,9 @@ pub enum ServiceError {
     #[error("concurrent_modification")]
     Contended,
 
+    #[error("restart_not_due")]
+    RestartNotDue,
+
     #[error("infrastructure_failure: {0}")]
     Infra(String),
 }

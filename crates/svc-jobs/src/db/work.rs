@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::directory::{lock_tree, standing};
 use super::hydrate::unavailable;
+use super::saved_states::saved_state_run_in;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WorkNamed<'a> {
@@ -78,12 +79,24 @@ pub async fn addresses_of_run(
     tx: &mut PgConnection,
     run_id: RunId,
 ) -> Result<Vec<AgentId>, PortError> {
-    let found: Vec<Uuid> = sqlx::query_scalar(
+    let mut found: Vec<Uuid> = sqlx::query_scalar(
         "SELECT agent_id FROM directory_agents WHERE run_id = $1 AND has_inbox ORDER BY agent_id",
     )
     .bind(run_id.as_uuid())
     .fetch_all(&mut *tx)
     .await
     .map_err(unavailable)?;
+    if let Some(state_run) = saved_state_run_in(tx, run_id).await? {
+        let saved: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT agent_id FROM saved_state_agents WHERE run_id = $1 AND has_inbox",
+        )
+        .bind(state_run.as_uuid())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        found.extend(saved);
+    }
+    found.sort_unstable();
+    found.dedup();
     Ok(found.into_iter().map(AgentId::new).collect())
 }

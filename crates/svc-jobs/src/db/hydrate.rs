@@ -23,13 +23,15 @@ fn jobs_sql() -> String {
      j.effective_priority::smallint AS effective_priority, \
      j.forced_priority::smallint AS forced_priority, \
      parent_rt.type_key AS parent_runner_type, \
-     ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call \
+     ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call, \
+     ro.restarts_run_id::uuid AS restart_of_run_id \
      FROM jobs j \
      JOIN runner_types rt ON rt.id = j.runner_type_id \
      LEFT JOIN producers p ON p.id = j.producer_id \
      LEFT JOIN source_entities se ON se.id = j.source_entity_id \
      LEFT JOIN producers sp ON sp.id = se.producer_id \
      LEFT JOIN known_users tu ON tu.id = j.triggered_by_id \
+     LEFT JOIN restart_origins ro ON ro.job_id = j.id \
      LEFT JOIN jobs parent ON parent.id = j.parent_job_id \
      LEFT JOIN runner_types parent_rt ON parent_rt.id = parent.runner_type_id \
      WHERE j.id = ANY($1)",
@@ -225,6 +227,10 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
             passport: rows::json_part(row.get("passport"))?,
             payload: rows::json_part(row.get("payload"))?,
             call: rows::json_part(row.get("call"))?,
+            restart_of_run_id: row
+                .get::<Option<Uuid>, _>("restart_of_run_id")
+                .map(RunId::new)
+                .transpose()?,
         })?);
     }
     Ok(jobs)
@@ -298,9 +304,6 @@ async fn fetch(
         .map_err(unavailable)
 }
 
-/// SQLSTATEs that mean "another writer got there first": a deadlock the
-/// server broke by aborting this transaction, and a serialization failure.
-/// Both are retried like a lost write race, never surfaced as an outage.
 const RETRYABLE_SQLSTATES: [&str; 2] = ["40P01", "40001"];
 
 pub fn is_write_race(error: &sqlx::Error) -> bool {

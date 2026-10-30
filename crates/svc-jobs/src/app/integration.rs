@@ -1,4 +1,4 @@
-mod message;
+pub(crate) mod message;
 mod v1;
 mod v2;
 

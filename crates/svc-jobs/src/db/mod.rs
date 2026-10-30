@@ -1,5 +1,7 @@
+pub mod acts_for;
 pub mod answers;
 pub mod apply;
+pub mod call_notices;
 pub mod claim;
 pub mod directory;
 pub mod dispatch_order;
@@ -18,6 +20,8 @@ pub mod mail;
 pub mod notify;
 pub mod partitions;
 pub mod priority;
+pub mod reach;
+pub mod restart;
 pub mod rows;
 pub mod saved_states;
 pub mod waiting_repair;

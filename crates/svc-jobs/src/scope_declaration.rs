@@ -14,13 +14,13 @@ pub fn declaration() -> Result<ScopeDeclaration, ServiceError> {
     ScopeDeclaration::new(
         ServiceManifest::new(
             ServiceKey::new(SERVICE_KEY).map_err(|error| invalid(&error))?,
-            "label.jobs",
-            "desc.jobs",
+            "jobs.service.label",
+            "jobs.service.description",
         ),
         vec![ScopeSpec::new(
             ScopeKey::new(RUNNER_SCOPE).map_err(|error| invalid(&error))?,
-            "label.jobs.runner",
-            "desc.jobs.runner",
+            "jobs.scope.runner.label",
+            "jobs.scope.runner.description",
             false,
         )],
     )

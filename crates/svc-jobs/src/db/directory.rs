@@ -243,7 +243,10 @@ async fn upsert(
          VALUES ($1, $2, $3, $4, $5, 'RUNNING', $6) \
          ON CONFLICT (agent_id) DO UPDATE SET run_id = EXCLUDED.run_id, \
             has_inbox = EXCLUDED.has_inbox, declares_restart = EXCLUDED.declares_restart, \
-            state = 'RUNNING' \
+            state = 'RUNNING', \
+            restarted_from_run_id = CASE \
+                WHEN directory_agents.run_id <> EXCLUDED.run_id THEN directory_agents.run_id \
+                ELSE directory_agents.restarted_from_run_id END \
          WHERE directory_agents.initial_job_id = EXCLUDED.initial_job_id",
     )
     .bind(declaration.agent_id.as_uuid())

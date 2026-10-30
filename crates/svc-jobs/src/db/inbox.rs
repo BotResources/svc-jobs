@@ -5,14 +5,12 @@ use bc_jobs::domain::mail::access::{guard_address_is_of_the_run, guard_marks_onl
 use bc_jobs::domain::mail::inbox::{ItemKind, Notice};
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::environment::IdFactory;
-use br_core_events::EventMetadata;
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::doorbell::{Arrival, Ring, ring};
+use super::acts_for::acts_for_in;
 use super::hydrate::unavailable;
 use super::mail::AttachmentMeta;
 use super::work::{WorkNamed, addresses_of_run, require_run, require_work};
@@ -49,7 +47,7 @@ const UNREAD_SQL: &str = "\
     FROM inbox_items i \
     LEFT JOIN mails m ON m.mail_id = i.mail_id \
     WHERE i.read_at IS NULL \
-      AND (i.address = ANY($1) OR ($3 AND i.run_id = $2)) \
+      AND (i.address = ANY($1) OR ($3 AND i.run_id = ANY($2))) \
     ORDER BY i.seq";
 
 impl PgStore {
@@ -76,9 +74,10 @@ impl PgStore {
                 true,
             ),
         };
+        let acts_for = acts_for_in(&mut tx, context.run_id).await?;
         let rows = sqlx::query(UNREAD_SQL)
             .bind(&watched)
-            .bind(context.run_id.as_uuid())
+            .bind(runs_reachable(context.run_id, &acts_for))
             .bind(with_run_notices)
             .fetch_all(&mut *tx)
             .await
@@ -115,12 +114,13 @@ impl PgStore {
             .into_iter()
             .map(|address| address.as_uuid())
             .collect();
+        let acts_for = acts_for_in(&mut tx, run_id).await?;
         let reachable: Vec<Uuid> = sqlx::query_scalar(
             "SELECT item_id::uuid FROM inbox_items \
-             WHERE address = ANY($1) OR run_id = $2",
+             WHERE address = ANY($1) OR run_id = ANY($2)",
         )
         .bind(&addresses)
-        .bind(run_id.as_uuid())
+        .bind(runs_reachable(run_id, &acts_for))
         .fetch_all(&mut *tx)
         .await
         .map_err(unavailable)?;
@@ -148,62 +148,6 @@ impl PgStore {
         .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(Ok(()))
-    }
-
-    pub async fn deliver_notice(
-        &self,
-        run_id: RunId,
-        address: Option<AgentId>,
-        notice: &Notice,
-        ids: &dyn IdFactory,
-        metadata: &EventMetadata,
-        at: DateTime<Utc>,
-    ) -> Result<ItemId, PortError> {
-        let mut tx = self.begin().await?;
-        let item_id = ItemId::new(ids.next())?;
-        let body = serde_json::to_value(notice).map_err(|error| PortError::Unavailable {
-            detail: error.to_string(),
-        })?;
-        sqlx::query(
-            "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at) \
-             VALUES ($1, 'NOTICE', $2, $3, $4, $5)",
-        )
-        .bind(item_id.as_uuid())
-        .bind(address.map(|address| address.as_uuid()))
-        .bind(run_id.as_uuid())
-        .bind(body)
-        .bind(at)
-        .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        let live: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM run_starts s WHERE s.run_id = $1) \
-                AND NOT EXISTS (SELECT 1 FROM run_terminals t WHERE t.run_id = $1)",
-        )
-        .bind(run_id.as_uuid())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        if live {
-            ring(
-                &mut tx,
-                Arrival {
-                    run_id,
-                    address: address.map(|address| address.as_uuid()),
-                    item_id,
-                    kind: ItemKind::Notice,
-                },
-                Ring {
-                    record_id: ids.next(),
-                    event_id: ids.next(),
-                    metadata,
-                    at,
-                },
-            )
-            .await?;
-        }
-        tx.commit().await.map_err(unavailable)?;
-        Ok(item_id)
     }
 }
 
@@ -274,4 +218,10 @@ fn unread_item(
         mail,
         notice,
     })
+}
+
+fn runs_reachable(run_id: RunId, acts_for: &bc_jobs::domain::requester::ActsFor) -> Vec<Uuid> {
+    let mut runs = vec![run_id.as_uuid()];
+    runs.extend(acts_for.runs().map(|run| run.as_uuid()));
+    runs
 }

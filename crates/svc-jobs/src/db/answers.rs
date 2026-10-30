@@ -1,7 +1,9 @@
 use bc_jobs::domain::ids::{ResultId, RunId};
 use bc_jobs::domain::payload::{CallMode, PayloadAttachment};
-use bc_jobs::domain::requester::{ActsFor, Requester};
-use bc_jobs::domain::runner::answer::{ResultRefusal, guard_keeps_a_result, guard_reads_result};
+use bc_jobs::domain::requester::Requester;
+use bc_jobs::domain::runner::answer::{
+    ResultRefusal, guard_keeps_a_result, guard_reads_result, guard_result_alive,
+};
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::environment::IdFactory;
@@ -9,6 +11,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 
 use super::PgStore;
+use super::acts_for::acts_for_in;
 use super::hydrate::unavailable;
 use super::work::{WorkNamed, require_work};
 
@@ -95,7 +98,7 @@ impl PgStore {
             Err(refusal) => return Ok(Err(refusal.into())),
         };
         let Some(row) = sqlx::query(
-            "SELECT addressed_run_id::uuid AS addressed, message, attachments \
+            "SELECT addressed_run_id::uuid AS addressed, message, attachments, kept_at, read_at \
              FROM job_results WHERE result_id = $1 FOR UPDATE",
         )
         .bind(result_id.as_uuid())
@@ -106,7 +109,11 @@ impl PgStore {
             return Ok(Err(ResultRefusal::ResultUnknown.into()));
         };
         let addressed = RunId::new(row.get("addressed"))?;
-        if let Err(refusal) = guard_reads_result(addressed, context.run_id, &ActsFor::default()) {
+        let acts_for = acts_for_in(&mut tx, context.run_id).await?;
+        if let Err(refusal) = guard_reads_result(addressed, context.run_id, &acts_for) {
+            return Ok(Err(refusal.into()));
+        }
+        if let Err(refusal) = guard_result_alive(row.get("kept_at"), row.get("read_at"), at) {
             return Ok(Err(refusal.into()));
         }
         let answer = StoredResult {
@@ -129,5 +136,21 @@ impl PgStore {
         }
         tx.commit().await.map_err(unavailable)?;
         Ok(Ok(answer))
+    }
+}
+
+impl PgStore {
+    pub async fn purge_expired_results(&self, now: DateTime<Utc>) -> Result<u64, PortError> {
+        let retention = bc_jobs::domain::runner::answer::RESULT_RETENTION.num_seconds();
+        let purged = sqlx::query(
+            "DELETE FROM job_results \
+             WHERE coalesce(read_at, kept_at) + make_interval(secs => $2::bigint) <= $1",
+        )
+        .bind(now)
+        .bind(retention)
+        .execute(self.pool())
+        .await
+        .map_err(unavailable)?;
+        Ok(purged.rows_affected())
     }
 }

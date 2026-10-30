@@ -13,10 +13,12 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
+use super::live::live_run_of;
 use super::load::{load_mail, standing_of};
 use crate::db::PgStore;
 use crate::db::doorbell::{Arrival, Ring, ring};
 use crate::db::hydrate::unavailable;
+use crate::db::restart::wake_addresses;
 use crate::db::work::{WorkNamed, require_work};
 
 pub struct SendMail<'a> {
@@ -27,6 +29,7 @@ pub struct SendMail<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sent {
     pub refused_restarts: Vec<AgentId>,
+    pub wakes_restart: bool,
 }
 
 pub struct Minting<'a> {
@@ -55,6 +58,7 @@ impl PgStore {
             Ok(SendAdmission::Absorbed) => {
                 return Ok(Ok(Sent {
                     refused_restarts: vec![],
+                    wakes_restart: false,
                 }));
             }
             Ok(SendAdmission::New) => {}
@@ -91,7 +95,7 @@ impl PgStore {
                 minting.at,
             )
             .await?;
-            if delivery.rings_live_run
+            if (delivery.rings_live_run || delivery.starts_restart)
                 && let Some(run_id) = live_run_of(&mut tx, delivery.address).await?
             {
                 ring(
@@ -112,8 +116,15 @@ impl PgStore {
                 .await?;
             }
         }
+        let waking: Vec<Uuid> = plan
+            .iter()
+            .filter(|delivery| delivery.starts_restart)
+            .map(|delivery| delivery.address.as_uuid())
+            .collect();
+        wake_addresses(&mut tx, &waking, minting.at).await?;
         tx.commit().await.map_err(unavailable)?;
         Ok(Ok(Sent {
+            wakes_restart: !waking.is_empty(),
             refused_restarts: plan
                 .iter()
                 .filter_map(|delivery| delivery.refused_restart.map(|refused| refused.address))
@@ -277,15 +288,4 @@ pub async fn insert_item(
     .await
     .map_err(unavailable)?;
     Ok(())
-}
-
-async fn live_run_of(tx: &mut PgConnection, address: AgentId) -> Result<Option<RunId>, PortError> {
-    let found: Option<Uuid> = sqlx::query_scalar(
-        "SELECT d.run_id::uuid FROM directory_agents d WHERE d.agent_id = $1 AND d.state = 'RUNNING'",
-    )
-    .bind(address.as_uuid())
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    found.map(RunId::new).transpose().map_err(PortError::from)
 }

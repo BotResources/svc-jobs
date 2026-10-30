@@ -1,6 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
-use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::ids::{EventId, JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
@@ -16,12 +15,14 @@ use uuid::Uuid;
 
 use super::guards::{
     claim_source, guard_decision_still_holds, guard_descendants_unchanged,
-    guard_free_capacity_of_every_type, guard_runner_types_still_accept_jobs, lock_directory_trees,
+    guard_free_capacity_of_every_type, guard_restarts_still_due,
+    guard_runner_types_still_accept_jobs, lock_directory_trees,
 };
+use super::notices::tell_callers;
 use super::premise::{PriorityPremise, guard_priority_premise_still_holds};
 use super::rederive;
+use super::routing::resolve_runner_type_routes;
 use crate::app::{followups, integration};
-use crate::db::fleet::load;
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
@@ -37,6 +38,13 @@ pub struct JobChange {
     pub descendants_premise: Option<Vec<Uuid>>,
     pub free_capacity_of: Option<RunnerTypeKey>,
     pub removes_directory: bool,
+    pub restart: Option<RestartPremise>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RestartPremise {
+    pub origin_run: Uuid,
+    pub tree: JobId,
 }
 
 impl JobChange {
@@ -53,11 +61,17 @@ impl JobChange {
             descendants_premise: None,
             free_capacity_of: None,
             removes_directory: false,
+            restart: None,
         }
     }
 
     fn is_empty(&self) -> bool {
         self.events.is_empty() && self.answers.is_empty() && !self.removes_directory
+    }
+
+    pub fn restarting(mut self, origin_run: Uuid, tree: JobId) -> Self {
+        self.restart = Some(RestartPremise { origin_run, tree });
+        self
     }
 
     pub fn removing_directory(mut self) -> Self {
@@ -145,6 +159,7 @@ pub async fn commit_job_changes_in(
     }
     guard_free_capacity_of_every_type(&mut *tx, &changes).await?;
     lock_directory_trees(&mut *tx, &changes).await?;
+    guard_restarts_still_due(&mut *tx, &changes).await?;
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
     for change in &changes {
         guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
@@ -163,13 +178,16 @@ pub async fn commit_job_changes_in(
     let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
     for change in &changes {
-        apply_change(&mut *tx, ids, change, metadata, at).await?;
+        apply_change(&mut *tx, ids, change, metadata, at, limits).await?;
     }
     for followup in followups::of_settled_jobs(&mut *tx, &changes, &held).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
     }
     for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
+    }
+    for change in changes.iter().filter(|change| change.removes_directory) {
+        apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
     }
     Ok(())
 }
@@ -214,6 +232,7 @@ async fn apply_change(
     change: &JobChange,
     metadata: &EventMetadata,
     at: DateTime<Utc>,
+    limits: &ServiceLimits,
 ) -> Result<(), ServiceError> {
     if let Some(source) = &change.claimed_source {
         claim_source(tx, change.job_id, source).await?;
@@ -246,37 +265,14 @@ async fn apply_change(
             .await
             .map_err(|error| ServiceError::Infra(error.to_string()))?;
     }
-    if change.removes_directory {
-        apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
-    }
+    tell_callers(
+        tx,
+        ids,
+        &change.events,
+        metadata,
+        at,
+        limits.inline_payload_max_bytes(),
+    )
+    .await?;
     Ok(())
-}
-
-pub struct RoutedRunnerType<'a> {
-    pub(super) key: &'a RunnerTypeKey,
-    pub(super) lifecycle: Option<RunnerTypeLifecycle>,
-}
-
-async fn resolve_runner_type_routes<'a>(
-    tx: &mut sqlx::PgConnection,
-    ids: &dyn IdFactory,
-    changes: &'a [JobChange],
-) -> Result<Vec<RoutedRunnerType<'a>>, ServiceError> {
-    let mut claimed: BTreeMap<&str, &RunnerTypeKey> = BTreeMap::new();
-    for change in changes {
-        for event in &change.events {
-            if let JobEvent::JobQueued(fact) = event {
-                claimed.insert(fact.runner_type.as_str(), &fact.runner_type);
-            }
-        }
-    }
-    let mut routed = Vec::with_capacity(claimed.len());
-    for key in claimed.into_values() {
-        let route = load::upsert_route(&mut *tx, ids.next(), key).await?;
-        routed.push(RoutedRunnerType {
-            key,
-            lifecycle: load::registered_lifecycle(&mut *tx, route).await?,
-        });
-    }
-    Ok(routed)
 }

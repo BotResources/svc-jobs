@@ -66,6 +66,14 @@ pub async fn queued(
         .execute(&mut *tx)
         .await
         .map_err(unavailable)?;
+    if let Some(restarted) = fact.restart_of_run_id {
+        sqlx::query("INSERT INTO restart_origins (job_id, restarts_run_id) VALUES ($1, $2)")
+            .bind(fact.job_id.as_uuid())
+            .bind(restarted.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+    }
     super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), None).await
 }
 
