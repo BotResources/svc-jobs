@@ -107,6 +107,23 @@ pub async fn announced(channels: &RunnerChannels) -> Result<HashSet<AnnouncedIns
     Ok(announced)
 }
 
+pub async fn announces(
+    channels: &RunnerChannels,
+    instance: &AnnouncedInstance,
+) -> Result<bool, PortError> {
+    let key = format!(
+        "{}.{}",
+        instance.runner_type.as_str(),
+        instance.instance_key.as_str()
+    );
+    channels
+        .presence_bucket()
+        .get(key)
+        .await
+        .map(|entry| entry.is_some())
+        .map_err(transport_error)
+}
+
 fn instance_of(key: &str) -> Option<AnnouncedInstance> {
     let (runner_type, instance_key) = key.split_once('.')?;
     Some(AnnouncedInstance {

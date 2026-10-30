@@ -12,6 +12,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 - `ports::directory::TreeDirectory::entries_of_tree`: the directory entries of
   the Tree of a Job, for the administrator view.
+- `ports::transport::RunnerTransport::announces`: whether one Instance has a
+  presence entry, read directly.
 - `PrincipalFacts::guard_reads_tree_directory`: only an active platform
   administrator reads the agent directory of a Tree.
 - `domain::runner::call_notices::may_notify_a_caller`: the events after which

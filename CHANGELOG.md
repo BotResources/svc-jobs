@@ -17,6 +17,10 @@ form to decide whether a version ships.
   sealed 0.6 gives them: `jobsTreeAgents(jobId)` reads it for the Tree of a
   Job, as the runner listing shows it (the running agents and the finished
   agents that can restart). It is a snapshot; no live delta carries it.
+- The presence backstop no longer reports a live Instance lost: the bucket
+  listing it compares with the open sessions can miss a key rewritten while it
+  is read, and each absent key is now confirmed by a direct read before its
+  session is closed and its Runs are reclaimed.
 - A Run start and every write that can put an item in an inbox (a mail, a cc
   notice, a call notice) take the Tree lock, so an item that reaches an agent
   whose restart Run starts at the same moment is either rung to that Run or

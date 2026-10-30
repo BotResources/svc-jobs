@@ -28,12 +28,33 @@ where
         .collect())
 }
 
+async fn confirmed_without_presence<C, CF>(
+    candidates: Vec<OpenPresenceSession>,
+    announces: C,
+) -> Result<Vec<OpenPresenceSession>, PortError>
+where
+    C: Fn(AnnouncedInstance) -> CF,
+    CF: Future<Output = Result<bool, PortError>>,
+{
+    let mut confirmed = Vec::new();
+    for session in candidates {
+        if !announces(announced_form(&session)).await? {
+            confirmed.push(session);
+        }
+    }
+    Ok(confirmed)
+}
+
 pub async fn presence_sessions(jobs: &Jobs) -> Result<(), ServiceError> {
     let expired = ReasonCode::new(PRESENCE_EXPIRED)?;
-    let lost = sessions_without_presence(
+    let candidates = sessions_without_presence(
         || FleetReader::open_presence_sessions(&jobs.store),
         || jobs.transport.announced_instances(),
     )
+    .await?;
+    let lost = confirmed_without_presence(candidates, |instance| async move {
+        jobs.transport.announces(&instance).await
+    })
     .await?;
     for session in lost {
         tracing::warn!(
@@ -102,6 +123,22 @@ mod tests {
             lost.is_empty(),
             "the newcomer opened after the sessions were read: {lost:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_session_whose_key_the_listing_missed_but_a_read_finds_is_not_lost() {
+        let rewritten = session("rewritten");
+        let gone = session("gone");
+        let present = announced_form(&rewritten);
+
+        let lost = confirmed_without_presence(vec![rewritten, gone.clone()], move |instance| {
+            let present = present.clone();
+            async move { Ok(instance == present) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(lost, vec![gone]);
     }
 
     #[tokio::test]
