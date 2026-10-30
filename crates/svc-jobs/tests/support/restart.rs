@@ -109,6 +109,19 @@ impl Scene<'_> {
             .await;
     }
 
+    pub async fn restartable_now(&self, fixture: &JobsFixture, agent: Uuid) -> Value {
+        let listing = surface::list(fixture.nats(), &self.pair.parent, self.parent_run()).await;
+        listing["agents"]
+            .as_array()
+            .and_then(|agents| {
+                agents
+                    .iter()
+                    .find(|listed| listed["agent_id"] == agent.to_string())
+            })
+            .map(|listed| listed["restartable_now"].clone())
+            .unwrap_or_else(|| panic!("the agent is listed: {listing}"))
+    }
+
     pub async fn mail_receiver(&self, fixture: &JobsFixture, from: Uuid) -> gesture::Mail {
         let mail = gesture::Mail::new(from, &[self.receiver]);
         let sent =

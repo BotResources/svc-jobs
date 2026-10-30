@@ -73,6 +73,19 @@ async fn a_background_call_must_name_a_mail_address_of_the_calling_run() {
         "caller_address_not_of_run"
     );
 
+    let durable = support::db::Durable::open(&fixture.app_url()).await;
+    for refused_job in [unheld_job, foreign_job] {
+        durable
+            .assert_count(
+                support::db::JOBS_WITH_ID,
+                refused_job,
+                0,
+                "a refused call creates no Job",
+            )
+            .await;
+    }
+    durable.close().await;
+
     let (accepted_job, accepted) = call(own_address);
     producer.send_v3(wire::VERB_CREATE, accepted).await;
     let trigger = pair.child.next_trigger(LONG).await;

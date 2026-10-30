@@ -314,6 +314,27 @@ see the inline payload as the Job carries it. The service declares the scope
 `jobs:runner` to the identity service at boot and stays not ready until the
 declaration is accepted.
 
+A runner gesture takes the lock of a Tree when it registers agents
+(`register_agents`), saves a state (`jobsSaveState`), sends mail
+(`jobsSendMail`) or uploads an attachment (`jobsUploadAttachment`); so does a
+status fact that starts or ends a Run, and every cancel (it removes the
+directory). Such a lock wait lasts at most 5 s. `list_agents` and `mark_read`
+take no lock themselves; they can time out only through the catch-up of an
+acknowledged start that they run first. A wait that ends is not a typed refusal.
+On GraphQL the gesture answers a top-level error with `data: null` and
+`extensions {code: "CONFLICT", reason: "concurrent_modification"}`, where every
+typed refusal answers `{success, reason, message}`; the runner repeats the
+gesture. On the NATS request surface (`jobs.runner.register_agents.{runner_type}`,
+`jobs.runner.list_agents.{runner_type}`, `jobs.runner.mark_read.{runner_type}`)
+the request gets no reply, so the runner's own request times out and it repeats
+it. A runner status fact (`jobs.status.{runner_type}.*`) that cannot take the
+lock is redelivered until it can. One lock acquisition is not retried after its
+timeout; it is logged at warn and counted in `jobs_tree_lock_timeouts_total`. A
+cascade (the cancel of the call children of an ended Run, a backstop sweep)
+takes one lock per Tree it touches and may wait 5 s for each. The status
+consumer `ack_wait` is 30 s by default, so a long cascade can be redelivered;
+the redelivery is idempotent.
+
 A Job detail carries its Initial Job, Passport, Requester, call mode and
 payload as the Job holds them: the inline content, the form of a payload kept
 by Jobs, or the form and the reference of a payload kept elsewhere.
@@ -338,7 +359,10 @@ recorded is always the passport's own id.
   `jobsMyMaxPriority` (the caller's own maximum), `jobsUserMaxPriorities`
   (the maximum of each user asked for — their own or the default, and which —
   with the caller's `set_max_priority` / `clear_max_priority` affordances; at
-  most 200 users per read, each answered once). Job views carry
+  most 200 users per read, each answered once), `jobsTreeAgents` (the agent
+  directory of the Tree of a Job: the running agents and the finished agents
+  that can restart, as the runner listing shows them; a snapshot, with no live
+  delta). Job views carry
   `requestedPriority`, `effectivePriority` and `forcedPriority`.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a
@@ -433,7 +457,7 @@ failing job by job.
 |---|---|
 | `GET /livez` | Liveness. Never tied to NATS or PostgreSQL: a dependency outage takes the pod out of rotation, it does not get it restarted. |
 | `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, until every supervised background task has bound its own source of work, and whenever one of them is down; the reason names the culprit. |
-| `GET /metrics` | Prometheus metrics, among them `jobs_background_task_up{task}` (1 while a supervised task is bound, 0 while it is down) and `jobs_background_task_restarts_total{task}`. |
+| `GET /metrics` | Prometheus metrics, among them `jobs_background_task_up{task}` (1 while a supervised task is bound, 0 while it is down), `jobs_background_task_restarts_total{task}` and `jobs_claims_held{runner_type}` (the claims this pod has registered to wait for work). |
 | `GET /sdl` | The GraphQL SDL the running binary serves. |
 | `GET /graphql` | GraphiQL playground (passport-gated like the rest). |
 | `svc-jobs schema` | Prints the same SDL and exits — for codegen and CI diffing, no infrastructure needed. |

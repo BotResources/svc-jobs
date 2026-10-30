@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::error::edge_error;
 use super::project;
 use super::state::{EdgeState, administrator, own_user, principal};
+use super::types::directory::GqlDirectoryAgent;
 use super::types::fleet::GqlRunnerTypeView;
 use super::types::input::GqlJobFilterInput;
 use super::types::job::{GqlJobSummaryView, GqlJobView};
@@ -62,6 +63,20 @@ impl QueryRoot {
         project::view_of_job(&state.store, job).await
     }
 
+    async fn jobs_tree_agents(
+        &self,
+        ctx: &Context<'_>,
+        job_id: Uuid,
+    ) -> Result<Vec<GqlDirectoryAgent>> {
+        administrator(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let job_id = JobId::new(job_id).map_err(edge_error)?;
+        crate::app::tree_directory::listed_agents_of_tree(&state.jobs, job_id)
+            .await
+            .map(|agents| agents.into_iter().map(GqlDirectoryAgent::from).collect())
+            .map_err(edge_error)
+    }
+
     async fn jobs_job_by_source(
         &self,
         ctx: &Context<'_>,
@@ -83,8 +98,7 @@ impl QueryRoot {
         }
     }
 
-    // the arguments are the sealed SDL's own connection arguments, not a signature we chose
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // one GraphQL argument per log filter
     async fn jobs_logs(
         &self,
         ctx: &Context<'_>,
@@ -131,8 +145,6 @@ impl QueryRoot {
         project::fleet_views(state, runner_type.as_deref()).await
     }
 
-    /// The maximum priority that applies to the caller: their own, or the
-    /// service default. Open to any active human.
     async fn jobs_my_max_priority(&self, ctx: &Context<'_>) -> Result<GqlMyMaxPriority> {
         let user_id = own_user(ctx)?;
         let state = ctx.data::<EdgeState>()?;
@@ -144,10 +156,6 @@ impl QueryRoot {
         })
     }
 
-    /// The maximum priority of each user asked for — their own or the service
-    /// default, and which of the two applies — with the caller's affordances
-    /// of setting and clearing it. Platform administrators only; at most 200
-    /// users per read, each answered once.
     async fn jobs_user_max_priorities(
         &self,
         ctx: &Context<'_>,

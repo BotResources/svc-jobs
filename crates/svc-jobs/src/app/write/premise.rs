@@ -1,6 +1,3 @@
-//! The facts an admission derived its priority from, read again under lock
-//! before it commits.
-
 use bc_jobs::domain::ids::{JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::priority::{Priority, PriorityBasis, UserMaxPriority};
@@ -8,9 +5,6 @@ use bc_jobs::domain::priority::{Priority, PriorityBasis, UserMaxPriority};
 use crate::db::PgStore;
 use crate::error::ServiceError;
 
-/// The fact an admission derived its effective priority from. It is read
-/// again under lock before the admission commits: a maximum changed or a
-/// parent forced in between makes the decision stale, never silently wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriorityPremise {
     UserMaximum {
@@ -25,10 +19,6 @@ pub enum PriorityPremise {
 }
 
 impl PriorityPremise {
-    /// The premise of an admission on `basis`: the parent it inherited from,
-    /// or the stored maximum of the user it runs for. A Job that runs for
-    /// nobody is capped by the service default alone, which nothing changes
-    /// at run time.
     pub fn of(
         basis: PriorityBasis,
         parent: Option<&Job>,
@@ -70,9 +60,6 @@ pub(super) async fn guard_priority_premise_still_holds(
                     parent_job_id: parent_job_id.as_uuid(),
                 }));
             };
-            // The parent settled between the decision and this lock: a child
-            // under it could never be resolved, so the admission is refused,
-            // exactly as the domain refuses it when it reads a settled parent.
             if parent.deleted {
                 return Err(ServiceError::Domain(bc_jobs::JobsError::ParentJobDeleted {
                     parent_job_id: parent_job_id.as_uuid(),
@@ -91,6 +78,6 @@ pub(super) async fn guard_priority_premise_still_holds(
     if holds {
         Ok(())
     } else {
-        Err(ServiceError::Contended)
+        Err(ServiceError::write_race())
     }
 }

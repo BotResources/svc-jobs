@@ -5,9 +5,10 @@ use bc_jobs::ports::PortError;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::directory::{lock_tree, standing};
+use super::directory::standing;
 use super::hydrate::unavailable;
 use super::saved_states::saved_state_run_in;
+use super::tree_lock::lock_tree;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkContext {

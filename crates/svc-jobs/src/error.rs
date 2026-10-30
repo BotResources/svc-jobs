@@ -2,6 +2,12 @@ use bc_jobs::JobsError;
 use bc_jobs::ports::PortError;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Contention {
+    WriteRace,
+    LockTimeout,
+}
+
 #[derive(Debug, Error)]
 pub enum ServiceError {
     #[error("missing_configuration: {key}")]
@@ -20,7 +26,7 @@ pub enum ServiceError {
     RunnerTypeNotFound,
 
     #[error("concurrent_modification")]
-    Contended,
+    Contended(Contention),
 
     #[error("restart_not_due")]
     RestartNotDue,
@@ -29,11 +35,22 @@ pub enum ServiceError {
     Infra(String),
 }
 
+impl ServiceError {
+    pub fn write_race() -> Self {
+        Self::Contended(Contention::WriteRace)
+    }
+
+    pub fn is_write_race(&self) -> bool {
+        matches!(self, Self::Contended(Contention::WriteRace))
+    }
+}
+
 impl From<PortError> for ServiceError {
     fn from(error: PortError) -> Self {
         match error {
             PortError::StoredStateRejected(domain) => Self::Domain(domain),
-            PortError::ConcurrentModification => Self::Contended,
+            PortError::ConcurrentModification => Self::write_race(),
+            PortError::TreeLockTimeout => Self::Contended(Contention::LockTimeout),
             other => Self::Infra(other.to_string()),
         }
     }
@@ -42,7 +59,7 @@ impl From<PortError> for ServiceError {
 impl From<sqlx::Error> for ServiceError {
     fn from(error: sqlx::Error) -> Self {
         if crate::db::hydrate::is_write_race(&error) {
-            return Self::Contended;
+            return Self::write_race();
         }
         Self::Infra(error.to_string())
     }

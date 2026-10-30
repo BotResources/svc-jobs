@@ -1,4 +1,5 @@
 use br_test_harness::TestNats;
+use futures::StreamExt;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -127,4 +128,31 @@ pub fn agent_ids(listing: &Value) -> Vec<String> {
         .unwrap_or_default();
     ids.sort();
     ids
+}
+
+pub struct Pending {
+    replies: async_nats::Subscriber,
+}
+
+impl Pending {
+    pub async fn silent_for(&mut self, grace: std::time::Duration) -> bool {
+        tokio::time::timeout(grace, self.replies.next())
+            .await
+            .is_err()
+    }
+}
+
+pub async fn send_without_waiting(nats: &TestNats, subject: String, body: Value) -> Pending {
+    let client = nats.client();
+    let inbox = client.new_inbox();
+    let replies = client
+        .subscribe(inbox.clone())
+        .await
+        .expect("the reply inbox is subscribed");
+    client
+        .publish_with_reply(subject, inbox, body.to_string().into())
+        .await
+        .expect("the request is published");
+    client.flush().await.expect("the request reaches the bus");
+    Pending { replies }
 }

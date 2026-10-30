@@ -34,7 +34,6 @@ fn instance_a() -> InstanceKey {
 
 #[tokio::test]
 async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact() {
-    // Given: a live runner instance, and the fleet state both instances hydrated before deciding
     let fixture = Fixture::start().await;
     let runner_type = "reporter";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
@@ -44,7 +43,6 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
         ..announcing(decided_on.id(), &key, "instance-a")
     };
 
-    // When: the KV watch hands the same status change to both instances at once
     let first = observe_presence(Some(&decided_on), reported(ReportedStatus::Draining))
         .expect("the first instance decides the change");
     let second = observe_presence(Some(&decided_on), reported(ReportedStatus::Draining))
@@ -83,7 +81,6 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
         ),
     );
 
-    // Then: exactly one instance recorded the change — the other reclaims nothing
     let outcomes = [left, right];
     let refused: Vec<&ServiceError> = outcomes
         .iter()
@@ -95,7 +92,7 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
         "a broadcast presence change must be recorded by one instance only, got {outcomes:?}",
     );
     assert!(
-        matches!(refused[0], ServiceError::Contended),
+        refused[0].is_write_race(),
         "the loser learns the fleet moved under it: {:?}",
         refused[0],
     );
@@ -114,7 +111,6 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
 
 #[tokio::test]
 async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaimed_once() {
-    // Given: a live runner instance, seen by both service instances before either reacts
     let fixture = Fixture::start().await;
     let runner_type = "collector";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
@@ -129,7 +125,6 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
         reason_code: expired(),
     };
 
-    // When: the KV watch hands the same expiry to both instances at once
     let first = observe_loss(&decided_on, loss()).expect("the first instance decides the loss");
     let second = observe_loss(&decided_on, loss()).expect("the second instance decides the loss");
     let left_metadata = metadata();
@@ -162,7 +157,6 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
         ),
     );
 
-    // Then: only one instance holds the loss, so run reclamation runs once and not twice
     let outcomes = [left, right];
     let refused: Vec<&ServiceError> = outcomes
         .iter()
@@ -174,7 +168,7 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
         "a disconnection carries no unique key of its own, so only the guard can settle the \
          race: {outcomes:?}",
     );
-    assert!(matches!(refused[0], ServiceError::Contended));
+    assert!(refused[0].is_write_race());
     assert_eq!(
         fixture
             .count(
@@ -189,7 +183,6 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
 
 #[tokio::test]
 async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_under_it() {
-    // Given: two live instances of one runner type
     let fixture = Fixture::start().await;
     let runner_type = "haulier";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
@@ -197,7 +190,6 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
     let fleet = a_second_live_instance(&fixture, &first, "instance-b").await;
     let instance_b = InstanceKey::new("instance-b").expect("a valid instance key");
 
-    // Given: another pod holds the runner type, about to report a status change of instance-a
     let mut concurrent = fixture
         .pool
         .begin()
@@ -207,7 +199,6 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
         .await
         .expect("the concurrent pod holds the fleet");
 
-    // When: this pod reacts to instance-b's expiry and reaches the write behind that holder
     let store = fixture.store.clone();
     let contended_key = key.clone();
     let contended_instance = instance_b.clone();
@@ -227,7 +218,6 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
     });
     fixture.await_a_pod_blocked_on_the_fleet_lock().await;
 
-    // When: the other pod's unrelated status change lands first, moving the whole fleet
     let reported = observe_presence(
         Some(&fleet),
         ObservePresence {
@@ -250,7 +240,6 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
         .await
         .expect("the concurrent pod commits");
 
-    // Then: the loss is not dropped — a moved fleet makes it re-decide, never abandon
     let outcome = losing.await.expect("the loss task finishes");
     assert!(
         matches!(outcome, Ok(Some(_))),
@@ -287,7 +276,6 @@ async fn an_instance_loss_is_recorded_even_when_the_rest_of_the_fleet_moves_unde
 
 #[tokio::test]
 async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it() {
-    // Given: a live instance executing a run
     let fixture = Fixture::start().await;
     let runner_type = "smelter";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
@@ -310,7 +298,6 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
     .await
     .expect("the run is executing on the instance about to be lost");
 
-    // Given: another pod holds the runner type, about to record that very disconnection
     let mut concurrent = fixture
         .pool
         .begin()
@@ -320,7 +307,6 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
         .await
         .expect("the concurrent pod holds the fleet");
 
-    // When: this pod reacts to the expiry of the session it just read, and blocks behind that pod
     let store = fixture.store.clone();
     let contended_key = key.clone();
     let losing = tokio::spawn(async move {
@@ -339,7 +325,6 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
     });
     fixture.await_a_pod_blocked_on_the_fleet_lock().await;
 
-    // When: the other pod records that same loss and the process comes back under a new session
     let disconnected = observe_loss(
         &fleet,
         ObserveLoss {
@@ -383,7 +368,6 @@ async fn a_loss_racing_a_reconnection_never_closes_the_session_that_replaced_it(
         .await
         .expect("the concurrent pod commits");
 
-    // Then: the blocked loss re-reads the fleet, finds a session it never observed, and stops
     let outcome = losing.await.expect("the loss task finishes");
     assert!(
         matches!(outcome, Ok(None)),
@@ -523,7 +507,6 @@ async fn concurrent_first_presence_registers_one_aggregate_and_the_loser_can_red
 
 #[tokio::test]
 async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
-    // Given: an instance executing a run under the session that is about to be lost
     let fixture = Fixture::start().await;
     let runner_type = "salvager";
     let key = RunnerTypeKey::new(runner_type).expect("a valid runner type");
@@ -546,7 +529,6 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
     .await
     .expect("the run is executing on the session about to be lost");
 
-    // When: that session is closed and the same process comes back under a new one, taking work
     let disconnected = observe_loss(
         &fleet,
         ObserveLoss {
@@ -613,7 +595,6 @@ async fn a_reclaim_takes_only_the_runs_the_lost_session_carried() {
     .await
     .expect("the replacement session is executing a run of its own");
 
-    // Then: the reclaim of the closed session names its own run, and leaves the successor's alone
     let window = FleetReader::closed_presence_session(&fixture.store, lost_session)
         .await
         .expect("the closed session reads back")

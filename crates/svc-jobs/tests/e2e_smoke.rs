@@ -11,9 +11,10 @@ use contract_jobs::graphql_roots as roots;
 use reqwest::StatusCode;
 use serde_json::json;
 use support::fixture::{
-    APP_PASSWORD, APP_ROLE, BIN, JobsFixture, free_port, require_provisioned_infrastructure,
+    APP_PASSWORD, APP_ROLE, BIN, JobsFixture, require_provisioned_infrastructure,
 };
 use support::runner::FakeRunner;
+use support::spawn::free_port;
 use support::{FLEET_CHANGED, QUIET, SHORT, gql, stream, subs, wire};
 
 const ROOT_FIELD_PREFIX: &str = "jobs";
@@ -21,7 +22,7 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 12] = [
+const DECLARED_QUERIES: [&str; 13] = [
     "jobs",
     roots::ATTACHMENT_ROOT,
     "jobsFleet",
@@ -32,6 +33,7 @@ const DECLARED_QUERIES: [&str; 12] = [
     "jobsMyMaxPriority",
     roots::PAYLOAD_ROOT,
     roots::SAVED_STATE_ROOT,
+    "jobsTreeAgents",
     roots::UNREAD_ROOT,
     "jobsUserMaxPriorities",
 ];

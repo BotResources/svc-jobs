@@ -3,6 +3,7 @@ use crate::domain::job::JobCall;
 use crate::domain::payload::CallMode;
 use crate::domain::requester::Requester;
 use crate::event::job::JobEvent;
+use crate::event::run_inbox::RunInboxEffect;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticePlan {
@@ -34,20 +35,23 @@ impl CallNotices {
 
     pub fn plan(&self, event: &JobEvent) -> Vec<NoticePlan> {
         let background = self.mode == CallMode::Background;
-        match event {
-            JobEvent::JobQueued(_) if background => {
+        match event.run_inbox_effect() {
+            RunInboxEffect::JobQueued if background => {
                 vec![NoticePlan::Accepted, NoticePlan::QueuePosition]
             }
-            JobEvent::RetryScheduled(_) if background => vec![NoticePlan::QueuePosition],
-            JobEvent::RunCancelled(fact) if background && fact.withdrawn_for.is_some() => {
+            RunInboxEffect::RetryScheduled if background => vec![NoticePlan::QueuePosition],
+            RunInboxEffect::RunCancelled { withdrawn: true } if background => {
                 vec![NoticePlan::QueuePosition]
             }
-            JobEvent::RunStarted(_) if background => vec![NoticePlan::Started],
-            JobEvent::RunCompleted(fact) => vec![NoticePlan::RunCompleted {
-                run_id: fact.run_id,
-            }],
-            JobEvent::JobFailed(_) => vec![NoticePlan::JobFailed],
-            _ => vec![],
+            RunInboxEffect::RunStarted if background => vec![NoticePlan::Started],
+            RunInboxEffect::RunCompleted { run_id } => vec![NoticePlan::RunCompleted { run_id }],
+            RunInboxEffect::JobFailed => vec![NoticePlan::JobFailed],
+            RunInboxEffect::Untouched
+            | RunInboxEffect::JobQueued
+            | RunInboxEffect::RetryScheduled
+            | RunInboxEffect::RunStarted
+            | RunInboxEffect::RunFailed
+            | RunInboxEffect::RunCancelled { .. } => vec![],
         }
     }
 }
@@ -56,7 +60,9 @@ impl CallNotices {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobFailureCause;
-    use crate::event::job_facts::{JobFailed, RunCompleted, RunStarted};
+    use crate::domain::keys::ReasonCode;
+    use crate::event::job_facts::{JobFailed, RunCancelled, RunCompleted, RunStarted};
+    use crate::event::run_inbox::samples::every_kind_of_event;
     use crate::fixtures::{instance, job_id, resolution_id, run_id};
     use uuid::Uuid;
 
@@ -101,6 +107,64 @@ mod tests {
             caused_by_run_id: None,
             report: None,
         })
+    }
+
+    #[test]
+    fn no_event_tells_a_caller_unless_its_write_serializes_with_the_directory() {
+        for (event, effect) in every_kind_of_event() {
+            for notices in [background(), sync()] {
+                assert!(
+                    notices.plan(&event).is_empty() || effect.serializes_with_the_tree_directory(),
+                    "{} tells a caller, so its write serializes with the inbox",
+                    event.event_type()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_kind_of_event_tells_a_background_caller_exactly_what_the_intent_lists() {
+        let told: Vec<(&str, Vec<NoticePlan>)> = every_kind_of_event()
+            .into_iter()
+            .map(|(event, _)| (event.event_type(), background().plan(&event)))
+            .filter(|(_, plan)| !plan.is_empty())
+            .collect();
+        assert_eq!(
+            told.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            [
+                "JobQueued",
+                "RunStarted",
+                "RunCompleted",
+                "RunCancelled",
+                "RetryScheduled",
+                "JobFailed"
+            ]
+        );
+        assert_eq!(
+            told[0].1,
+            vec![NoticePlan::Accepted, NoticePlan::QueuePosition]
+        );
+        assert_eq!(told[4].1, vec![NoticePlan::QueuePosition]);
+    }
+
+    #[test]
+    fn a_run_withdrawn_for_a_waiting_job_tells_the_queue_position_again() {
+        let withdrawn = JobEvent::RunCancelled(RunCancelled {
+            job_id: job_id(),
+            run_id: run_id(),
+            withdrawn_for: Some(ReasonCode::new("job_cancelled").unwrap()),
+        });
+        let cancelled = JobEvent::RunCancelled(RunCancelled {
+            job_id: job_id(),
+            run_id: run_id(),
+            withdrawn_for: None,
+        });
+        assert_eq!(
+            background().plan(&withdrawn),
+            vec![NoticePlan::QueuePosition]
+        );
+        assert!(background().plan(&cancelled).is_empty());
+        assert!(sync().plan(&withdrawn).is_empty());
     }
 
     #[test]

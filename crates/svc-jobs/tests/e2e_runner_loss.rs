@@ -19,9 +19,9 @@ const BASE_DELAY_SECONDS: u64 = 2;
 
 #[tokio::test]
 async fn a_job_survives_the_loss_of_its_runner_without_administrator_intervention() {
-    // Given: a job with retry capacity, watched from the list and fleet before it exists
     let fixture = JobsFixture::start_with(Knobs {
         retry_base_delay_seconds: BASE_DELAY_SECONDS,
+        presence_ttl: infra::EXPIRING_PRESENCE_TTL,
         ..Knobs::default()
     })
     .await;
@@ -74,7 +74,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     let mut tail = SseSubscription::open(fixture.url(), admin, &subs::log_tail(job_id)).await;
     stream::snapshot(&mut tail, LOG_TAIL, SHORT).await;
 
-    // When: an instance appears, claims the job and reports its first progress
     lost.connect().await;
     let registered =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
@@ -147,7 +146,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
          declaration is what the type totals: {executing}",
     );
 
-    // When: the instance reports a new self-declared status, then dies without a goodbye
     lost.announce(wire::STATUS_DRAINING).await;
     let reported =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_STATUS_REPORTED, LONG)
@@ -185,7 +183,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
 
     lost.crash();
     replacement.resume_after(&lost);
-    tokio::time::sleep(infra::PRESENCE_TTL).await;
+    tokio::time::sleep(infra::EXPIRING_PRESENCE_TTL).await;
 
     let disconnected =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;
@@ -226,7 +224,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     ));
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
 
-    // Then: no trigger is produced while the type is unavailable, due time or not
     let past_due = (due_at - clock::now())
         .to_std()
         .unwrap_or(Duration::from_secs(0))
@@ -242,7 +239,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         "no administrator touched this job",
     );
 
-    // When: a replacement instance appears
     replacement.connect().await;
     stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_CONNECTED, LONG).await;
     let second = replacement.next_trigger(LONG).await;
@@ -298,7 +294,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         &announced_version,
     );
 
-    // When: the replacement leaves gracefully, carrying no run any more
     replacement.disconnect().await;
     let gracefully_gone =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;
@@ -311,7 +306,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     stream::expect_no_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_FAILED, QUIET).await;
     events.expect_none(wire::FACT_FAILED, job_id, QUIET).await;
 
-    // When: the owner finishes the job
     producer.finish(job_id).await;
     let job_completed =
         stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_JOB_COMPLETED, LONG).await;
@@ -352,7 +346,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
         assert_eq!(of_run[0]["runId"], json!(run.to_string()));
     }
 
-    // Then: the log tail reads backwards from its end without losing or repeating a line
     let tail_page = gql::log_page(&client, admin, job_id, json!({ "last": 1 })).await;
     let tail_edges = gql::edges_of(&tail_page);
     assert_eq!(tail_edges.len(), 1);
@@ -387,7 +380,6 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     );
     assert_eq!(older_page["pageInfo"]["hasPreviousPage"], json!(false));
 
-    // Then: each run names the instance that executed it, and its own terminal status
     let audited = gql::job(&client, admin, job_id).await;
     for (run, instance_key) in [
         (first_run, "instance-lost"),

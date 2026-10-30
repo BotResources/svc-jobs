@@ -8,9 +8,9 @@ use bc_jobs::domain::ownership::{
 use bc_jobs::policies::cascade::cancellation_cascade;
 use br_core_events::EventMetadata;
 
-use super::Jobs;
 use super::integration::Published;
 use super::write::JobChange;
+use super::{Jobs, retry};
 use crate::error::ServiceError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,9 +148,8 @@ async fn cancel_with(
     accepted: Option<Published>,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let mut outcome = Err(ServiceError::Contended);
-    for _ in 0..CANCEL_ATTEMPTS {
-        outcome = cancel_once(
+    retry::on_write_race(CANCEL_ATTEMPTS, || {
+        cancel_once(
             jobs,
             job_id,
             resolution_id,
@@ -158,12 +157,8 @@ async fn cancel_with(
             accepted.clone(),
             metadata,
         )
-        .await;
-        if !matches!(outcome, Err(ServiceError::Contended)) {
-            return outcome;
-        }
-    }
-    outcome
+    })
+    .await
 }
 
 async fn cancel_once(

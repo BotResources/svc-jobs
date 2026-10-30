@@ -5,17 +5,18 @@ use serde_json::{Value, json};
 
 use super::wire;
 
-pub const PRESENCE_TTL: Duration = Duration::from_secs(4);
+pub const EXPIRING_PRESENCE_TTL: Duration = Duration::from_secs(4);
+pub const STEADY_PRESENCE_TTL: Duration = Duration::from_secs(120);
 pub const PRESENCE_MARKER_TTL: Duration = Duration::from_secs(1);
 pub const PRESENCE_REFRESH: Duration = Duration::from_secs(1);
 
-pub async fn provision_runner_transport(nats: &TestNats) {
+pub async fn provision_runner_transport(nats: &TestNats, presence_ttl: Duration) {
     let js = nats.jetstream();
     recreate_stream(js, wire::TRIGGER_STREAM, &[wire::TRIGGER_BIND]).await;
     recreate_stream(js, wire::STATUS_STREAM, &[wire::STATUS_BIND]).await;
     recreate_stream(js, wire::LOG_STREAM, &[wire::LOG_BIND]).await;
     nats.create_kv(wire::CANCEL_BUCKET).await;
-    declare_expiring_presence_bucket(nats).await;
+    declare_expiring_presence_bucket(nats, presence_ttl).await;
 }
 
 pub async fn evict_presence_entry_unnoticed(
@@ -36,7 +37,36 @@ pub async fn evict_presence_entry_unnoticed(
     );
 }
 
-async fn declare_expiring_presence_bucket(nats: &TestNats) {
+pub async fn status_frames_unacknowledged(nats: &TestNats) -> i64 {
+    let info = status_consumer_info(nats).await;
+    info["num_ack_pending"].as_i64().unwrap_or_default()
+        + info["num_pending"].as_i64().unwrap_or_default()
+}
+
+pub async fn status_frames_redelivered(nats: &TestNats) -> i64 {
+    status_consumer_info(nats).await["num_redelivered"]
+        .as_i64()
+        .unwrap_or_default()
+}
+
+async fn status_consumer_info(nats: &TestNats) -> Value {
+    let info = jetstream_api(
+        nats,
+        &format!(
+            "$JS.API.CONSUMER.INFO.{}.svc_jobs_status",
+            wire::STATUS_STREAM
+        ),
+        json!({}),
+    )
+    .await;
+    assert!(
+        info["error"].is_null(),
+        "the status consumer is readable: {info}"
+    );
+    info
+}
+
+async fn declare_expiring_presence_bucket(nats: &TestNats, presence_ttl: Duration) {
     let stream = format!("KV_{}", wire::PRESENCE_BUCKET);
     jetstream_api(nats, &format!("$JS.API.STREAM.DELETE.{stream}"), json!({})).await;
     let created = jetstream_api(
@@ -50,7 +80,7 @@ async fn declare_expiring_presence_bucket(nats: &TestNats) {
             "storage": "file",
             "num_replicas": 1,
             "max_msgs_per_subject": 1,
-            "max_age": nanos(PRESENCE_TTL),
+            "max_age": nanos(presence_ttl),
             "allow_rollup_hdrs": true,
             "deny_delete": true,
             "deny_purge": false,

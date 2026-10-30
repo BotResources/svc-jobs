@@ -115,6 +115,8 @@ pub struct Mail {
     pub cc: Vec<Uuid>,
     pub subject: String,
     pub body: String,
+    pub author: String,
+    pub source_conversation: Uuid,
     pub attachments: Vec<(Uuid, String)>,
 }
 
@@ -127,6 +129,8 @@ impl Mail {
             cc: Vec::new(),
             subject: "subject".to_owned(),
             body: "body".to_owned(),
+            author: "the author".to_owned(),
+            source_conversation: Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0001),
             attachments: Vec::new(),
         }
     }
@@ -141,6 +145,17 @@ impl Mail {
         self
     }
 
+    pub fn by(mut self, author: &str, source_conversation: Uuid) -> Self {
+        self.author = author.to_owned();
+        self.source_conversation = source_conversation;
+        self
+    }
+
+    pub fn with_subject(mut self, subject: &str) -> Self {
+        self.subject = subject.to_owned();
+        self
+    }
+
     pub fn with_attachment(mut self, attachment_id: Uuid, name: &str) -> Self {
         self.attachments.push((attachment_id, name.to_owned()));
         self
@@ -151,8 +166,8 @@ impl Mail {
             "work": work.wire(),
             "mailId": self.mail_id.to_string(),
             "fromAddress": self.from.to_string(),
-            "author": "the author",
-            "sourceConversationId": Uuid::from_u128(0x0190_0000_0000_7000_8000_0000_0000_0001).to_string(),
+            "author": self.author,
+            "sourceConversationId": self.source_conversation.to_string(),
             "subject": self.subject,
             "body": self.body,
             "to": self.to.iter().map(Uuid::to_string).collect::<Vec<_>>(),

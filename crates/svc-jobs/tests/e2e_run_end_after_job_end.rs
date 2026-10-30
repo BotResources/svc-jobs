@@ -172,7 +172,11 @@ fn quick_overrun() -> Knobs {
 
 #[tokio::test]
 async fn the_crash_of_the_runner_of_a_finished_job_fails_its_live_run_as_instance_lost() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_with(Knobs {
+        presence_ttl: infra::EXPIRING_PRESENCE_TTL,
+        ..Knobs::default()
+    })
+    .await;
     let (mut instance, declaration, trigger) =
         started_run_with_agent(&fixture, "end-after-crash").await;
     let run = runner::run_id(&trigger);
@@ -180,7 +184,7 @@ async fn the_crash_of_the_runner_of_a_finished_job_fails_its_live_run_as_instanc
     finished(&fixture, &declaration).await;
 
     instance.crash();
-    tokio::time::sleep(infra::PRESENCE_TTL).await;
+    tokio::time::sleep(infra::EXPIRING_PRESENCE_TTL).await;
 
     durable
         .await_count(db::TERMINALS_OF_RUN, run, 1, "the lost Run is failed")

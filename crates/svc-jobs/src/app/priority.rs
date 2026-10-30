@@ -1,14 +1,3 @@
-//! Priority gestures: a super user forcing a Job, or setting and clearing the
-//! maximum of a user, and a user reading their own maximum.
-//!
-//! A gesture that cascades decides its cascade on locked state, inside the
-//! transaction that writes it: the Jobs it reaches are locked in id order
-//! first, and their descendants read and locked until none is missing — a
-//! child admitted meanwhile takes a share lock on its lineage, so it either
-//! committed before the lock and is reached, or waits for the gesture and
-//! inherits the new level. Each Job is then re-decided on its locked state: one
-//! that stopped waiting is skipped, never aborting the gesture.
-
 use std::collections::BTreeSet;
 
 use bc_jobs::JobsError;
@@ -27,14 +16,12 @@ use bc_jobs::ports::user::UserMaxPriorityReader;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::Jobs;
 use super::admin::administrator_metadata;
 use super::write::{self, JobChange};
+use super::{Jobs, retry};
 use crate::db::PgStore;
 use crate::error::ServiceError;
 
-/// A concurrent write moving one of the Jobs a gesture reaches is retried
-/// against fresh state this many times before the gesture reports a conflict.
 const ATTEMPTS: usize = 5;
 
 pub async fn force(
@@ -127,8 +114,6 @@ pub async fn clear_max(
     .await
 }
 
-/// The maximum that applies to a user — their own, or the service default —
-/// as the user surface shows it, in its snapshot and its live changes alike.
 pub fn applicable(user: &UserMaxPriority, jobs: &Jobs) -> Priority {
     user.applicable(&jobs.limits)
 }
@@ -138,9 +123,6 @@ pub async fn applicable_max(jobs: &Jobs, user_id: Uuid) -> Result<Priority, Serv
     Ok(applicable(&user, jobs))
 }
 
-/// The applicable maximum of a user and the revision it was read at — the
-/// user surface's snapshot, against which a later change is told from a late
-/// one.
 pub async fn applicable_max_revised(
     jobs: &Jobs,
     user_id: Uuid,
@@ -212,10 +194,6 @@ where
     .await
 }
 
-/// Locks `roots` and every descendant of theirs, in id order, until no
-/// descendant is missing: a child admitted before a parent was locked is read
-/// on the next round, and none can be admitted under a locked parent. Returns
-/// every Job locked, roots first.
 async fn lock_trees(tx: &mut PgConnection, roots: &[Uuid]) -> Result<Vec<Uuid>, ServiceError> {
     let mut locked: BTreeSet<Uuid> = BTreeSet::new();
     let mut order: Vec<Uuid> = PgStore::lock_jobs_in(tx, roots).await?;
@@ -248,17 +226,10 @@ fn context<'a>(
     }
 }
 
-async fn retried<F, Fut>(mut attempt: F) -> Result<(), ServiceError>
+async fn retried<F, Fut>(attempt: F) -> Result<(), ServiceError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<(), ServiceError>>,
 {
-    let mut outcome = Err(ServiceError::Contended);
-    for _ in 0..ATTEMPTS {
-        outcome = attempt().await;
-        if !matches!(outcome, Err(ServiceError::Contended)) {
-            return outcome;
-        }
-    }
-    outcome
+    retry::on_write_race(ATTEMPTS, attempt).await
 }

@@ -8,6 +8,26 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.8.1 - 2026-10-30
+
+- `ports::directory::TreeDirectory::entries_of_tree`: the directory entries of
+  the Tree of a Job, for the administrator view.
+- `ports::transport::RunnerTransport::announces`: whether one Instance has a
+  presence entry, read directly.
+- `event::run_inbox::RunInboxEffect` and `JobEvent::run_inbox_effect`: the one
+  exhaustive classification of what an event does to the inbox of a Run (start
+  or end a Run, write a call notice); `serializes_with_the_tree_directory` says
+  whether its write takes the Tree lock, and `CallNotices::plan` derives the
+  notices from it. A new `JobEvent` does not compile until it is classified.
+- `event::queued::QueuedTree` and `JobQueued::tree`: which Tree a queued Job
+  belongs to (named by the event, below its parent, or its own), and
+  `JobEvent::queued`: the queued fact of an event, by an exhaustive match.
+- `ports::PortError::TreeLockTimeout`: the Tree lock stayed held past the
+  bounded wait; an adapter reports it apart from `ConcurrentModification`.
+- Refactor, same decisions: `decide_deliveries` handles `RestartInFlight` in the
+  arm of `Running`. A restart Run that has not started is rung by nothing; the
+  0.8.0 note on `Delivery::rings_live_run` means a started Run.
+
 ## 0.8.0 - 2026-10-30
 
 - `commands::job::restart::restart_job` and `RestartJob`: the restart Job of a

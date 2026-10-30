@@ -119,6 +119,20 @@ async fn a_result_read_with_keep_lives_seven_days_from_that_read() {
     .await
     .expect("the Result is aged");
     gesture::accepted(&read(true).await, "jobsReadResult");
+    let moved_forward: bool = sqlx::query_scalar(
+        "SELECT read_at > now() - interval '1 minute' \
+            AND expires_at = read_at + interval '7 days' \
+            AND expires_at > now() + interval '6 days' \
+         FROM job_results WHERE result_id = $1",
+    )
+    .bind(result_id)
+    .fetch_one(durable.pool())
+    .await
+    .expect("the expiry reads");
+    assert!(
+        moved_forward,
+        "a later read with keep moves the expiry to seven days after that read"
+    );
 
     sqlx::query(
         "UPDATE job_results SET read_at = now() - interval '8 days', \

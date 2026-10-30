@@ -1,24 +1,22 @@
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-use br_test_harness::{TestNats, wait_until};
+use br_test_harness::TestNats;
 use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::db::Durable;
 use super::fixture::JobsFixture;
-use super::{clock, infra, wire};
+use super::{clock, wire};
 
 pub struct FakeRunner<'a> {
-    nats: &'a TestNats,
+    pub(super) nats: &'a TestNats,
     pub runner_type: String,
     pub instance_key: String,
     pub version: String,
-    status: Arc<Mutex<String>>,
-    capacity: Arc<Mutex<u32>>,
-    heartbeat: Option<JoinHandle<()>>,
-    cursor: u64,
+    pub(super) status: Arc<Mutex<String>>,
+    pub(super) capacity: Arc<Mutex<u32>>,
+    pub(super) heartbeat: Option<JoinHandle<()>>,
+    pub(super) cursor: u64,
 }
 
 impl<'a> FakeRunner<'a> {
@@ -46,7 +44,11 @@ impl<'a> FakeRunner<'a> {
     }
 
     pub async fn connect(&mut self) {
-        self.announce(wire::STATUS_READY).await;
+        self.connect_as(wire::STATUS_READY).await;
+    }
+
+    pub async fn connect_as(&mut self, status: &str) {
+        self.announce(status).await;
         self.start_refreshing().await;
     }
 
@@ -68,191 +70,8 @@ impl<'a> FakeRunner<'a> {
             .expect("writing the presence entry");
     }
 
-    pub async fn disconnect(&mut self) {
-        self.stop_refreshing();
-        let store = self
-            .nats
-            .jetstream()
-            .get_key_value(wire::PRESENCE_BUCKET)
-            .await
-            .expect("the presence bucket is declared before the service boots");
-        store
-            .delete(self.presence_key())
-            .await
-            .expect("removing the presence entry");
-    }
-
-    pub fn crash(&mut self) {
-        self.stop_refreshing();
-    }
-
-    pub async fn presence_entry(&self) -> Option<Value> {
-        let store = self
-            .nats
-            .jetstream()
-            .get_key_value(wire::PRESENCE_BUCKET)
-            .await
-            .expect("the presence bucket is declared before the service boots");
-        store
-            .get(self.presence_key())
-            .await
-            .expect("reading the presence bucket")
-            .map(|bytes| {
-                serde_json::from_slice(&bytes)
-                    .unwrap_or_else(|e| panic!("a presence entry is JSON: {e}"))
-            })
-    }
-
-    pub async fn write_unreadable_presence(&self) {
-        let store = self
-            .nats
-            .jetstream()
-            .get_key_value(wire::PRESENCE_BUCKET)
-            .await
-            .expect("the presence bucket is declared before the service boots");
-        store
-            .put(
-                self.presence_key(),
-                b"not a presence entry at all".to_vec().into(),
-            )
-            .await
-            .expect("writing the presence entry");
-    }
-
-    async fn start_refreshing(&mut self) {
-        self.stop_refreshing();
-        let key = self.presence_key();
-        let status = Arc::clone(&self.status);
-        let capacity = Arc::clone(&self.capacity);
-        let runner_type = self.runner_type.clone();
-        let instance_key = self.instance_key.clone();
-        let version = self.version.clone();
-        let store = self
-            .nats
-            .jetstream()
-            .get_key_value(wire::PRESENCE_BUCKET)
-            .await
-            .expect("the presence bucket is declared before the service boots");
-        self.heartbeat = Some(tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(infra::PRESENCE_REFRESH).await;
-                let current = current_status(&status);
-                let value = presence_value(
-                    &runner_type,
-                    &instance_key,
-                    &version,
-                    &current,
-                    current_capacity(&capacity),
-                );
-                if let Err(error) = store.put(key.clone(), value.into()).await {
-                    eprintln!("presence refresh of {key} failed: {error}");
-                }
-            }
-        }));
-    }
-
-    fn stop_refreshing(&mut self) {
-        if let Some(handle) = self.heartbeat.take() {
-            handle.abort();
-        }
-    }
-
-    fn set_status(&self, status: &str) {
-        *self
-            .status
-            .lock()
-            .expect("the announced status is writable") = status.to_string();
-    }
-
-    fn set_capacity(&self, capacity: u32) {
-        *self
-            .capacity
-            .lock()
-            .expect("the declared capacity is writable") = capacity;
-    }
-
-    fn presence_key(&self) -> String {
-        wire::presence_key(&self.runner_type, &self.instance_key)
-    }
-
-    fn presence_value(&self) -> Vec<u8> {
-        presence_value(
-            &self.runner_type,
-            &self.instance_key,
-            &self.version,
-            &current_status(&self.status),
-            current_capacity(&self.capacity),
-        )
-    }
-
     pub fn resume_after(&mut self, claimed_by: &FakeRunner) {
         self.cursor = claimed_by.cursor;
-    }
-
-    pub async fn next_trigger(&mut self, timeout: Duration) -> Value {
-        self.try_next_trigger(timeout).await.unwrap_or_else(|| {
-            panic!(
-                "no trigger on {} within {timeout:?}",
-                wire::trigger_subject(&self.runner_type)
-            )
-        })
-    }
-
-    pub async fn try_next_trigger(&mut self, timeout: Duration) -> Option<Value> {
-        let subject = wire::trigger_subject(&self.runner_type);
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            if let Some((sequence, payload)) = self.read_from(&subject, self.cursor).await {
-                self.cursor = sequence + 1;
-                return Some(payload);
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return None;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    pub async fn expect_no_trigger(&mut self, quiet: Duration) {
-        if let Some(trigger) = self.try_next_trigger(quiet).await {
-            panic!(
-                "no trigger may be dispatched on {} here, got: {trigger}",
-                wire::trigger_subject(&self.runner_type)
-            );
-        }
-    }
-
-    pub async fn trigger_count(&self) -> usize {
-        let subject = wire::trigger_subject(&self.runner_type);
-        let mut sequence = 1;
-        let mut seen = 0;
-        while let Some((found, _)) = self.read_from(&subject, sequence).await {
-            seen += 1;
-            sequence = found + 1;
-            if seen > 64 {
-                panic!("more than 64 triggers on {subject} — the dispatcher is looping");
-            }
-        }
-        seen
-    }
-
-    async fn read_from(&self, subject: &str, from: u64) -> Option<(u64, Value)> {
-        let stream = self
-            .nats
-            .jetstream()
-            .get_stream(wire::TRIGGER_STREAM)
-            .await
-            .expect("the trigger stream is declared before the service boots");
-        let message = stream
-            .raw_message_builder()
-            .next_by_subject(subject)
-            .sequence(from)
-            .send()
-            .await
-            .ok()?;
-        let payload = serde_json::from_slice(&message.payload)
-            .unwrap_or_else(|e| panic!("a trigger must be JSON: {e}"));
-        Some((message.sequence, payload))
     }
 
     pub async fn start_run(&self, trigger: &Value) {
@@ -388,89 +207,6 @@ impl<'a> FakeRunner<'a> {
             )
             .await;
     }
-
-    pub async fn cancel_entry(&self, run: Uuid) -> Option<Value> {
-        let store = self
-            .nats
-            .jetstream()
-            .get_key_value(wire::CANCEL_BUCKET)
-            .await
-            .expect("the cancel bucket is declared before the service boots");
-        let entry = store
-            .get(wire::cancel_key(run))
-            .await
-            .expect("reading the cancel bucket");
-        entry.map(|bytes| {
-            serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("a cancel entry is JSON: {e}"))
-        })
-    }
-
-    pub async fn await_cancel_entry(&self, run: Uuid, timeout: Duration) -> Value {
-        let watcher = self;
-        let arrived = wait_until(timeout, || async move {
-            watcher.cancel_entry(run).await.is_some()
-        })
-        .await;
-        assert!(
-            arrived,
-            "no desired-state cancel entry for run {run} within {timeout:?} — an in-flight run \
-             is stopped by its entry in the cancel bucket, replayed to every watching instance"
-        );
-        self.cancel_entry(run)
-            .await
-            .expect("the entry observed a moment ago is still readable")
-    }
-
-    pub async fn await_no_cancel_entry(&self, run: Uuid, timeout: Duration) {
-        let watcher = self;
-        let removed = wait_until(timeout, || async move {
-            watcher.cancel_entry(run).await.is_none()
-        })
-        .await;
-        assert!(
-            removed,
-            "the desired-state entry for run {run} must be removed once the run is terminal, \
-             within {timeout:?} — every instance replays the whole bucket when its watch \
-             (re)connects, so a leftover entry re-issues a stop order for a run that ended long ago"
-        );
-    }
-
-    pub async fn expect_no_cancel_entry(&self, run: Uuid, quiet: Duration) {
-        tokio::time::sleep(quiet).await;
-        assert!(
-            self.cancel_entry(run).await.is_none(),
-            "no cancel entry may be written for run {run}"
-        );
-    }
-}
-
-fn current_status(status: &Arc<Mutex<String>>) -> String {
-    status
-        .lock()
-        .expect("the announced status is readable")
-        .clone()
-}
-
-fn current_capacity(capacity: &Arc<Mutex<u32>>) -> u32 {
-    *capacity.lock().expect("the declared capacity is readable")
-}
-
-fn presence_value(
-    runner_type: &str,
-    instance_key: &str,
-    version: &str,
-    status: &str,
-    capacity: u32,
-) -> Vec<u8> {
-    serde_json::to_vec(&json!({
-        "runner_type": runner_type,
-        "instance_key": instance_key,
-        "runner_version": version,
-        "status": status,
-        "capacity": capacity,
-        "observed_at": clock::now_rfc3339(),
-    }))
-    .expect("presence value serializes")
 }
 
 pub fn run_id(trigger: &Value) -> Uuid {

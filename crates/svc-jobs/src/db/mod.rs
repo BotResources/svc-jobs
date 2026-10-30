@@ -5,6 +5,7 @@ pub mod call_notices;
 pub mod claim;
 pub mod directory;
 pub mod directory_entry;
+pub mod directory_tree;
 pub mod dispatch_order;
 pub mod doorbell;
 pub mod due_work;
@@ -26,6 +27,7 @@ pub mod reach;
 pub mod restart;
 pub mod rows;
 pub mod saved_states;
+pub mod tree_lock;
 pub mod waiting_repair;
 pub mod work;
 

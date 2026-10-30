@@ -6,6 +6,8 @@ use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::transport::AnnouncedInstance;
 use contract_jobs::runner as wire;
+use contract_jobs::runner_transport::runner_presence_key;
+use contract_jobs::segment::SubjectSegment;
 use futures::StreamExt;
 
 use super::{RunnerChannels, transport_error};
@@ -105,6 +107,22 @@ pub async fn announced(channels: &RunnerChannels) -> Result<HashSet<AnnouncedIns
         }
     }
     Ok(announced)
+}
+
+pub async fn announces(
+    channels: &RunnerChannels,
+    instance: &AnnouncedInstance,
+) -> Result<bool, PortError> {
+    let runner_type =
+        SubjectSegment::runner_type(instance.runner_type.as_str()).map_err(transport_error)?;
+    let instance_key =
+        SubjectSegment::instance_key(instance.instance_key.as_str()).map_err(transport_error)?;
+    channels
+        .presence_bucket()
+        .get(runner_presence_key(&runner_type, &instance_key))
+        .await
+        .map(|entry| entry.is_some())
+        .map_err(transport_error)
 }
 
 fn instance_of(key: &str) -> Option<AnnouncedInstance> {

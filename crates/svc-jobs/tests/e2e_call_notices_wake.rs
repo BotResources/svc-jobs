@@ -2,7 +2,7 @@ mod support;
 
 use serde_json::json;
 use support::LONG;
-use support::call_notices::{background_call, caller, types, wait_for_notice};
+use support::call_notices::{background_call, caller, notices, types, wait_for_notice};
 use support::db::Durable;
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Work};
@@ -34,6 +34,31 @@ async fn a_failure_notice_wakes_a_finished_background_caller() {
         .await;
     caller.pair.parent.expect_no_trigger(support::QUIET).await;
 
+    let call_work = Work::of(&caller.pair.child, &call);
+    let (speaker, listener) = (Agent::with_inbox(), Agent::with_inbox());
+    let (speaker_id, listener_id) = (speaker.agent_id, listener.agent_id);
+    surface::register(
+        fixture.nats(),
+        &caller.pair.child,
+        call_work.run_id,
+        &[speaker, listener],
+    )
+    .await;
+    let copied = gesture::Mail::new(speaker_id, &[listener_id]).cc(&[caller.address]);
+    gesture::accepted(
+        &gesture::send_mail(&fixture.gql(), &runner_access(), &call_work, &copied).await,
+        "jobsSendMail",
+    );
+    caller.pair.parent.expect_no_trigger(support::QUIET).await;
+    durable
+        .assert_count(
+            RESTARTS_OF_RUN,
+            parent_run,
+            0,
+            "a cc notice in the same situation starts nothing",
+        )
+        .await;
+
     caller
         .pair
         .child
@@ -47,6 +72,21 @@ async fn a_failure_notice_wakes_a_finished_background_caller() {
     durable
         .assert_count(RESTARTS_OF_RUN, parent_run, 1, "one restart")
         .await;
+    caller.pair.parent.start_applied(&fixture, &restart).await;
+    let restarted = Work::of(&caller.pair.parent, &restart);
+    let waiting = notices(&fixture, &restarted, Some(caller.address)).await;
+    let failure = waiting
+        .iter()
+        .find(|item| item["noticeType"] == "JOB_FAILED")
+        .unwrap_or_else(|| panic!("the restarted Caller reads the failure notice: {waiting:?}"));
+    assert_eq!(failure["jobId"], runner::job_id(&call).to_string());
+    assert_eq!(failure["failureReport"]["reason_code"], "boom");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|words| words.contains("boom")),
+        "{failure}"
+    );
     durable.close().await;
     fixture.shutdown().await;
 }
@@ -105,14 +145,9 @@ async fn a_notice_for_an_ended_caller_run_reaches_the_live_restart_run_that_acts
         types(&seen).contains(&"ACCEPTED".to_owned()),
         "the restart Run reads the notices that waited for the ended Run: {seen:?}"
     );
-    let rings: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM integration_outbox WHERE payload::text LIKE '%item_arrived%' \
-         AND payload::text LIKE $1 AND payload::text LIKE '%NOTICE%'",
-    )
-    .bind(format!("%{}%", runner::run_id(&restart)))
-    .fetch_one(durable.pool())
-    .await
-    .expect("the doorbell staging reads");
+    let rings = durable
+        .rings_for(runner::run_id(&restart), Some("NOTICE"))
+        .await;
     assert!(
         rings >= 1,
         "the live restart Run is rung for a notice of the Run it acts for"

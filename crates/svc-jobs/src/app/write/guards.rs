@@ -5,6 +5,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::event::job::JobEvent;
+use bc_jobs::event::queued::QueuedTree;
 
 use super::job_changes::JobChange;
 use super::routing::RoutedRunnerType;
@@ -18,7 +19,7 @@ pub async fn guard_free_capacity(
     runner_type: &RunnerTypeKey,
 ) -> Result<(), ServiceError> {
     let Some(capacity) = capacity::lock_and_read(tx, runner_type).await? else {
-        return Err(ServiceError::Contended);
+        return Err(ServiceError::write_race());
     };
     capacity
         .runner_type
@@ -49,7 +50,7 @@ pub(super) async fn guard_descendants_unchanged(
     if &current == decided_on {
         Ok(())
     } else {
-        Err(ServiceError::Contended)
+        Err(ServiceError::write_race())
     }
 }
 
@@ -58,12 +59,12 @@ pub(super) fn guard_decision_still_holds(
     locked: Option<&Job>,
 ) -> Result<(), ServiceError> {
     let (Some(decided_on), Some(locked)) = (decided_on, locked) else {
-        return Err(ServiceError::Contended);
+        return Err(ServiceError::write_race());
     };
     if fingerprint::of_job(decided_on) == fingerprint::of_job(locked) {
         Ok(())
     } else {
-        Err(ServiceError::Contended)
+        Err(ServiceError::write_race())
     }
 }
 
@@ -99,11 +100,32 @@ pub(super) async fn guard_free_capacity_of_every_type(
     Ok(())
 }
 
-fn ends_a_run(event: &JobEvent) -> bool {
-    matches!(
-        event,
-        JobEvent::RunCompleted(_) | JobEvent::RunFailed(_) | JobEvent::RunCancelled(_)
-    )
+fn serializes_with_the_tree_directory(event: &JobEvent) -> bool {
+    event
+        .run_inbox_effect()
+        .serializes_with_the_tree_directory()
+}
+
+async fn tree_of_change(
+    tx: &mut sqlx::PgConnection,
+    change: &JobChange,
+) -> Result<JobId, ServiceError> {
+    if let Some(job) = &change.before {
+        return Ok(job.initial_job_id());
+    }
+    match change.events.iter().find_map(JobEvent::queued) {
+        Some(queued) => match queued.tree() {
+            QueuedTree::Named(tree) | QueuedTree::Itself(tree) => Ok(tree),
+            QueuedTree::BelowParent(parent) => tree_of_job(tx, parent).await,
+        },
+        None => tree_of_job(tx, change.job_id).await,
+    }
+}
+
+async fn tree_of_job(tx: &mut sqlx::PgConnection, job_id: JobId) -> Result<JobId, ServiceError> {
+    PgStore::initial_job_of(tx, job_id)
+        .await?
+        .ok_or(ServiceError::JobNotFound)
 }
 
 pub(super) async fn lock_directory_trees(
@@ -118,19 +140,17 @@ pub(super) async fn lock_directory_trees(
         if let Some(premise) = &change.caller_address {
             trees.extend(crate::db::directory::tree_of_run(tx, premise.caller).await?);
         }
-        if !change.removes_directory && !change.events.iter().any(ends_a_run) {
+        if !change.removes_directory
+            && !change.events.iter().any(serializes_with_the_tree_directory)
+        {
             continue;
         }
-        let tree = match &change.before {
-            Some(job) => Some(job.initial_job_id()),
-            None => PgStore::initial_job_of(tx, change.job_id).await?,
-        };
-        trees.extend(tree);
+        trees.push(tree_of_change(tx, change).await?);
     }
     trees.sort_by_key(|tree| tree.as_uuid());
     trees.dedup();
     for tree in trees {
-        crate::db::directory::lock_tree(tx, tree).await?;
+        crate::db::tree_lock::lock_tree(tx, tree).await?;
     }
     Ok(())
 }

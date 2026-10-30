@@ -110,6 +110,21 @@ async fn a_retired_type_leaves_the_mail_unread_and_names_the_refused_restart() {
         json!(scene.receiver.to_string()),
         "the refusal of the restart is named in the reply"
     );
+    assert_eq!(
+        outcome["restartRefused"][0]["reason"], "restart_refused_type_retired",
+        "the refusal carries a reason an agent can read"
+    );
+    assert!(
+        outcome["restartRefused"][0]["message"]
+            .as_str()
+            .is_some_and(|words| words.contains("retired")),
+        "{sent}"
+    );
+    assert_eq!(
+        scene.restartable_now(&fixture, scene.receiver).await,
+        false,
+        "the list shows q1 not restartable"
+    );
     scene.pair.child.expect_no_trigger(QUIET).await;
     durable
         .assert_count(

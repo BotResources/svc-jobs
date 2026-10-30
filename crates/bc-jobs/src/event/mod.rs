@@ -1,6 +1,8 @@
 pub mod fleet;
 pub mod job;
 pub mod job_facts;
+pub mod queued;
+pub mod run_inbox;
 pub mod user;
 
 use br_core_events::{DomainEvent, EventMetadata};
@@ -71,7 +73,6 @@ mod tests {
 
     #[test]
     fn a_job_fact_is_stored_under_its_aggregate_root() {
-        // Given: a completion fact and the metadata of the actor that caused it
         let job = job_id();
         let recorded = Recorded {
             id: EventId::new(Uuid::now_v7()).unwrap(),
@@ -82,9 +83,7 @@ mod tests {
             occurred_at: ts(30),
         };
         let metadata = EventMetadata::new(Actor::Human(UserId(Uuid::now_v7())), Uuid::now_v7());
-        // When: it is wrapped in the shared envelope
         let envelope = recorded.into_envelope(metadata).unwrap();
-        // Then: it is addressed to the Job aggregate, carrying its own payload
         assert_eq!(envelope.aggregate_type, "Job");
         assert_eq!(envelope.aggregate_id, job.as_uuid());
         assert_eq!(envelope.event_type, "JobCompleted");

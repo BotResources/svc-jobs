@@ -110,7 +110,9 @@ fn decide_one(
         refused_restart,
     };
     match held.entry.restart_standing(held.obstacles) {
-        RestartStanding::Running => Ok(delivery(true, false, None)),
+        RestartStanding::Running | RestartStanding::RestartInFlight => {
+            Ok(delivery(true, false, None))
+        }
         RestartStanding::NoSavedState | RestartStanding::ParentJobTerminal => {
             Err(BadAddressReason::RecipientCannotRestart)
         }
@@ -120,7 +122,6 @@ fn decide_one(
             });
             Ok(delivery(false, false, refused))
         }
-        RestartStanding::RestartInFlight => Ok(delivery(true, false, None)),
         RestartStanding::Allowed => Ok(delivery(false, true, None)),
     }
 }

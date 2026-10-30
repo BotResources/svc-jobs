@@ -104,6 +104,10 @@ impl RunnerTransport for RunnerChannels {
         super::presence::announced(self).await
     }
 
+    async fn announces(&self, instance: &AnnouncedInstance) -> Result<bool, PortError> {
+        super::presence::announces(self, instance).await
+    }
+
     async fn acknowledged_start(
         &self,
         run_id: RunId,

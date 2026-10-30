@@ -83,10 +83,15 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
             &runner_type,
         )
         .await;
+    if lapsed != 0 {
+        eprintln!("LOGS>>>{}<<<", fixture.logs());
+    }
     assert_eq!(
-        lapsed, 0,
+        lapsed,
+        0,
         "presence of an instance was lost during the first claim round, so its run was \
-         reclaimed and retried: the test heartbeats were starved, not the claim path"
+         reclaimed and retried: {}",
+        fixture.logs()
     );
     let mut reserved: BTreeMap<String, (Uuid, Uuid)> = BTreeMap::new();
     let mut empty = Vec::new();

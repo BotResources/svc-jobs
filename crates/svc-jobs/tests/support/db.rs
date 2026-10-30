@@ -64,6 +64,26 @@ impl Durable {
         }
     }
 
+    pub async fn rings_for(&self, run_id: Uuid, item_kind: Option<&str>) -> i64 {
+        sqlx::query_scalar(RINGS_FOR_RUN)
+            .bind(contract_jobs::event_v2::EVENT_TYPE_ITEM_ARRIVED)
+            .bind(run_id.to_string())
+            .bind(item_kind)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_else(|error| panic!("counting the doorbell rings of {run_id}: {error}"))
+    }
+
+    pub async fn rings_of_item(&self, item_id: Uuid) -> i64 {
+        sqlx::query_scalar(RINGS_OF_ITEM)
+            .bind(item_id.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("counting the doorbell rings of item {item_id}: {error}")
+            })
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -97,3 +117,8 @@ pub const SAVED_STATE_AGENTS_OF_RUN: &str =
     "SELECT count(*) FROM saved_state_agents WHERE run_id = $1";
 pub const TERMINALS_OF_RUN: &str = "SELECT count(*) FROM run_terminals WHERE run_id = $1";
 pub const CURRENT_RUNS_OF_RUN: &str = "SELECT count(*) FROM current_runs WHERE run_id = $1";
+pub const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \
+     WHERE payload->>'event_type' = $1 AND payload #>> '{payload,run_id}' = $2 \
+     AND ($3::text IS NULL OR payload #>> '{payload,item_kind}' = $3)";
+pub const RINGS_OF_ITEM: &str = "SELECT count(*) FROM integration_outbox \
+     WHERE payload->>'event_type' = 'run.item_arrived' AND payload #>> '{payload,item_id}' = $1";

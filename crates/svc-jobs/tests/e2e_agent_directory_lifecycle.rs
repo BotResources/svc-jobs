@@ -1,6 +1,7 @@
 mod support;
 
 use support::db::Durable;
+use support::directory::admin_listed_ids;
 use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
@@ -51,6 +52,11 @@ async fn a_failed_run_removes_every_descendant_run_whether_it_ended_with_success
         2,
         "the directory lists the running agents of the whole tree, and not a finished agent that cannot restart"
     );
+    assert_eq!(
+        admin_listed_ids(&fixture, root.job_id).await,
+        surface::agent_ids(&surface::list(nats, &pair.child, running_run).await),
+        "an administrator sees the same agents of the Tree as its runners"
+    );
 
     pair.parent
         .fail_run(&parent_trigger, "PERMANENT", "provider_refused", None)
@@ -64,6 +70,10 @@ async fn a_failed_run_removes_every_descendant_run_whether_it_ended_with_success
             "a failed run takes its dependents with it",
         )
         .await;
+    assert!(
+        admin_listed_ids(&fixture, root.job_id).await.is_empty(),
+        "the administrator's directory follows the removal of a failed run"
+    );
     let late = surface::register(
         nats,
         &pair.child,
@@ -175,6 +185,13 @@ async fn a_run_that_ends_with_success_leaves_its_agents_finished_until_its_job_i
     durable
         .assert_count(IN_TREE, root.job_id, 1, "the run stays in the directory")
         .await;
+    let before_cancel = fixture_directory(&fixture, root.job_id).await;
+    assert!(
+        before_cancel
+            .iter()
+            .all(|agent| agent["state"] == "FINISHED"),
+        "an ended run lists nothing but finished agents: {before_cancel:?}"
+    );
     let ended = surface::register(nats, &pair.parent, run, &[Agent::with_inbox()]).await;
     assert_eq!(surface::reason(&ended), "run_ended");
 
@@ -187,6 +204,16 @@ async fn a_run_that_ends_with_success_leaves_its_agents_finished_until_its_job_i
             "the cancel of a job removes the agents of its runs, those that ended with success included",
         )
         .await;
+    assert!(
+        admin_listed_ids(&fixture, root.job_id).await.is_empty(),
+        "the administrator's directory follows the cancel of a job"
+    );
     durable.close().await;
     fixture.shutdown().await;
+}
+
+async fn fixture_directory(fixture: &JobsFixture, job_id: uuid::Uuid) -> Vec<serde_json::Value> {
+    support::directory::listed(
+        &support::directory::tree_agents(fixture, fixture.admin(), job_id).await,
+    )
 }

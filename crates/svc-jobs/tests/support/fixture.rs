@@ -1,14 +1,12 @@
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use br_core_auth::Passport;
-use br_test_harness::{
-    E2eDatabase, FabricTestNats, GraphqlClient, PassportBuilder, SpawnedProcess, TestNats,
-};
-use uuid::Uuid;
+use br_test_harness::{E2eDatabase, FabricTestNats, GraphqlClient, SpawnedProcess, TestNats};
 
 use super::infra;
+pub use super::passports::*;
+pub use super::spawn::spawn_instance;
+use super::spawn::spawn_process;
 
 pub const BIN: &str = env!("CARGO_BIN_EXE_svc-jobs");
 pub const APP_ROLE: &str = "jobs_app";
@@ -30,6 +28,7 @@ pub struct Knobs {
     pub scope_declaration: bool,
     pub task_restart_initial_backoff_milliseconds: Option<u64>,
     pub task_restart_max_backoff_seconds: Option<u64>,
+    pub presence_ttl: Duration,
 }
 
 impl Default for Knobs {
@@ -49,6 +48,7 @@ impl Default for Knobs {
             scope_declaration: false,
             task_restart_initial_backoff_milliseconds: None,
             task_restart_max_backoff_seconds: None,
+            presence_ttl: infra::STEADY_PRESENCE_TTL,
         }
     }
 }
@@ -95,7 +95,7 @@ impl JobsFixture {
             .with_published_language()
             .await;
         let nats = TestNats::setup_on(&fabric.url()).await;
-        infra::provision_runner_transport(&nats).await;
+        infra::provision_runner_transport(&nats, knobs.presence_ttl).await;
 
         let mut instances = Vec::new();
         let mut urls = Vec::new();
@@ -239,154 +239,6 @@ impl DeclaringInstance {
     }
 }
 
-pub fn platform_admin() -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(true)
-        .claim("display_name", "Platform Administrator")
-        .claim("email", "admin@botresources.ai")
-        .build()
-}
-
-pub fn deactivated_super_user() -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(true)
-        .active(false)
-        .claim("display_name", "Deactivated Administrator")
-        .build()
-}
-
-pub fn ordinary_member() -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(false)
-        .claim("display_name", "Ordinary Member")
-        .claim("email", "member@botresources.ai")
-        .claim("org_id", Uuid::now_v7().to_string())
-        .build()
-}
-
-pub fn impersonating_member(admin: &Passport) -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(false)
-        .impersonator(admin.actor_id())
-        .claim("display_name", "Escalation Attempt")
-        .build()
-}
-
-pub fn impersonating_admin() -> (Passport, Uuid) {
-    let operator_id = Uuid::now_v7();
-    let passport = PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(true)
-        .impersonator(operator_id)
-        .claim("display_name", "Impersonated Administrator")
-        .build();
-    (passport, operator_id)
-}
-
-pub fn runner_access() -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .claim("scopes", vec!["jobs:runner"])
-        .build_service()
-}
-
-pub fn machine_caller() -> Passport {
-    PassportBuilder::new()
-        .user_id(Uuid::now_v7())
-        .super_admin(true)
-        .build_service()
-}
-
-pub async fn spawn_instance(
-    db: &E2eDatabase,
-    nats_url: &str,
-    knobs: &Knobs,
-) -> (SpawnedProcess, String) {
-    let (mut service, base_url) = spawn_process(db, nats_url, knobs);
-    let outcome = service
-        .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
-        .await;
-    assert!(
-        outcome.is_ready(),
-        "svc-jobs never reported ready within {BOOT_TIMEOUT:?} ({outcome:?})\nlogs:\n{}",
-        service.logs(),
-    );
-    (service, base_url)
-}
-
-fn spawn_process(db: &E2eDatabase, nats_url: &str, knobs: &Knobs) -> (SpawnedProcess, String) {
-    let owner_url = db.owner_migration_url();
-    let app_url = db.app_url();
-    let port = free_port();
-    let port_text = port.to_string();
-    let base_url = format!("http://127.0.0.1:{port}");
-
-    let inactivity = knobs.inactivity_timeout_seconds.to_string();
-    let run_max = knobs.run_max_duration_seconds.to_string();
-    let retry_base = knobs.retry_base_delay_seconds.to_string();
-    let ceiling = knobs.max_attempts_ceiling.to_string();
-    let interval = knobs.backstop_interval_seconds.to_string();
-    let quiet_period = knobs.retirement_quiet_period_seconds.to_string();
-    let impact_interval = knobs.runner_type_impact_interval_seconds.to_string();
-    let default_max_priority = knobs.default_max_priority.map(|level| level.to_string());
-    let claim_reservation = knobs.claim_reservation_seconds.to_string();
-    let claim_max_wait = knobs.claim_max_wait_seconds.to_string();
-    let claim_max_held = knobs.claim_max_held.map(|held| held.to_string());
-    let restart_initial = knobs
-        .task_restart_initial_backoff_milliseconds
-        .map(|milliseconds| milliseconds.to_string());
-    let restart_max = knobs
-        .task_restart_max_backoff_seconds
-        .map(|seconds| seconds.to_string());
-
-    let scope_declaration = knobs.scope_declaration.to_string();
-    let mut env: Vec<(&str, &str)> = vec![
-        ("SCOPE_DECLARATION_ENABLED", scope_declaration.as_str()),
-        ("DATABASE_URL", app_url.as_str()),
-        ("DATABASE_URL_OWNER", owner_url.as_str()),
-        ("HOST", "127.0.0.1"),
-        ("PORT", port_text.as_str()),
-        ("ENVIRONMENT", "local"),
-        ("RUST_LOG", "info"),
-        ("NATS_URL", nats_url),
-        ("JOBS_INACTIVITY_TIMEOUT_SECONDS", inactivity.as_str()),
-        ("JOBS_RUN_MAX_DURATION_SECONDS", run_max.as_str()),
-        ("JOBS_RETRY_BASE_DELAY_SECONDS", retry_base.as_str()),
-        ("JOBS_MAX_ATTEMPTS_CEILING", ceiling.as_str()),
-        ("JOBS_BACKSTOP_INTERVAL_SECONDS", interval.as_str()),
-        (
-            "JOBS_RETIREMENT_QUIET_PERIOD_SECONDS",
-            quiet_period.as_str(),
-        ),
-        (
-            "JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS",
-            impact_interval.as_str(),
-        ),
-        ("JOBS_CLAIM_RESERVATION_SECONDS", claim_reservation.as_str()),
-        ("JOBS_CLAIM_MAX_WAIT_SECONDS", claim_max_wait.as_str()),
-    ];
-
-    if let Some(level) = default_max_priority.as_deref() {
-        env.push(("JOBS_DEFAULT_MAX_PRIORITY", level));
-    }
-    if let Some(held) = claim_max_held.as_deref() {
-        env.push(("JOBS_CLAIM_MAX_HELD", held));
-    }
-    if let Some(initial) = restart_initial.as_deref() {
-        env.push(("JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS", initial));
-    }
-    if let Some(max) = restart_max.as_deref() {
-        env.push(("JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS", max));
-    }
-
-    let service = SpawnedProcess::spawn(BIN, &[], &env);
-    (service, base_url)
-}
-
 pub fn require_provisioned_infrastructure() {
     assert!(
         std::env::var("E2E_PG_ADMIN_URL").is_ok(),
@@ -403,30 +255,5 @@ pub fn require_provisioned_infrastructure() {
          or point E2E_PG_ADMIN_URL at a PostgreSQL whose role can CREATE ROLE and CREATE\n\
          DATABASE, for instance:\n\n    \
          E2E_PG_ADMIN_URL=postgres://postgres@localhost:5432/postgres\n",
-    );
-}
-
-pub fn free_port() -> u16 {
-    const RANGE_START: u16 = 20_000;
-    const RANGE_END: u16 = 32_000;
-    const MAX_PROBES: u16 = 64;
-
-    static NEXT: AtomicU16 = AtomicU16::new(0);
-
-    let span = RANGE_END - RANGE_START;
-    if NEXT.load(Ordering::Relaxed) == 0 {
-        let seed = (std::process::id() as u16) % span;
-        NEXT.store(seed.max(1), Ordering::Relaxed);
-    }
-
-    for _ in 0..MAX_PROBES {
-        let port = RANGE_START + (NEXT.fetch_add(1, Ordering::Relaxed) % span);
-        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return port;
-        }
-    }
-    panic!(
-        "no free port in {RANGE_START}..{RANGE_END} after {MAX_PROBES} probes — a previous \
-         scenario almost certainly leaked a child process holding them"
     );
 }

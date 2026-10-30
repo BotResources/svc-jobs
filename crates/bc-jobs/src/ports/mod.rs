@@ -20,6 +20,8 @@ use crate::error::JobsError;
 pub enum PortError {
     #[error("concurrent_modification")]
     ConcurrentModification,
+    #[error("tree_lock_timeout")]
+    TreeLockTimeout,
     #[error("dependency_unavailable")]
     Unavailable { detail: String },
     #[error("stored_state_rejected")]
