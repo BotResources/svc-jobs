@@ -161,6 +161,11 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
         source_entity_id: None,
         max_attempts: None,
         requested_priority: Priority::DEFAULT,
+        initial_job_id: None,
+        requester: bc_jobs::domain::requester::Requester::Service(None),
+        passport: Some(service_passport()),
+        payload: None,
+        call: None,
     };
     let CreateOutcome::Queued(queued) = create_job(declaration, None, None, None, None, &limits())
         .expect("the declaration is accepted")
@@ -270,4 +275,13 @@ pub async fn reloaded(fixture: &Fixture, key: &RunnerTypeKey) -> RunnerType {
         .await
         .expect("the fleet loads")
         .expect("the runner type is live")
+}
+
+pub fn service_passport() -> bc_jobs::domain::passport::JobPassport {
+    bc_jobs::domain::passport::JobPassport::new(
+        bc_jobs::domain::passport::PassportSubject::Service(Uuid::from_u128(0x7e57)),
+        None,
+        serde_json::json!({ "kind": "service" }),
+    )
+    .expect("a valid passport")
 }

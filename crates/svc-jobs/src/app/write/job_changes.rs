@@ -33,6 +33,8 @@ pub struct JobChange {
     pub events: Vec<JobEvent>,
     pub note: Option<String>,
     pub claimed_source: Option<SourceReference>,
+    pub metadata: Option<EventMetadata>,
+    pub answers: Vec<integration::Published>,
     pub priority_premise: Option<PriorityPremise>,
     /// The descendants a cascade over this Job was decided on. Re-read under
     /// the write's locks: a descendant admitted since makes the write a race.
@@ -47,6 +49,8 @@ impl JobChange {
             events,
             note: None,
             claimed_source: None,
+            metadata: None,
+            answers: Vec::new(),
             priority_premise: None,
             descendants_premise: None,
         }
@@ -61,6 +65,16 @@ impl JobChange {
 
     pub fn on_priority_premise(mut self, premise: Option<PriorityPremise>) -> Self {
         self.priority_premise = premise;
+        self
+    }
+
+    pub fn answering(mut self, answer: integration::Published) -> Self {
+        self.answers.push(answer);
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
+        self.metadata = Some(metadata);
         self
     }
 
@@ -89,7 +103,10 @@ pub async fn commit_job_changes(
     context: WriteContext<'_>,
     changes: Vec<JobChange>,
 ) -> Result<(), ServiceError> {
-    if changes.iter().all(|change| change.events.is_empty()) {
+    if changes
+        .iter()
+        .all(|change| change.events.is_empty() && change.answers.is_empty())
+    {
         return Ok(());
     }
     let mut tx = store.begin().await?;
@@ -114,7 +131,7 @@ pub async fn commit_job_changes_in(
     } = context;
     let changes: Vec<JobChange> = changes
         .into_iter()
-        .filter(|change| !change.events.is_empty())
+        .filter(|change| !change.events.is_empty() || !change.answers.is_empty())
         .collect();
     if changes.is_empty() {
         return Ok(());
@@ -203,17 +220,28 @@ async fn apply_change(
         .iter()
         .map(|event| Ok((EventId::new(ids.next())?, event.clone())))
         .collect::<Result<_, bc_jobs::JobsError>>()?;
+    let metadata = change.metadata.as_ref().unwrap_or(metadata);
     apply::apply_job_events(tx, change.job_id, &recorded, metadata, at).await?;
     for (event_id, event) in &recorded {
-        if let Some(published) =
-            integration::of_event(event, change.before.as_ref(), change.note.as_deref())?
-        {
-            let record =
-                integration::record(published, ids.next(), event_id.as_uuid(), metadata, at)?;
+        let published =
+            integration::of_event(event, change.before.as_ref(), change.note.as_deref())?;
+        for (position, published) in published.into_iter().enumerate() {
+            let event_id = if position == 0 {
+                event_id.as_uuid()
+            } else {
+                ids.next()
+            };
+            let record = integration::record(published, ids.next(), event_id, metadata, at)?;
             stage(&mut *tx, &record)
                 .await
                 .map_err(|error| ServiceError::Infra(error.to_string()))?;
         }
+    }
+    for answer in &change.answers {
+        let record = integration::record(answer.clone(), ids.next(), ids.next(), metadata, at)?;
+        stage(&mut *tx, &record)
+            .await
+            .map_err(|error| ServiceError::Infra(error.to_string()))?;
     }
     Ok(())
 }

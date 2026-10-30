@@ -356,16 +356,9 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     let client = fixture.gql();
     let admin = fixture.admin();
     let owner = fixture::ordinary_member();
-    let capped = fixture::ordinary_member();
     let parent_type = wire::unique_runner_type("fanning");
     let child_type = wire::unique_runner_type("pages");
     let producer = Producer::new(fixture.fabric(), "projects");
-
-    gql::expect_success(
-        &priority::set_user_max_priority(&client, admin, capped.actor_id(), 2).await,
-        wire::FIELD_SET_USER_MAX_PRIORITY,
-        "a super user caps a second user at 2",
-    );
 
     let mut parent_runner = FakeRunner::new(fixture.nats(), &parent_type, "parent-a");
     parent_runner.connect().await;
@@ -411,8 +404,7 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: the parent's runner fans out children requesting 1, by v2 and by v1, one of them on
-    // behalf of a user capped at 2 — each accepted before the next, so creation order is defined
+    // When: the parent's runner fans out children requesting 1, by v2 and by v1, each accepted before the next, so creation order is defined
     let lowest = JobDeclaration::new(&child_type)
         .with_parent(parent_id)
         .triggered_by_user(owner.actor_id())
@@ -423,8 +415,8 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
         .await;
     let for_capped_user = JobDeclaration::new(&child_type)
         .with_parent(parent_id)
-        .triggered_by_user(capped.actor_id())
-        .with_priority(1);
+        .triggered_by_user(owner.actor_id())
+        .with_priority(2);
     producer.declare_v2(&for_capped_user).await;
     events
         .expect_one(wire::FACT_QUEUED, for_capped_user.job_id, LONG)

@@ -105,6 +105,7 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
 }
 
 fn spawn_bus(supervisor: &Supervisor, fabric: Fabric, jobs: Arc<Jobs>) {
+    bus::v3::spawn(supervisor, &fabric, &jobs);
     let creations = fabric.clone();
     let creation_jobs = Arc::clone(&jobs);
     supervisor.spawn("job-creation consumer", move |established| {

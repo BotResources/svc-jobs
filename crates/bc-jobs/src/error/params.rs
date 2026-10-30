@@ -30,6 +30,7 @@ impl JobsError {
             | Self::ActingRunNotLive
             | Self::PassportRequired
             | Self::PassportUserMismatch
+            | Self::PassportMalformed
             | Self::PassportParentMismatch
             | Self::InitialJobMismatch
             | Self::ParentNotOfRun

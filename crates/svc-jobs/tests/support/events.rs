@@ -30,7 +30,17 @@ impl ObservedEvent {
 
 impl EventLog {
     pub async fn open(fabric: &FabricTestNats) -> Self {
-        let coords = wire::all_event_coords();
+        Self::capturing(fabric, wire::all_event_coords()).await
+    }
+
+    pub async fn open_v2(fabric: &FabricTestNats) -> Self {
+        Self::capturing(fabric, wire::all_event_v2_coords()).await
+    }
+
+    async fn capturing(
+        fabric: &FabricTestNats,
+        coords: Vec<br_core_integration::EventCoords>,
+    ) -> Self {
         let refs: Vec<_> = coords.iter().collect();
         Self {
             capture: fabric.capture_events(&refs).await,

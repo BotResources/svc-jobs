@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use super::rows;
 
-const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
+fn jobs_sql() -> String {
+    format!(
+        "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
      coalesce(p.bc_key, sp.bc_key) AS producer, j.config, \
      j.parent_job_id::uuid AS parent_job_id, j.predecessor_job_id::uuid AS predecessor_job_id, \
      j.triggered_by_id::uuid AS triggered_by_id, tu.display_name AS triggered_by_name, \
@@ -20,7 +22,8 @@ const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
      j.requested_priority::smallint AS requested_priority, \
      j.effective_priority::smallint AS effective_priority, \
      j.forced_priority::smallint AS forced_priority, \
-     parent_rt.type_key AS parent_runner_type \
+     parent_rt.type_key AS parent_runner_type, \
+     ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call \
      FROM jobs j \
      JOIN runner_types rt ON rt.id = j.runner_type_id \
      LEFT JOIN producers p ON p.id = j.producer_id \
@@ -29,7 +32,10 @@ const JOBS_SQL: &str = "SELECT j.id::uuid AS id, rt.type_key AS runner_type, \
      LEFT JOIN known_users tu ON tu.id = j.triggered_by_id \
      LEFT JOIN jobs parent ON parent.id = j.parent_job_id \
      LEFT JOIN runner_types parent_rt ON parent_rt.id = parent.runner_type_id \
-     WHERE j.id = ANY($1)";
+     WHERE j.id = ANY($1)",
+        root = crate::db::lineage::root_of("j"),
+    )
+}
 
 const RUNS_SQL: &str = "SELECT id::uuid AS id, job_id::uuid AS job_id, attempt_number, \
      dispatched_at, automatic_retry_schedule_id::uuid AS automatic_retry_schedule_id, \
@@ -168,7 +174,7 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
     }
 
     let mut jobs = Vec::new();
-    for row in fetch(&mut *executor, JOBS_SQL, ids).await? {
+    for row in fetch(&mut *executor, &jobs_sql(), ids).await? {
         let id = JobId::new(row.get("id"))?;
         let producer = ProducerKey::new(row.get::<String, _>("producer"))?;
         let parent_job_id = row
@@ -213,6 +219,12 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
             resolution: resolutions.remove(&id),
             deletion: deletions.remove(&id),
             manual_retry: manual_retries.remove(&id),
+            initial_job_id: rows::initial_job(id, row.get("root_job_id"))?,
+            requester: rows::json_part(row.get("requester"))?
+                .unwrap_or(bc_jobs::domain::requester::Requester::Service(None)),
+            passport: rows::json_part(row.get("passport"))?,
+            payload: rows::json_part(row.get("payload"))?,
+            call: rows::json_part(row.get("call"))?,
         })?);
     }
     Ok(jobs)

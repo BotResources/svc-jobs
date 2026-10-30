@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use br_test_harness::TestNats;
-use contract_jobs::runner::ClaimReply;
-use contract_jobs::runner_transport::claim_subject;
+use contract_jobs::runner::ClaimReplyV2;
+use contract_jobs::runner_transport::claim_v2_subject;
 use contract_jobs::segment::SubjectSegment;
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -21,13 +21,20 @@ pub const REPLY_MARGIN: Duration = Duration::from_secs(2);
 /// scenario declares stays below it, so the instance's own timeout is the one that fires.
 const CLIENT_REQUEST_CEILING: Duration = Duration::from_secs(10);
 
-const TRIGGER_FIELDS: [&str; 6] = [
+const TRIGGER_FIELDS: [&str; 13] = [
     "version",
     "run_id",
     "job_id",
     "config",
     "attempt",
     "triggered_by",
+    "parent_job_id",
+    "initial_job_id",
+    "passport",
+    "payload",
+    "mode",
+    "caller_address",
+    "restart",
 ];
 
 pub struct ClaimAnswer {
@@ -122,10 +129,10 @@ pub fn subject(runner_type: &str) -> String {
     let segment = SubjectSegment::runner_type(runner_type)
         .unwrap_or_else(|error| panic!("'{runner_type}' is a valid subject segment: {error:?}"));
     assert_eq!(
-        claim_subject(&segment),
+        claim_v2_subject(&segment),
         hand_built,
         "the claim subject is a frozen offer, not an implementation detail: every runner harness \
-         renders 'jobs.claim.{{runner_type}}' itself, so a renamed subject strands every CLAIM \
+         renders 'jobs.claim.v2.{{runner_type}}' itself, so a renamed subject strands every CLAIM \
          instance at once",
     );
     hand_built
@@ -134,7 +141,7 @@ pub fn subject(runner_type: &str) -> String {
 pub fn request(instance_key: &str, claim_id: Uuid, wait: Duration) -> Vec<u8> {
     let wait_ms = u64::try_from(wait.as_millis()).expect("a test-scale wait fits in milliseconds");
     serde_json::to_vec(&json!({
-        "version": 1,
+        "version": 2,
         "instance_key": instance_key,
         "claim_id": claim_id.to_string(),
         "wait_ms": wait_ms,
@@ -258,11 +265,11 @@ async fn exchange(
         .unwrap_or_else(|error| panic!("a claim reply is JSON: {error}"));
     assert_eq!(
         reply["version"],
-        json!(1),
+        json!(2),
         "a claim reply names its wire version: {reply}"
     );
-    let typed: ClaimReply = serde_json::from_value(reply.clone()).unwrap_or_else(|error| {
-        panic!("the reply reads back as the published ClaimReply: {error} — {reply}")
+    let typed: ClaimReplyV2 = serde_json::from_value(reply.clone()).unwrap_or_else(|error| {
+        panic!("the reply reads back as the published ClaimReplyV2: {error} — {reply}")
     });
     assert_eq!(
         typed.run.map(|run| run.run_id.to_string()),
@@ -309,7 +316,13 @@ fn assert_trigger_shaped(run: &Value, what: &str) {
         fields.is_subset(&allowed),
         "{what}: a claim reply carries what a trigger carries, nothing more: {run}"
     );
-    for required in ["run_id", "job_id", "attempt"] {
+    for required in [
+        "run_id",
+        "job_id",
+        "attempt",
+        "parent_job_id",
+        "initial_job_id",
+    ] {
         assert!(
             fields.contains(required),
             "{what}: a served run carries its '{required}' exactly as a trigger does: {run}"

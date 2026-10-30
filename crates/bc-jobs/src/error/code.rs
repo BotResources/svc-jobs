@@ -32,6 +32,7 @@ impl JobsError {
             Self::ActingRunMissing => "acting_run_missing",
             Self::ActingRunNotLive => "acting_run_not_live",
             Self::PassportRequired => "passport_required",
+            Self::PassportMalformed => "passport_malformed",
             Self::PassportUserMismatch => "passport_user_mismatch",
             Self::PassportParentMismatch => "passport_parent_mismatch",
             Self::InitialJobMismatch => "initial_job_mismatch",

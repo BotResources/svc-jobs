@@ -1,60 +1,96 @@
 use bc_jobs::JobsError;
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
-use bc_jobs::domain::attempts::MaxAttempts;
-use bc_jobs::domain::config::RunnerConfig;
-use bc_jobs::domain::ids::{JobId, KnownUserId, SourceEntityId};
-use bc_jobs::domain::keys::{DisplayName, ProducerKey, RunnerTypeKey};
-use bc_jobs::domain::priority::{Priority, PriorityBasis};
-use bc_jobs::domain::references::KnownUser;
+use bc_jobs::domain::ids::KnownUserId;
+use bc_jobs::domain::ownership::ActorRef;
+use bc_jobs::domain::priority::PriorityBasis;
+use bc_jobs::domain::requester::Requester;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::user::UserMaxPriorityReader;
-use br_core_events::{EventMetadata, UserId};
-use contract_jobs::command::{CreateJob as Wire, CreateJobV2};
+use br_core_events::EventMetadata;
+use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};
+use contract_jobs::command_v3::CreateJobV3;
 use contract_jobs::event::{
     REASON_DUPLICATE_ACTIVE_ENTITY, REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD,
 };
 use serde_json::{Value, json};
 
-use super::write::PriorityPremise;
-use super::{Jobs, write};
+mod declare;
+
+use super::integration::Lineage;
+use super::write::{CreationRefusal, PriorityPremise};
+use super::{Jobs, acting, write};
 use crate::error::ServiceError;
 
-/// `job.create.v1`: the producer names no priority, so the Job requests the
-/// default.
 pub async fn handle(
     jobs: &Jobs,
-    wire: &Wire,
+    wire: &WireV1,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    admit(jobs, wire, Ok(Priority::DEFAULT), metadata).await
+    admit(jobs, declare::from_v1(wire), metadata).await
 }
 
-/// `job.create.v2`: the v1 declaration plus an optional requested priority.
 pub async fn handle_v2(
     jobs: &Jobs,
     wire: &CreateJobV2,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let requested = wire.priority.map_or(Ok(Priority::DEFAULT), Priority::new);
-    admit(jobs, &wire.declaration(), requested, metadata).await
+    admit(jobs, declare::from_v2(wire), metadata).await
+}
+
+pub async fn handle_v3(
+    jobs: &Jobs,
+    wire: &CreateJobV3,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    admit(jobs, wire.clone(), metadata).await
 }
 
 async fn admit(
     jobs: &Jobs,
-    wire: &Wire,
-    requested: Result<Priority, JobsError>,
+    wire: CreateJobV3,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    match requested.and_then(|requested| build(wire, requested)) {
-        Err(refusal) => reject(jobs, wire, &refusal, metadata).await,
-        Ok(command) => decide(jobs, wire, command, metadata).await,
+    let (wire, requester) = match requester_of(jobs, wire.clone(), metadata).await {
+        Ok(found) => found,
+        Err(ServiceError::Domain(refusal)) => return reject(jobs, &wire, &refusal, metadata).await,
+        Err(other) => return Err(other),
+    };
+    let built = declare::requested_priority(&wire)
+        .and_then(|requested| declare::build(&wire, requested, requester));
+    match built {
+        Err(refusal) => reject(jobs, &wire, &refusal, metadata).await,
+        Ok(command) => decide(jobs, &wire, command, metadata).await,
     }
+}
+
+async fn requester_of(
+    jobs: &Jobs,
+    mut wire: CreateJobV3,
+    metadata: &EventMetadata,
+) -> Result<(CreateJobV3, Requester), ServiceError> {
+    let acting = acting::named(
+        jobs,
+        wire.acting_run_id,
+        wire.acting_instance_key.as_deref(),
+    )
+    .await?;
+    let Some(acting) = acting else {
+        let actor = ActorRef::new(metadata.actor.id());
+        return Ok((wire, Requester::Service(Some(actor))));
+    };
+    let run_job = acting.job_id().as_uuid();
+    match wire.parent_job_id {
+        None => wire.parent_job_id = Some(run_job),
+        Some(given) if given != run_job => return Err(JobsError::ParentNotOfRun.into()),
+        Some(_) => {}
+    }
+    Ok((wire, Requester::Run(acting.run_id)))
 }
 
 async fn decide(
     jobs: &Jobs,
-    wire: &Wire,
+    wire: &CreateJobV3,
     command: CreateJob,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
@@ -121,9 +157,12 @@ pub async fn reject_malformed(
     write::publish_rejection(
         &jobs.store,
         jobs.ids.as_ref(),
-        job_id,
-        REASON_MALFORMED_PAYLOAD,
-        json!({ "jobId": job_id }),
+        CreationRefusal {
+            job_id,
+            lineage: Lineage::declared(job_id, None, None),
+            reason_code: REASON_MALFORMED_PAYLOAD,
+            params: json!({ "jobId": job_id }),
+        },
         metadata,
         jobs.clock.now(),
     )
@@ -132,16 +171,19 @@ pub async fn reject_malformed(
 
 async fn reject(
     jobs: &Jobs,
-    wire: &Wire,
+    wire: &CreateJobV3,
     refusal: &JobsError,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     write::publish_rejection(
         &jobs.store,
         jobs.ids.as_ref(),
-        wire.job_id,
-        published_code(refusal),
-        rejection_params(wire, refusal),
+        CreationRefusal {
+            job_id: wire.job_id,
+            lineage: Lineage::declared(wire.job_id, wire.parent_job_id, wire.initial_job_id),
+            reason_code: published_code(refusal),
+            params: rejection_params(wire, refusal),
+        },
         metadata,
         jobs.clock.now(),
     )
@@ -156,7 +198,7 @@ fn published_code(refusal: &JobsError) -> &'static str {
     }
 }
 
-fn rejection_params(wire: &Wire, refusal: &JobsError) -> Value {
+fn rejection_params(wire: &CreateJobV3, refusal: &JobsError) -> Value {
     let mut params = refusal.params();
     if let Some(fields) = params.as_object_mut() {
         fields.insert("jobId".to_owned(), json!(wire.job_id));
@@ -168,54 +210,4 @@ fn rejection_params(wire: &Wire, refusal: &JobsError) -> Value {
         }
     }
     params
-}
-
-fn build(wire: &Wire, requested_priority: Priority) -> Result<CreateJob, JobsError> {
-    let producer = ProducerKey::new(&wire.producer)?;
-    let source_entity_id = match (&wire.source_bc, wire.source_entity_id) {
-        (Some(bc), Some(entity_id)) => {
-            if ProducerKey::new(bc)? != producer {
-                return Err(JobsError::CorruptState {
-                    reason_code: "source_bc_is_not_the_producer",
-                });
-            }
-            Some(SourceEntityId::new(entity_id)?)
-        }
-        (None, None) => None,
-        _ => {
-            return Err(JobsError::BlankValue {
-                field: "source_entity_id",
-            });
-        }
-    };
-    Ok(CreateJob {
-        id: JobId::new(wire.job_id)?,
-        runner_type: RunnerTypeKey::new(&wire.runner_type)?,
-        producer,
-        config: wire.config.clone().map(RunnerConfig::new).transpose()?,
-        parent_job_id: wire.parent_job_id.map(JobId::new).transpose()?,
-        triggered_by: triggered_by(wire)?,
-        source_entity_id,
-        max_attempts: wire.max_attempts.map(max_attempts).transpose()?,
-        requested_priority,
-    })
-}
-
-fn max_attempts(declared: i64) -> Result<MaxAttempts, JobsError> {
-    let requested = u32::try_from(declared).map_err(|_| JobsError::OutOfRange {
-        field: "max_attempts",
-        value: declared,
-    })?;
-    MaxAttempts::new(requested)
-}
-
-fn triggered_by(wire: &Wire) -> Result<Option<KnownUser>, JobsError> {
-    let Some(user) = &wire.triggered_by else {
-        return Ok(None);
-    };
-    let display_name = user
-        .display_name()
-        .map(str::to_owned)
-        .unwrap_or_else(|| user.id().to_string());
-    KnownUser::new(UserId(user.id()), DisplayName::new(display_name)?).map(Some)
 }

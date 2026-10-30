@@ -32,9 +32,10 @@ pub async fn queued(
     let sql = format!(
         "INSERT INTO jobs (id, runner_type_id, config, parent_job_id, predecessor_job_id, \
          triggered_by_id, producer_id, source_entity_id, max_attempts, created_at, \
-         requested_priority, effective_priority, forced_priority, root_job_id) \
+         requested_priority, effective_priority, forced_priority, root_job_id, \
+         requester, passport, payload, call) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
-            coalesce((SELECT {} FROM jobs p WHERE p.id = $4), $1))",
+            coalesce($14, (SELECT {} FROM jobs p WHERE p.id = $4), $1), $15, $16, $17, $18)",
         crate::db::lineage::root_of("p"),
     );
     sqlx::query(&sql)
@@ -54,10 +55,28 @@ pub async fn queued(
         .bind(fact.requested_priority.get_i16())
         .bind(fact.effective_priority.get_i16())
         .bind(fact.forced_priority.map(|level| level.get_i16()))
+        .bind(fact.initial_job_id.map(|id| id.as_uuid()))
+        .bind(as_json(&fact.requester)?)
+        .bind(as_json(&fact.passport)?)
+        .bind(as_json(&fact.payload)?)
+        .bind(as_json(&fact.call)?)
         .execute(&mut *tx)
         .await
         .map_err(unavailable)?;
     super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), None).await
+}
+
+fn as_json<T: serde::Serialize>(value: &Option<T>) -> Result<Option<serde_json::Value>, PortError> {
+    value
+        .as_ref()
+        .map(|value| {
+            serde_json::to_value(value).map_err(|_| {
+                PortError::from(bc_jobs::JobsError::CorruptState {
+                    reason_code: "job_fact_not_serializable",
+                })
+            })
+        })
+        .transpose()
 }
 
 pub async fn priority_forced(

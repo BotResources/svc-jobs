@@ -10,6 +10,7 @@ use bc_jobs::ports::job::JobReader;
 use br_core_events::EventMetadata;
 
 use super::Jobs;
+use super::integration::Published;
 use super::write::JobChange;
 use crate::error::ServiceError;
 
@@ -109,9 +110,6 @@ pub async fn cancel_from_integration(
     };
     cancel(jobs, job_id, resolution_id, requester, metadata).await
 }
-
-/// Attempts a cancellation makes when its tree grows under it before giving
-/// the race back to the caller.
 const CANCEL_ATTEMPTS: usize = 5;
 
 pub async fn cancel(
@@ -121,9 +119,47 @@ pub async fn cancel(
     requester: CancelRequester,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
+    cancel_with(jobs, job_id, resolution_id, requester, None, metadata).await
+}
+
+pub async fn cancel_answered(
+    jobs: &Jobs,
+    job_id: JobId,
+    resolution_id: ResolutionId,
+    requester: CancelRequester,
+    accepted: Published,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
+    cancel_with(
+        jobs,
+        job_id,
+        resolution_id,
+        requester,
+        Some(accepted),
+        metadata,
+    )
+    .await
+}
+
+async fn cancel_with(
+    jobs: &Jobs,
+    job_id: JobId,
+    resolution_id: ResolutionId,
+    requester: CancelRequester,
+    accepted: Option<Published>,
+    metadata: &EventMetadata,
+) -> Result<(), ServiceError> {
     let mut outcome = Err(ServiceError::Contended);
     for _ in 0..CANCEL_ATTEMPTS {
-        outcome = cancel_once(jobs, job_id, resolution_id, requester.clone(), metadata).await;
+        outcome = cancel_once(
+            jobs,
+            job_id,
+            resolution_id,
+            requester.clone(),
+            accepted.clone(),
+            metadata,
+        )
+        .await;
         if !matches!(outcome, Err(ServiceError::Contended)) {
             return outcome;
         }
@@ -136,6 +172,7 @@ async fn cancel_once(
     job_id: JobId,
     resolution_id: ResolutionId,
     requester: CancelRequester,
+    accepted: Option<Published>,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
@@ -158,17 +195,26 @@ async fn cancel_once(
                 originating_job_id: order.originating_job_id,
             },
         })?;
-        cascaded.push(JobChange::new(
-            order.job_id,
-            Some(descendant.clone()),
-            cascade.events,
-        ));
+        cascaded.push(
+            JobChange::new(order.job_id, Some(descendant.clone()), cascade.events)
+                .with_metadata(originated_by_jobs(jobs, metadata)),
+        );
     }
     cascaded.sort_by_key(|change| change.job_id.as_uuid());
-    let mut changes = vec![
-        JobChange::new(job_id, Some(job.clone()), result.events)
-            .over_descendants(descendants.iter().map(Job::id)),
-    ];
+    let mut root = JobChange::new(job_id, Some(job.clone()), result.events)
+        .over_descendants(descendants.iter().map(Job::id));
+    if let Some(accepted) = accepted {
+        root = root.answering(accepted);
+    }
+    let mut changes = vec![root];
     changes.append(&mut cascaded);
     jobs.commit(changes, metadata).await
+}
+
+fn originated_by_jobs(jobs: &Jobs, metadata: &EventMetadata) -> EventMetadata {
+    let own = EventMetadata::new(metadata.actor, jobs.ids.next());
+    match metadata.causation_id {
+        Some(causation) => own.with_causation(causation),
+        None => own,
+    }
 }

@@ -28,6 +28,8 @@ pub const CMD_JOB_CREATE_V3: &str = "integration.cmd.jobs.job.create.v3";
 pub const CMD_JOB_FAIL_V3: &str = "integration.cmd.jobs.job.fail.v3";
 pub const CMD_JOB_FINISH_V3: &str = "integration.cmd.jobs.job.finish.v3";
 pub const CMD_JOBS_TRIGGER_RUNNER_TYPE: &str = "jobs.trigger.{runner_type}";
+pub const CMD_JOBS_TRIGGER_V2_RUNNER_TYPE: &str = "jobs.trigger.v2.{runner_type}";
+pub const CMD_JOBS_CLAIM_V2_RUNNER_TYPE: &str = "jobs.claim.v2.{runner_type}";
 pub const CMD_JOBS_CLAIM_RUNNER_TYPE: &str = "jobs.claim.{runner_type}";
 
 pub const EVT_JOB_CANCELLED_V1: &str = "integration.evt.jobs.job.cancelled.v1";

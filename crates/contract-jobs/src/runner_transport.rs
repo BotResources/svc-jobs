@@ -2,7 +2,8 @@ use uuid::Uuid;
 
 use crate::segment::SubjectSegment;
 use crate::{
-    CMD_JOBS_CLAIM_RUNNER_TYPE, CMD_JOBS_TRIGGER_RUNNER_TYPE, EVT_JOBS_LOG_RUNNER_TYPE,
+    CMD_JOBS_CLAIM_RUNNER_TYPE, CMD_JOBS_CLAIM_V2_RUNNER_TYPE, CMD_JOBS_TRIGGER_RUNNER_TYPE,
+    CMD_JOBS_TRIGGER_V2_RUNNER_TYPE, EVT_JOBS_LOG_RUNNER_TYPE,
     EVT_JOBS_STATUS_RUNNER_TYPE_COMPLETED, EVT_JOBS_STATUS_RUNNER_TYPE_FAILED,
     EVT_JOBS_STATUS_RUNNER_TYPE_PLAN_DECLARED, EVT_JOBS_STATUS_RUNNER_TYPE_STARTED,
     EVT_JOBS_STATUS_RUNNER_TYPE_STEP_STARTED, KV_RUN_ID, KV_RUNNER_TYPE_INSTANCE_KEY,
@@ -75,6 +76,22 @@ pub fn trigger_subject(runner_type: &SubjectSegment) -> String {
 pub fn claim_subject(runner_type: &SubjectSegment) -> String {
     render(
         CMD_JOBS_CLAIM_RUNNER_TYPE,
+        RUNNER_TYPE,
+        runner_type.as_str(),
+    )
+}
+
+pub fn trigger_v2_subject(runner_type: &SubjectSegment) -> String {
+    render(
+        CMD_JOBS_TRIGGER_V2_RUNNER_TYPE,
+        RUNNER_TYPE,
+        runner_type.as_str(),
+    )
+}
+
+pub fn claim_v2_subject(runner_type: &SubjectSegment) -> String {
+    render(
+        CMD_JOBS_CLAIM_V2_RUNNER_TYPE,
         RUNNER_TYPE,
         runner_type.as_str(),
     )

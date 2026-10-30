@@ -108,6 +108,18 @@ pub struct CancelJobV3 {
     pub acting_instance_key: Option<String>,
 }
 
+impl FinishJobV3 {
+    pub fn acting(&self) -> (Option<Uuid>, Option<&str>) {
+        (self.acting_run_id, self.acting_instance_key.as_deref())
+    }
+}
+
+impl FailJobV3 {
+    pub fn acting(&self) -> (Option<Uuid>, Option<&str>) {
+        (self.acting_run_id, self.acting_instance_key.as_deref())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActingRunError {
     InstanceWithoutRun,

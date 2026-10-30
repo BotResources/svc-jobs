@@ -1,5 +1,6 @@
 pub mod dispatch_mode_offer;
 pub mod runner_type_catalog;
+pub mod v3;
 
 use std::sync::Arc;
 
@@ -40,6 +41,7 @@ impl ContractVersion {
 }
 
 pub async fn verify_durables(fabric: &Fabric) -> Result<(), ServiceError> {
+    v3::verify_durables(fabric).await?;
     for version in [ContractVersion::V1, ContractVersion::V2] {
         open::<Value>(fabric, Verb::Create, version).await?;
         open::<wire::CancelJob>(fabric, Verb::Cancel, version).await?;

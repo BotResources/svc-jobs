@@ -83,6 +83,7 @@ pub enum JobsError {
     ActingRunNotLive,
     PassportRequired,
     PassportUserMismatch,
+    PassportMalformed,
     PassportParentMismatch,
     InitialJobMismatch,
     ParentNotOfRun,

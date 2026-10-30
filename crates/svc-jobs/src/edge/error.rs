@@ -42,6 +42,16 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::InvalidJitter
         | JobsError::InvalidRetryFactor
         | JobsError::NotAJsonObject { .. }
+        | JobsError::PassportMalformed
+        | JobsError::PassportUserMismatch
+        | JobsError::PassportParentMismatch
+        | JobsError::InitialJobMismatch
+        | JobsError::ParentNotOfRun
+        | JobsError::ModeRequired
+        | JobsError::CallerAddressNotHeld
+        | JobsError::PayloadTooLarge { .. }
+        | JobsError::ActingRunMissing
+        | JobsError::PassportRequired
         | JobsError::EmptyPlan
         | JobsError::DuplicatePlanStepIndex { .. }
         | JobsError::InvalidPriority { .. }
@@ -70,6 +80,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RetryNotScheduled
         | JobsError::RetryNotDue { .. }
         | JobsError::RunNotStarted { .. }
+        | JobsError::ActingRunNotLive
         | JobsError::RunWithinMaxDuration { .. }
         | JobsError::RunnerTypeUnavailable { .. }
         | JobsError::RunnerTypeRetired { .. }
@@ -98,6 +109,8 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         }
 
         JobsError::NotOwner
+        | JobsError::NotRequester
+        | JobsError::RunnerNotWorkingTheJob
         | JobsError::NotPlatformAdministrator
         | JobsError::NotSuperUser
         | JobsError::NotActiveHuman => EdgeError::forbidden(),

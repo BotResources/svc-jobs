@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bc_jobs::domain::ids::JobId;
+use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::ports::PortError;
@@ -101,6 +101,18 @@ impl PgStore {
         .await
         .map_err(unavailable)?;
         Ok(found.and_then(|raw| Uuid::parse_str(&raw).ok()))
+    }
+
+    pub async fn jobs_requested_by_run(&self, run_id: RunId) -> Result<Vec<JobId>, PortError> {
+        let rows: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE requester ->> 'Run' = $1")
+                .bind(run_id.as_uuid().to_string())
+                .fetch_all(self.pool())
+                .await
+                .map_err(unavailable)?;
+        rows.into_iter()
+            .map(|id| JobId::new(id).map_err(PortError::from))
+            .collect()
     }
 
     pub async fn job_of_run(&self, run_id: Uuid) -> Result<Option<JobId>, PortError> {

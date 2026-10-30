@@ -4,6 +4,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 pub const WIRE_VERSION: u8 = 1;
+pub const WIRE_VERSION_V2: u8 = 2;
 
 pub const TRIGGER_STREAM: &str = "JOBS_TRIGGER";
 pub const STATUS_STREAM: &str = "JOBS_STATUS";
@@ -11,6 +12,7 @@ pub const LOG_STREAM: &str = "JOBS_LOG";
 pub const TRIGGER_FILTER: &str = "jobs.trigger.>";
 /// Every claim subject: one segment per runner type.
 pub const CLAIM_FILTER: &str = "jobs.claim.*";
+pub const CLAIM_V2_FILTER: &str = "jobs.claim.v2.*";
 pub const STATUS_FILTER: &str = "jobs.status.>";
 pub const LOG_FILTER: &str = "jobs.log.>";
 pub const CANCEL_BUCKET: &str = "JOBS_CANCEL";
@@ -341,6 +343,90 @@ impl ClaimReply {
     pub fn busy(retry_after_ms: u64) -> Self {
         Self {
             version: WIRE_VERSION,
+            run: None,
+            reason: Some(ClaimRefusal::Busy),
+            retry_after_ms: Some(retry_after_ms),
+        }
+    }
+}
+
+fn wire_version_v2() -> u8 {
+    WIRE_VERSION_V2
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestartBlock {
+    pub restart_of_run_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TriggerV2 {
+    #[serde(default = "wire_version_v2")]
+    pub version: u8,
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    pub attempt: u32,
+    pub parent_job_id: Uuid,
+    pub initial_job_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triggered_by: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<crate::command_v3::Payload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<crate::command_v3::CallMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_address: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<RestartBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimReplyV2 {
+    #[serde(default = "wire_version_v2")]
+    pub version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<TriggerV2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<ClaimRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+}
+
+impl ClaimReplyV2 {
+    pub fn served(run: TriggerV2) -> Self {
+        Self {
+            version: WIRE_VERSION_V2,
+            run: Some(run),
+            reason: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            version: WIRE_VERSION_V2,
+            run: None,
+            reason: None,
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn refused(reason: ClaimRefusal) -> Self {
+        Self {
+            version: WIRE_VERSION_V2,
+            run: None,
+            reason: Some(reason),
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn busy(retry_after_ms: u64) -> Self {
+        Self {
+            version: WIRE_VERSION_V2,
             run: None,
             reason: Some(ClaimRefusal::Busy),
             retry_after_ms: Some(retry_after_ms),

@@ -34,7 +34,7 @@ use crate::error::ServiceError;
 /// transport words it for the wire.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaimAnswer {
-    Served(RunTrigger),
+    Served(Box<RunTrigger>),
     /// Nothing was waiting during the wait.
     Empty,
     /// The domain refused to serve this Instance of this type.
@@ -75,7 +75,7 @@ pub async fn serve(jobs: &Jobs, request: ClaimRequest) -> ClaimAnswer {
 }
 
 enum Reservation {
-    Reserved(RunTrigger),
+    Reserved(Box<RunTrigger>),
     NothingWaiting,
     PassedOver(JobId),
 }
@@ -157,14 +157,9 @@ async fn recalled(
     };
     let job = jobs.require(job_id).await?;
     Ok(Some(match job.recall_claim(run_id)? {
-        RecalledClaim::Pending { run_id, attempt } => ClaimAnswer::Served(RunTrigger {
-            job_id,
-            run_id,
-            runner_type: job.runner_type().clone(),
-            config: job.config().cloned(),
-            attempt,
-            triggered_by: job.triggered_by().cloned(),
-        }),
+        RecalledClaim::Pending { run_id, attempt } => {
+            ClaimAnswer::Served(Box::new(RunTrigger::of_job(&job, run_id, attempt)))
+        }
         RecalledClaim::Spent => ClaimAnswer::Spent,
     }))
 }
@@ -228,14 +223,9 @@ async fn reserve(
     )
     .await?;
     tx.commit().await?;
-    Ok(Reservation::Reserved(RunTrigger {
-        job_id,
-        run_id,
-        runner_type: job.runner_type().clone(),
-        config: job.config().cloned(),
-        attempt,
-        triggered_by: job.triggered_by().cloned(),
-    }))
+    Ok(Reservation::Reserved(Box::new(RunTrigger::of_job(
+        &job, run_id, attempt,
+    ))))
 }
 
 /// Parks the claim until it is woken — a Job queued for the type, the type's

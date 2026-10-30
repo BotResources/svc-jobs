@@ -1,3 +1,4 @@
+pub mod acting;
 pub mod admin;
 pub mod backstop;
 pub mod claim;
@@ -16,6 +17,8 @@ pub mod priority;
 pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
+pub mod resolve_v3;
+pub mod run_end;
 pub mod run_facts;
 pub mod runner_type_catalog;
 pub mod runner_type_impacts;
@@ -98,8 +101,13 @@ impl Jobs {
             changes,
         )
         .await?;
+        let mut ended = Vec::new();
         for (job_id, events) in effects {
             self.after_commit(job_id, &events).await?;
+            ended.extend(run_end::ended_runs(job_id, &events));
+        }
+        for run in &ended {
+            Box::pin(run_end::cancel_jobs_requested_by(self, run, metadata)).await?;
         }
         Ok(())
     }
@@ -128,14 +136,7 @@ impl Jobs {
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
                     Ok(run) => {
                         self.transport
-                            .dispatch(&RunTrigger {
-                                job_id: job.id(),
-                                run_id: fact.run_id,
-                                runner_type: job.runner_type().clone(),
-                                config: job.config().cloned(),
-                                attempt: run.attempt_number(),
-                                triggered_by: job.triggered_by().cloned(),
-                            })
+                            .dispatch(&RunTrigger::of_job(job, fact.run_id, run.attempt_number()))
                             .await
                     }
                     Err(error) => Err(bc_jobs::ports::PortError::StoredStateRejected(error)),

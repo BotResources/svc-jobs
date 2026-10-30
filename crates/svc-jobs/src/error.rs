@@ -56,3 +56,9 @@ impl From<br_util_nats_fabric::FabricError> for ServiceError {
         Self::Infra(error.to_string())
     }
 }
+
+impl From<br_core_integration::CoordError> for ServiceError {
+    fn from(error: br_core_integration::CoordError) -> Self {
+        Self::Infra(error.to_string())
+    }
+}

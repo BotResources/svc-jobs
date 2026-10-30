@@ -13,4 +13,4 @@ pub use job_changes::{
     JobChange, WriteContext, commit_job_changes, commit_job_changes_in, record_user_events_in,
 };
 pub use premise::PriorityPremise;
-pub use rejection::publish_rejection;
+pub use rejection::{CreationRefusal, publish_command_rejection, publish_rejection};
