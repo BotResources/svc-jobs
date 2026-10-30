@@ -5,12 +5,20 @@ use tokio::sync::Notify;
 
 use super::*;
 
-fn policy(budget: u32) -> RestartPolicy {
+fn policy() -> RestartPolicy {
     RestartPolicy {
         initial_backoff: Duration::from_millis(1),
         max_backoff: Duration::from_millis(1),
-        budget,
         stability: Duration::from_secs(3600),
+    }
+}
+
+/// The shipped defaults: 250 ms doubling up to 30 s, reset after 60 s of uptime.
+fn production_policy() -> RestartPolicy {
+    RestartPolicy {
+        initial_backoff: Duration::from_millis(250),
+        max_backoff: Duration::from_secs(30),
+        stability: Duration::from_secs(60),
     }
 }
 
@@ -18,16 +26,29 @@ fn attempt_counter() -> Arc<AtomicUsize> {
     Arc::new(AtomicUsize::new(0))
 }
 
-fn spawn_always_failing(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
+fn spawn_binding_after(
+    supervisor: &Supervisor,
+    name: &'static str,
+    failures: usize,
+    tally: &Arc<AtomicUsize>,
+) {
     let tally = tally.clone();
     supervisor.spawn(name, move |established| {
         let tally = tally.clone();
         async move {
-            tally.fetch_add(1, Ordering::SeqCst);
+            if tally.fetch_add(1, Ordering::SeqCst) < failures {
+                drop(established);
+                return Err(ServiceError::Infra("the bus is unreachable".to_owned()));
+            }
             established.signal();
-            Err(ServiceError::Infra("the source of work died".to_owned()))
+            std::future::pending::<()>().await;
+            Ok(())
         }
     });
+}
+
+fn spawn_never_binding(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
+    spawn_binding_after(supervisor, name, usize::MAX, tally);
 }
 
 fn spawn_failing_once(supervisor: &Supervisor, name: &'static str, tally: &Arc<AtomicUsize>) {
@@ -110,7 +131,7 @@ async fn until(condition: impl Fn() -> bool) {
 async fn a_task_that_has_not_bound_its_source_of_work_keeps_a_booted_pod_out_of_rotation() {
     // Given: a spawned task that has not yet bound the subscription it lives on
     let readiness = ReadinessHandle::ready();
-    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     let release = Arc::new(Notify::new());
     spawn_establishing_when_released(&supervisor, "presence_watch", &release);
 
@@ -138,7 +159,7 @@ async fn a_task_that_has_not_bound_its_source_of_work_keeps_a_booted_pod_out_of_
 async fn a_restarted_task_reopens_the_pod_only_when_it_binds_again() {
     // Given: a booted service whose task fails once, then runs without ever binding again
     let readiness = ReadinessHandle::ready();
-    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     supervisor.boot_complete();
     let attempts = attempt_counter();
     spawn_failing_then_never_establishing(&supervisor, "hub_pump", &attempts);
@@ -158,38 +179,82 @@ async fn a_restarted_task_reopens_the_pod_only_when_it_binds_again() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_task_that_exhausts_its_restart_budget_leaves_the_pod_not_ready_and_names_it() {
-    // Given: a supervisor whose booted service runs one doomed task and one healthy task
+async fn a_task_failing_far_past_the_old_budget_is_still_retried_and_reopens_the_pod_on_binding() {
+    // Given: a booted service whose task cannot bind for 25 attempts in a row — far more than the
+    // ten quick restarts 0.5.0 allowed before giving up — and a healthy task beside it
     let readiness = ReadinessHandle::ready();
-    let supervisor = Supervisor::new(readiness.clone(), policy(1));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     supervisor.boot_complete();
-    let doomed = attempt_counter();
+    let attempts = attempt_counter();
     let healthy = attempt_counter();
-    spawn_always_failing(&supervisor, "presence_watch", &doomed);
-    spawn_healthy(&supervisor, "trigger_consumer", &healthy);
+    spawn_binding_after(&supervisor, "job-creation consumer", 25, &attempts);
+    spawn_healthy(&supervisor, "dispatch loop", &healthy);
 
-    // When: the doomed task burns its budget
-    until(|| doomed.load(Ordering::SeqCst) == 2 && healthy.load(Ordering::SeqCst) == 1).await;
+    // When: the bus is still out, a dozen attempts in
+    until(|| attempts.load(Ordering::SeqCst) >= 12).await;
 
-    // Then: the pod stays out of rotation, and says which task is missing
+    // Then: the pod is out of rotation, and names the task that is down
     assert_eq!(
         readiness.snapshot(),
         Readiness::NotReady {
-            reason: "background tasks are down: presence_watch".to_owned()
+            reason: "background tasks are down: job-creation consumer".to_owned()
         },
-        "a pod that lost a background task serves nothing and names the loss",
+        "a task that has not bound again keeps the pod out of rotation",
     );
 
-    // Then: the loop is over — a burnt budget never retries in silence
-    tokio::time::sleep(Duration::from_secs(60)).await;
-    assert_eq!(doomed.load(Ordering::SeqCst), 2);
+    // When: the bus comes back and the 26th attempt binds
+    until(|| attempts.load(Ordering::SeqCst) == 26).await;
+
+    // Then: the pod is ready again on its own — no budget ran out, no operator restarted it
+    until(|| readiness.is_ready()).await;
+    assert_eq!(
+        healthy.load(Ordering::SeqCst),
+        1,
+        "the healthy task never restarted"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_task_whose_bus_stays_out_for_an_hour_is_still_being_retried() {
+    // Given: a booted service on the shipped restart policy, whose task never binds
+    let readiness = ReadinessHandle::ready();
+    let supervisor = Supervisor::new(readiness.clone(), production_policy());
+    supervisor.boot_complete();
+    let attempts = attempt_counter();
+    spawn_never_binding(&supervisor, "runner status consumer", &attempts);
+
+    // When: the outage lasts half an hour, then another half hour
+    tokio::time::sleep(Duration::from_secs(30 * 60)).await;
+    let after_half_an_hour = attempts.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(30 * 60)).await;
+    let after_an_hour = attempts.load(Ordering::SeqCst);
+
+    // Then: the retries went past the ten the old budget allowed, and they never stop — at least
+    // one attempt per maximum backoff, 30 s
+    assert!(
+        after_half_an_hour > 10,
+        "{after_half_an_hour} attempts in half an hour"
+    );
+    assert!(
+        after_an_hour >= after_half_an_hour + 50,
+        "a parked task probes its bus at least every 30 s: {after_half_an_hour} then \
+         {after_an_hour}",
+    );
+
+    // Then: meanwhile the pod is out of rotation, naming the task
+    assert_eq!(
+        readiness.snapshot(),
+        Readiness::NotReady {
+            reason: "background tasks are down: runner status consumer".to_owned()
+        },
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn readiness_returns_only_once_the_task_that_failed_is_running_again() {
     // Given: a booted service whose task fails once and then holds
     let readiness = ReadinessHandle::ready();
-    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     supervisor.boot_complete();
     let attempts = attempt_counter();
     spawn_failing_once(&supervisor, "hub_pump", &attempts);
@@ -205,7 +270,7 @@ async fn readiness_returns_only_once_the_task_that_failed_is_running_again() {
 async fn a_restart_before_boot_completes_never_declares_the_pod_ready() {
     // Given: a supervisor whose service has not finished booting
     let readiness = ReadinessHandle::not_ready("booting");
-    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     let attempts = attempt_counter();
     spawn_failing_once(&supervisor, "hub_pump", &attempts);
 
@@ -221,30 +286,9 @@ async fn a_restart_before_boot_completes_never_declares_the_pod_ready() {
 }
 
 #[test]
-fn the_restart_backoff_doubles_up_to_its_ceiling_and_never_overflows() {
-    // Given: a policy backing off from 100ms up to 30s
-    let policy = RestartPolicy {
-        initial_backoff: Duration::from_millis(100),
-        max_backoff: Duration::from_secs(30),
-        budget: 64,
-        stability: Duration::from_secs(60),
-    };
-
-    // When/Then: each consecutive restart doubles the wait, then flattens at the ceiling
-    assert_eq!(policy.backoff(0), Duration::from_millis(100));
-    assert_eq!(policy.backoff(1), Duration::from_millis(200));
-    assert_eq!(policy.backoff(3), Duration::from_millis(800));
-    assert_eq!(policy.backoff(8), Duration::from_millis(25_600));
-    assert_eq!(policy.backoff(9), Duration::from_secs(30));
-
-    // Then: a long-crashing task shifts no further than the clamp, whatever the count
-    assert_eq!(policy.backoff(u32::MAX), Duration::from_secs(30));
-}
-
-#[test]
 fn a_declared_dependency_recovers_readiness_only_after_reconciliation_marks_it_up() {
     let readiness = ReadinessHandle::not_ready("booting");
-    let supervisor = Supervisor::new(readiness.clone(), policy(8));
+    let supervisor = Supervisor::new(readiness.clone(), policy());
     supervisor.boot_complete();
     assert!(readiness.is_ready());
 
