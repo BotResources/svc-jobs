@@ -122,20 +122,22 @@ fn a_finished_agent_under_a_terminal_parent_refuses_even_when_its_type_is_retire
 }
 
 #[test]
-fn a_live_restart_job_accepts_the_mail_without_starting_another_restart() {
+fn a_live_restart_job_accepts_a_mail_or_a_cc_notice_rings_its_run_and_starts_no_other_restart() {
     let tree = job_id();
     let in_flight = RestartObstacles {
         restart_job_live: true,
         ..CLEAR
     };
-    let recipient = to(
-        RecipientKind::Direct,
-        held(tree, AgentState::Finished, true, in_flight),
-    );
-    let Deliveries(plan) = decide_deliveries(tree, &[recipient]).unwrap();
-    assert!(plan[0].rings_live_run);
-    assert!(!plan[0].starts_restart);
-    assert_eq!(plan[0].refused_restart, None);
+    for kind in [RecipientKind::Direct, RecipientKind::Cc] {
+        let recipient = to(kind, held(tree, AgentState::Finished, true, in_flight));
+        let Deliveries(plan) = decide_deliveries(tree, &[recipient]).unwrap();
+        assert!(
+            plan[0].rings_live_run,
+            "a {kind:?} recipient whose restart Job is live rings the restart Run"
+        );
+        assert!(!plan[0].starts_restart, "{kind:?} starts no second restart");
+        assert_eq!(plan[0].refused_restart, None, "{kind:?}");
+    }
 }
 
 #[test]

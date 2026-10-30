@@ -10,11 +10,8 @@ use support::surface;
 use support::{LONG, QUIET};
 use uuid::Uuid;
 
-const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \
-     WHERE payload::text LIKE '%item_arrived%' AND payload::text LIKE $1";
-
 async fn rings_for(durable: &Durable, run: Uuid) -> i64 {
-    durable.count_like(RINGS_FOR_RUN, &format!("%{run}%")).await
+    durable.rings_for(run, None).await
 }
 
 const WAKES_OF_RUN: &str = "SELECT count(*) FROM restart_wakes WHERE run_id = $1";

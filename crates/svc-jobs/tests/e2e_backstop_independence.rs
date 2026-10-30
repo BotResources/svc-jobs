@@ -90,7 +90,11 @@ async fn a_restart_wake_that_cannot_be_read_does_not_stop_the_safety_backstops_o
 
 #[tokio::test]
 async fn a_restart_wake_that_cannot_be_read_does_not_stop_the_mail_that_wakes_a_valid_restart() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_with(Knobs {
+        backstop_interval_seconds: 3_600,
+        ..Knobs::default()
+    })
+    .await;
     let durable = Durable::open(&fixture.app_url()).await;
     let client = fixture.gql();
     let admin = fixture.admin();

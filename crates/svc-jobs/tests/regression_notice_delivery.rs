@@ -13,7 +13,8 @@ use support::contention::{
     Fixture, a_job_with_one_dispatched_run, a_registered_instance, commit, ids, metadata,
 };
 
-const RINGS_OF_RUN: &str = "SELECT count(*) FROM integration_outbox WHERE payload::text LIKE $1";
+const RINGS_OF_ITEM: &str = "SELECT count(*) FROM integration_outbox \
+     WHERE payload->>'event_type' = 'run.item_arrived' AND payload #>> '{payload,item_id}' = $1";
 const NOTICES_OF_RUN: &str =
     "SELECT count(*) FROM inbox_items WHERE kind = 'NOTICE' AND run_id::text = $1";
 
@@ -69,7 +70,7 @@ async fn a_notice_is_always_kept_and_rings_the_doorbell_only_for_a_live_run() {
     assert_eq!(fixture.count(NOTICES_OF_RUN, &run_text).await, 1);
     assert_eq!(
         fixture
-            .count(RINGS_OF_RUN, &format!("%{}%", quiet.as_uuid()))
+            .count(RINGS_OF_ITEM, &quiet.as_uuid().to_string())
             .await,
         0,
         "a run that has not started has no one to ring"
@@ -95,7 +96,7 @@ async fn a_notice_is_always_kept_and_rings_the_doorbell_only_for_a_live_run() {
     assert_eq!(fixture.count(NOTICES_OF_RUN, &run_text).await, 2);
     assert_eq!(
         fixture
-            .count(RINGS_OF_RUN, &format!("%{}%", item.as_uuid()))
+            .count(RINGS_OF_ITEM, &item.as_uuid().to_string())
             .await,
         1,
         "a live run is rung once for the notice"

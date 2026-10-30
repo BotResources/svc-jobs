@@ -85,8 +85,9 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `domain::runner::saved_state::SavedState::new(value, maximum_bytes)` owns the
   size guard of a saved state and returns `SavedStateRefusal`; the port
   `SavedStates::save_state` takes the checked `SavedState` and no maximum.
-- A mail or notice reaching an agent whose restart Job is live rings the live
-  Run of that restart Job (`Delivery::rings_live_run` for `RestartInFlight`).
+- A mail or a cc notice reaching an agent whose restart Job is live rings the
+  restart Run once it has started (`Delivery::rings_live_run` for
+  `RestartInFlight`); a restart Run that has not started is rung by nothing.
 
 ## 0.7.0 - 2026-10-29
 

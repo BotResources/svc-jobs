@@ -105,14 +105,9 @@ async fn a_notice_for_an_ended_caller_run_reaches_the_live_restart_run_that_acts
         types(&seen).contains(&"ACCEPTED".to_owned()),
         "the restart Run reads the notices that waited for the ended Run: {seen:?}"
     );
-    let rings: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM integration_outbox WHERE payload::text LIKE '%item_arrived%' \
-         AND payload::text LIKE $1 AND payload::text LIKE '%NOTICE%'",
-    )
-    .bind(format!("%{}%", runner::run_id(&restart)))
-    .fetch_one(durable.pool())
-    .await
-    .expect("the doorbell staging reads");
+    let rings = durable
+        .rings_for(runner::run_id(&restart), Some("NOTICE"))
+        .await;
     assert!(
         rings >= 1,
         "the live restart Run is rung for a notice of the Run it acts for"

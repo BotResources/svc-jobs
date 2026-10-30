@@ -122,14 +122,7 @@ async fn items_that_arrived_unread_are_all_returned_once_in_order_and_never_agai
         vec![first.mail_id.to_string(), second.mail_id.to_string()],
         "both mails are returned, in order"
     );
-    let rings: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM integration_outbox WHERE payload::text LIKE '%item_arrived%' \
-         AND payload::text LIKE $1",
-    )
-    .bind(format!("%{}%", scene.child_run()))
-    .fetch_one(durable.pool())
-    .await
-    .expect("the doorbell staging reads");
+    let rings = durable.rings_for(scene.child_run(), None).await;
     assert_eq!(rings, 2, "each arrival was announced once to the live Run");
 
     let ids: Vec<Uuid> = waiting
