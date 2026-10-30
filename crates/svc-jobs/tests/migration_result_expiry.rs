@@ -3,7 +3,7 @@ mod support;
 use std::borrow::Cow;
 
 use br_test_harness::E2eDatabase;
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use support::fixture::{APP_PASSWORD, APP_ROLE, require_provisioned_infrastructure};
@@ -63,8 +63,8 @@ async fn results_kept_before_the_migration_expire_seven_days_after_their_last_re
         &support::wire::unique_runner_type("result-expiry-migration"),
     )
     .await;
-    let kept = Utc::now() - TimeDelta::days(5);
-    let read = Utc::now() - TimeDelta::days(2);
+    let kept = (Utc::now() - TimeDelta::days(5)).trunc_subsecs(6);
+    let read = (Utc::now() - TimeDelta::days(2)).trunc_subsecs(6);
     let unread = insert_result(&pool, job, run, kept, None).await;
     let read_once = insert_result(&pool, job, run, kept, Some(read)).await;
 
