@@ -16,7 +16,7 @@ use crate::error::ServiceError;
 #[derive(Default)]
 pub struct MutationRoot;
 
-#[Object(name = "Mutation")]
+#[Object]
 impl MutationRoot {
     async fn jobs_cancel_job(
         &self,

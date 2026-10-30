@@ -106,3 +106,37 @@ async fn claim_reservation_waits_for_free_capacity_and_is_served_when_a_run_ends
     assert_ne!(runner::job_id(&second), runner::job_id(&first));
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_saturated_type_with_more_waiting_heads_than_a_batch_does_not_starve_a_free_type() {
+    let fixture = JobsFixture::start().await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let saturated = wire::unique_runner_type("saturated");
+    let free = wire::unique_runner_type("free");
+    let mut busy = FakeRunner::new(fixture.nats(), &saturated, "instance-a");
+    let mut idle = FakeRunner::new(fixture.nats(), &free, "instance-a");
+    busy.connect().await;
+    idle.connect().await;
+    dispatch::await_live_instances(&client, admin, &saturated, 1, LONG).await;
+    dispatch::await_live_instances(&client, admin, &free, 1, LONG).await;
+
+    producer.declare_v2(&JobDeclaration::new(&saturated)).await;
+    let running = busy.next_trigger(LONG).await;
+    busy.start_run(&running).await;
+    for _ in 0..bc_jobs::ports::job::DUE_WORK_BATCH + 20 {
+        producer.declare_v2(&JobDeclaration::new(&saturated)).await;
+    }
+    let late = JobDeclaration::new(&free);
+    producer.declare_v2(&late).await;
+
+    let served = idle.next_trigger(LONG).await;
+    assert_eq!(
+        runner::job_id(&served),
+        late.job_id,
+        "a type with free capacity is served whatever waits behind a saturated one"
+    );
+    busy.expect_no_trigger(QUIET).await;
+    fixture.shutdown().await;
+}

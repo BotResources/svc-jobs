@@ -22,7 +22,7 @@ use crate::edge::log_page::log_connection;
 #[derive(Default)]
 pub struct QueryRoot;
 
-#[Object(name = "Query")]
+#[Object]
 impl QueryRoot {
     async fn jobs(
         &self,

@@ -11,10 +11,6 @@ use crate::error::ServiceError;
 use crate::runner_transport::{RunnerChannels, cancel};
 use crate::stream::{Fact, Hub};
 
-/// The push pass: runs once, then sleeps until the next retry falls due, the
-/// interval elapses, or a fact unblocks dispatch. A fact-triggered pass never
-/// starts sooner than `minimum_wake` after the previous one, so a burst of
-/// facts — a cascade over a whole tree — costs one pass, not one per fact.
 pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimum_wake: Duration) {
     let mut facts = hub.subscribe();
     loop {
@@ -34,9 +30,6 @@ pub async fn dispatch_loop(jobs: Arc<Jobs>, hub: Hub, interval: Duration, minimu
     }
 }
 
-/// Waits until `wake`, or until a fact that may unblock dispatch arrives;
-/// facts that cannot are ignored without starting a pass. `true` when a fact
-/// ended the wait.
 async fn wait_for_unblocking_fact(
     hub: &Hub,
     facts: &mut tokio::sync::broadcast::Receiver<Fact>,
@@ -64,12 +57,10 @@ async fn next_wake(
     pass: DispatchPass,
 ) -> Instant {
     let ceiling = interval.max(minimum_wake);
-    // A pass that filled its batch left Jobs waiting behind it: the next one
-    // follows as soon as passes may.
     if pass.truncated && !pass.failed {
         return Instant::now() + minimum_wake;
     }
-    let waited = match jobs.store.next_retry_due_at().await {
+    let waited = match jobs.store.next_retry_due_at(&pass.dispatchable_types).await {
         Err(error) => {
             tracing::warn!(error = %error, "reading the next retry due time failed");
             ceiling
@@ -77,14 +68,14 @@ async fn next_wake(
         Ok(None) => ceiling,
         Ok(Some(due)) => match (due - jobs.clock.now()).to_std() {
             Ok(remaining) => remaining.clamp(minimum_wake, ceiling),
-            Err(_) => wait_on_a_retry_already_due(pass, minimum_wake, ceiling),
+            Err(_) => wait_on_a_retry_already_due(&pass, minimum_wake, ceiling),
         },
     };
     Instant::now() + waited
 }
 
 fn wait_on_a_retry_already_due(
-    pass: DispatchPass,
+    pass: &DispatchPass,
     minimum_wake: Duration,
     ceiling: Duration,
 ) -> Duration {

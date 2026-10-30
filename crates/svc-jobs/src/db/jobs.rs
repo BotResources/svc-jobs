@@ -3,7 +3,7 @@ use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::job::{DUE_WORK_BATCH, DueWorkReader, JobReader};
+use bc_jobs::ports::job::{DUE_WORK_BATCH, DispatchWindow, DueWorkReader, JobReader};
 use chrono::{DateTime, TimeDelta, Utc};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -78,16 +78,37 @@ impl PgStore {
         load_many(&mut connection, ids).await
     }
 
-    pub async fn next_retry_due_at(&self) -> Result<Option<DateTime<Utc>>, PortError> {
+    pub async fn next_retry_due_at(
+        &self,
+        types: &[String],
+    ) -> Result<Option<DateTime<Utc>>, PortError> {
         let sql = format!(
             "SELECT min(w.due_at) AS due_at FROM waiting_jobs w \
-             WHERE w.due_at IS NOT NULL AND w.runner_type_id IN ({PUSHED_TYPES})"
+             WHERE w.due_at IS NOT NULL AND w.runner_type_id IN ({PUSHED_TYPES}) \
+               AND w.runner_type_id IN (SELECT id FROM runner_types WHERE type_key = ANY($1))"
         );
         let row = sqlx::query(&sql)
+            .bind(types)
             .fetch_one(self.pool())
             .await
             .map_err(unavailable)?;
         Ok(row.get("due_at"))
+    }
+
+    pub async fn current_runs_by_type(
+        &self,
+    ) -> Result<std::collections::HashMap<String, u32>, PortError> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT rt.type_key, count(*) FROM current_runs c \
+             JOIN runner_types rt ON rt.id = c.runner_type_id GROUP BY rt.type_key",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, count)| (key, u32::try_from(count).unwrap_or(u32::MAX)))
+            .collect())
     }
 
     pub async fn declaring_actor(&self, job_id: JobId) -> Result<Option<Uuid>, PortError> {
@@ -207,10 +228,27 @@ impl JobReader for PgStore {
 
 #[async_trait]
 impl DueWorkReader for PgStore {
-    async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
+    async fn jobs_awaiting_dispatch(
+        &self,
+        at: DateTime<Utc>,
+        windows: &[DispatchWindow],
+    ) -> Result<Vec<Job>, PortError> {
+        if windows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<String> = windows
+            .iter()
+            .map(|window| window.runner_type.as_str().to_owned())
+            .collect();
+        let free: Vec<i32> = windows
+            .iter()
+            .map(|window| i32::try_from(window.free).unwrap_or(i32::MAX))
+            .collect();
         let ids: Vec<Uuid> = sqlx::query_scalar(&pushed_in_order())
             .bind(at)
             .bind(i64::try_from(DUE_WORK_BATCH).unwrap_or(i64::MAX))
+            .bind(keys)
+            .bind(free)
             .fetch_all(self.pool())
             .await
             .map_err(unavailable)?;
