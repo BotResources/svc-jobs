@@ -33,6 +33,7 @@ pub struct JobChange {
     pub priority_premise: Option<PriorityPremise>,
     pub descendants_premise: Option<Vec<Uuid>>,
     pub free_capacity_of: Option<RunnerTypeKey>,
+    pub removes_directory: bool,
 }
 
 impl JobChange {
@@ -48,7 +49,17 @@ impl JobChange {
             priority_premise: None,
             descendants_premise: None,
             free_capacity_of: None,
+            removes_directory: false,
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.events.is_empty() && self.answers.is_empty() && !self.removes_directory
+    }
+
+    pub fn removing_directory(mut self) -> Self {
+        self.removes_directory = true;
+        self
     }
 
     pub fn requiring_free_capacity(mut self, runner_type: RunnerTypeKey) -> Self {
@@ -102,10 +113,7 @@ pub async fn commit_job_changes(
     context: WriteContext<'_>,
     changes: Vec<JobChange>,
 ) -> Result<(), ServiceError> {
-    if changes
-        .iter()
-        .all(|change| change.events.is_empty() && change.answers.is_empty())
-    {
+    if changes.iter().all(|change| change.is_empty()) {
         return Ok(());
     }
     let mut tx = store.begin().await?;
@@ -127,7 +135,7 @@ pub async fn commit_job_changes_in(
     } = context;
     let changes: Vec<JobChange> = changes
         .into_iter()
-        .filter(|change| !change.events.is_empty() || !change.answers.is_empty())
+        .filter(|change| !change.is_empty())
         .collect();
     if changes.is_empty() {
         return Ok(());
@@ -250,6 +258,9 @@ async fn apply_change(
         stage(&mut *tx, &record)
             .await
             .map_err(|error| ServiceError::Infra(error.to_string()))?;
+    }
+    if change.removes_directory {
+        apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
     }
     Ok(())
 }

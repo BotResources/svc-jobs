@@ -1,42 +1,8 @@
 pub mod listing;
 pub mod registration;
 
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
+pub use crate::domain::ids::AgentId;
 use crate::error::JobsError;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(try_from = "Uuid", into = "Uuid")]
-pub struct AgentId(Uuid);
-
-impl AgentId {
-    pub fn new(value: Uuid) -> Result<Self, JobsError> {
-        if value.is_nil() {
-            Err(JobsError::BlankValue { field: "agent_id" })
-        } else {
-            Ok(Self(value))
-        }
-    }
-
-    pub fn as_uuid(&self) -> Uuid {
-        self.0
-    }
-}
-
-impl From<AgentId> for Uuid {
-    fn from(value: AgentId) -> Self {
-        value.0
-    }
-}
-
-impl TryFrom<Uuid> for AgentId {
-    type Error = JobsError;
-
-    fn try_from(value: Uuid) -> Result<Self, JobsError> {
-        Self::new(value)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentState {

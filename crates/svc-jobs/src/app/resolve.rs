@@ -202,7 +202,8 @@ async fn cancel_once(
     }
     cascaded.sort_by_key(|change| change.job_id.as_uuid());
     let mut root = JobChange::new(job_id, Some(job.clone()), result.events)
-        .over_descendants(descendants.iter().map(Job::id));
+        .over_descendants(descendants.iter().map(Job::id))
+        .removing_directory();
     if let Some(accepted) = accepted {
         root = root.answering(accepted);
     }

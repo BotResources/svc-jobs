@@ -7,6 +7,7 @@ use crate::domain::ids::{JobId, RunId};
 pub enum RunStanding {
     Unknown,
     NotStarted,
+    Removed,
     StartedOnAnotherInstance,
     Started { initial_job_id: JobId },
 }
@@ -30,6 +31,7 @@ pub struct HeldAgent {
 pub enum RegistrationRefusal {
     RunUnknown,
     RunNotStarted,
+    RunRemoved,
     InstanceMismatch,
     AgentIdInOtherTree { agent_id: AgentId },
     AgentIdNotFinished { agent_id: AgentId },
@@ -41,6 +43,7 @@ impl RegistrationRefusal {
         match self {
             Self::RunUnknown => "run_unknown",
             Self::RunNotStarted => "run_not_started",
+            Self::RunRemoved => "run_removed",
             Self::InstanceMismatch => "instance_mismatch",
             Self::AgentIdInOtherTree { .. } => "agent_id_in_other_tree",
             Self::AgentIdNotFinished { .. } => "agent_id_not_finished",
@@ -52,6 +55,7 @@ impl RegistrationRefusal {
         match self {
             Self::RunUnknown => "Jobs holds no such run.",
             Self::RunNotStarted => "The run is not started, so it cannot register agents.",
+            Self::RunRemoved => "The run was removed from the agent directory.",
             Self::InstanceMismatch => "The run is not held by the instance that sent the request.",
             Self::AgentIdInOtherTree { .. } => {
                 "An agent id of the request belongs to a run of another tree."
@@ -84,18 +88,23 @@ pub struct Registration {
     pub agents: Vec<PlacedAgent>,
 }
 
+pub fn require_live(standing: RunStanding) -> Result<JobId, RegistrationRefusal> {
+    match standing {
+        RunStanding::Unknown => Err(RegistrationRefusal::RunUnknown),
+        RunStanding::NotStarted => Err(RegistrationRefusal::RunNotStarted),
+        RunStanding::Removed => Err(RegistrationRefusal::RunRemoved),
+        RunStanding::StartedOnAnotherInstance => Err(RegistrationRefusal::InstanceMismatch),
+        RunStanding::Started { initial_job_id } => Ok(initial_job_id),
+    }
+}
+
 pub fn decide_registration(
     run_id: RunId,
     standing: RunStanding,
     declarations: &[AgentDeclaration],
     held: &[HeldAgent],
 ) -> Result<Registration, RegistrationRefusal> {
-    let initial_job_id = match standing {
-        RunStanding::Unknown => return Err(RegistrationRefusal::RunUnknown),
-        RunStanding::NotStarted => return Err(RegistrationRefusal::RunNotStarted),
-        RunStanding::StartedOnAnotherInstance => return Err(RegistrationRefusal::InstanceMismatch),
-        RunStanding::Started { initial_job_id } => initial_job_id,
-    };
+    let initial_job_id = require_live(standing)?;
     let mut seen = HashSet::new();
     if !declarations
         .iter()
@@ -169,6 +178,7 @@ mod tests {
         for (standing, refusal) in [
             (RunStanding::Unknown, RegistrationRefusal::RunUnknown),
             (RunStanding::NotStarted, RegistrationRefusal::RunNotStarted),
+            (RunStanding::Removed, RegistrationRefusal::RunRemoved),
             (
                 RunStanding::StartedOnAnotherInstance,
                 RegistrationRefusal::InstanceMismatch,

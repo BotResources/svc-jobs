@@ -5,6 +5,7 @@ pub mod claim;
 pub mod claim_waiters;
 pub mod claim_wakes;
 pub mod create;
+pub mod directory;
 pub mod dispatch;
 pub mod environment;
 pub mod fingerprint;
@@ -130,8 +131,6 @@ impl Jobs {
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {
         for event in events {
             let outcome = match event {
-                // A claimed Run reaches its Instance in the claim reply, never on
-                // the trigger stream.
                 JobEvent::RunDispatched(fact) if fact.claimed_by.is_some() => Ok(()),
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
                     Ok(run) => {

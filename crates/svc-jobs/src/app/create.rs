@@ -9,7 +9,7 @@ use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::EventMetadata;
 use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};
-use contract_jobs::command_v3::CreateJobV3;
+use contract_jobs::command_v3::{CallMode, CreateJobV3};
 use contract_jobs::event::{
     REASON_DUPLICATE_ACTIVE_ENTITY, REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD,
 };
@@ -85,7 +85,23 @@ async fn requester_of(
         Some(given) if given != run_job => return Err(JobsError::ParentNotOfRun.into()),
         Some(_) => {}
     }
+    guard_caller_address(jobs, &wire, acting.run_id).await?;
     Ok((wire, Requester::Run(acting.run_id)))
+}
+
+async fn guard_caller_address(
+    jobs: &Jobs,
+    wire: &CreateJobV3,
+    run_id: bc_jobs::domain::ids::RunId,
+) -> Result<(), ServiceError> {
+    let (Some(CallMode::Background), Some(address)) = (wire.mode, wire.caller_address) else {
+        return Ok(());
+    };
+    match jobs.store.mail_address_run(address).await? {
+        Some(held_by) if held_by == run_id => Ok(()),
+        Some(_) => Err(JobsError::CallerAddressNotOfRun.into()),
+        None => Err(JobsError::CallerAddressNotHeld.into()),
+    }
 }
 
 async fn decide(

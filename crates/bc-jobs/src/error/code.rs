@@ -39,6 +39,7 @@ impl JobsError {
             Self::ParentNotOfRun => "parent_not_of_run",
             Self::ModeRequired => "mode_required",
             Self::CallerAddressNotHeld => "caller_address_not_held",
+            Self::CallerAddressNotOfRun => "caller_address_not_of_run",
             Self::PayloadTooLarge { .. } => "payload_too_large",
             Self::NotPlatformAdministrator => "not_platform_administrator",
             Self::NotSuperUser => "not_super_user",

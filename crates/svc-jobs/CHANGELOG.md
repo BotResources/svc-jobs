@@ -14,7 +14,8 @@ to `## Unreleased`).
 
 Requester, Passport and lineage on every job. This release is a work in
 progress of the 0.6 line: the runner surface (agent directory, mail, results,
-saved state and restart, GraphQL `jobs:runner`) is not in it yet.
+saved state and restart, GraphQL `jobs:runner`, the arrival doorbell and
+`jobs.runner.mark_read`) is not in it yet.
 
 ### Added
 
@@ -35,6 +36,16 @@ saved state and restart, GraphQL `jobs:runner`) is not in it yet.
   has free capacity (the declared capacity of its ready live instances minus
   its Runs that have not ended); otherwise it waits, and the end of a Run wakes
   it. Refusal `no_free_capacity`. Migration `0005`: `current_runs`.
+- The agent directory: `jobs.runner.register_agents.{runner_type}` and
+  `jobs.runner.list_agents.{runner_type}` answer runner requests on the core
+  bus (queue group `svc_jobs_runner_surface`), fail-closed with a typed reason.
+  A Run that ends with success makes its agents `FINISHED`; a Run that fails or
+  is cancelled, and the cancel of a Job, remove the agents of the Run and of its
+  descendant Runs for good. Migration `0006`: `directory_agents`,
+  `directory_removed_runs`, `jobs.parent_run_id`.
+- A BACKGROUND call is refused with `caller_address_not_held` or
+  `caller_address_not_of_run` unless the address is an inbox address of the
+  acting Run in the directory.
 
 ### Changed
 

@@ -49,6 +49,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::ParentNotOfRun
         | JobsError::ModeRequired
         | JobsError::CallerAddressNotHeld
+        | JobsError::CallerAddressNotOfRun
         | JobsError::PayloadTooLarge { .. }
         | JobsError::ActingRunMissing
         | JobsError::PassportRequired

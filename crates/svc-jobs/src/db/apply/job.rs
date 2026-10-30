@@ -33,9 +33,12 @@ pub async fn queued(
         "INSERT INTO jobs (id, runner_type_id, config, parent_job_id, predecessor_job_id, \
          triggered_by_id, producer_id, source_entity_id, max_attempts, created_at, \
          requested_priority, effective_priority, forced_priority, root_job_id, \
-         requester, passport, payload, call) \
+         requester, passport, payload, call, parent_run_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
-            coalesce($14, (SELECT {} FROM jobs p WHERE p.id = $4), $1), $15, $16, $17, $18)",
+            coalesce($14, (SELECT {} FROM jobs p WHERE p.id = $4), $1), $15, $16, $17, $18, \
+            coalesce( \
+                (SELECT r.id FROM runs r WHERE r.id = ($15::jsonb ->> 'Run')::uuid), \
+                (SELECT cr.run_id FROM current_runs cr WHERE cr.job_id = $4 LIMIT 1)))",
         crate::db::lineage::root_of("p"),
     );
     sqlx::query(&sql)

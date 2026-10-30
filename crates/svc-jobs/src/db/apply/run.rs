@@ -166,7 +166,8 @@ pub async fn completed(
     fact: &RunCompleted,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "COMPLETED", at, None).await
+    terminal(tx, fact.run_id.as_uuid(), "COMPLETED", at, None).await?;
+    super::directory::run_finished(tx, fact.run_id.as_uuid()).await
 }
 
 pub async fn cancelled(
@@ -175,6 +176,7 @@ pub async fn cancelled(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await?;
+    super::directory::remove_run_subtree(tx, fact.run_id.as_uuid(), at).await?;
     let Some(reason) = &fact.withdrawn_for else {
         return Ok(());
     };
@@ -200,7 +202,8 @@ pub async fn failed(
     fact: &RunFailed,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "FAILED", at, Some(&fact.report)).await
+    terminal(tx, fact.run_id.as_uuid(), "FAILED", at, Some(&fact.report)).await?;
+    super::directory::remove_run_subtree(tx, fact.run_id.as_uuid(), at).await
 }
 
 async fn terminal(

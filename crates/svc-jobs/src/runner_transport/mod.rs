@@ -3,6 +3,7 @@ pub mod claim;
 pub mod consume;
 pub mod observability;
 pub mod presence;
+pub mod surface;
 pub mod trigger;
 
 use async_nats::jetstream::kv::Store;
@@ -54,7 +55,6 @@ impl RunnerChannels {
         &self.jetstream
     }
 
-    /// The core NATS client the claim responder answers requests on.
     pub fn client(&self) -> async_nats::Client {
         self.jetstream.client()
     }
@@ -127,13 +127,9 @@ mod tests {
 
     #[test]
     fn the_domain_key_and_the_transport_segment_admit_exactly_the_same_alphabet() {
-        // Given: the values a runner type or an instance key could ever carry
         for candidate in CANDIDATES {
-            // When: the domain key and the published transport segment each judge it
             let domain = RunnerTypeKey::new(candidate).is_ok();
             let transport = SubjectSegment::runner_type(candidate).is_ok();
-            // Then: neither may admit what the other refuses, or a key the domain accepted
-            // would be unroutable — or worse, would widen a subject the contract validated
             assert_eq!(
                 domain, transport,
                 "the domain key and the transport segment disagree on '{candidate}'"
@@ -148,10 +144,8 @@ mod tests {
 
     #[test]
     fn both_alphabets_cap_a_segment_at_the_same_length() {
-        // Given: the longest value either side accepts, and one character more
         let longest = "a".repeat(64);
         let over = "a".repeat(65);
-        // When/Then: the cap is one contract, not two that drift apart
         assert!(RunnerTypeKey::new(&longest).is_ok());
         assert!(SubjectSegment::runner_type(&longest).is_ok());
         assert!(RunnerTypeKey::new(&over).is_err());

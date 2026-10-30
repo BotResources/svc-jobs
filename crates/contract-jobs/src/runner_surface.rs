@@ -19,10 +19,12 @@ pub const LIST_AGENTS_PREFIX: &str = "jobs.runner.list_agents.";
 
 pub const REASON_RUN_UNKNOWN: &str = "run_unknown";
 pub const REASON_RUN_NOT_STARTED: &str = "run_not_started";
+pub const REASON_RUN_REMOVED: &str = "run_removed";
 pub const REASON_INSTANCE_MISMATCH: &str = "instance_mismatch";
 pub const REASON_AGENT_ID_IN_OTHER_TREE: &str = "agent_id_in_other_tree";
 pub const REASON_AGENT_ID_NOT_FINISHED: &str = "agent_id_not_finished";
 pub const REASON_MALFORMED: &str = "malformed";
+pub const REASON_UNAVAILABLE: &str = "unavailable";
 pub const REASON_ITEM_NOT_YOURS: &str = "item_not_yours";
 
 fn wire_version() -> u8 {

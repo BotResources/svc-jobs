@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod claim;
+pub mod directory;
 pub mod dispatch_order;
 pub mod fleet;
 pub mod hydrate;

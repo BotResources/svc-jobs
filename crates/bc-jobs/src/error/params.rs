@@ -36,6 +36,7 @@ impl JobsError {
             | Self::ParentNotOfRun
             | Self::ModeRequired
             | Self::CallerAddressNotHeld
+            | Self::CallerAddressNotOfRun
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman

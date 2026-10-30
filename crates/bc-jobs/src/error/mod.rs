@@ -89,6 +89,7 @@ pub enum JobsError {
     ParentNotOfRun,
     ModeRequired,
     CallerAddressNotHeld,
+    CallerAddressNotOfRun,
     PayloadTooLarge {
         size: usize,
         maximum: usize,
