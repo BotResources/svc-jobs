@@ -1,6 +1,3 @@
-//! Writing the facts of one RunnerType, decided on a state the write locks
-//! again and compares before applying.
-
 use bc_jobs::domain::actions::fleet::RetirementWindow;
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::ids::{EventId, RunnerTypeId};
@@ -46,10 +43,10 @@ pub async fn commit_fleet(
     let locked =
         PgStore::lock_runner_type(&mut tx, change.runner_type_id, change.runner_type).await?;
     if fingerprint::of_fleet(change.decided_on) != fingerprint::of_fleet(locked.as_ref()) {
-        return Err(ServiceError::Contended);
+        return Err(ServiceError::write_race());
     }
     if let Some(window) = revalidate_retirement_within {
-        let locked = locked.as_ref().ok_or(ServiceError::Contended)?;
+        let locked = locked.as_ref().ok_or_else(ServiceError::write_race)?;
         let facts =
             PgStore::runner_type_decision_facts_in(&mut tx, change.runner_type, window).await?;
         locked.guard_retire(facts)?;

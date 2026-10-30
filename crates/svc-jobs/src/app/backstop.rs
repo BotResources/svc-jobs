@@ -233,7 +233,7 @@ async fn settle_one(
     backstop: &'static str,
 ) -> Result<(), ServiceError> {
     match commit(jobs, job, events).await {
-        Err(ServiceError::Contended) => {
+        Err(ServiceError::Contended(_)) => {
             tracing::info!(
                 job_id = %job.id().as_uuid(),
                 backstop,

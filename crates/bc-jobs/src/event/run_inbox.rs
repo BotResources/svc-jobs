@@ -58,4 +58,6 @@ impl JobEvent {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub(crate) mod samples;
+#[cfg(test)]
+mod tests;

@@ -73,11 +73,8 @@ impl QueryRoot {
         let job_id = JobId::new(job_id).map_err(edge_error)?;
         crate::app::tree_directory::listed_agents_of_tree(&state.jobs, job_id)
             .await
-            .map_err(edge_error)?
             .map(|agents| agents.into_iter().map(GqlDirectoryAgent::from).collect())
-            .ok_or_else(|| {
-                async_graphql::Error::from(EdgeError::not_found().with_reason("job_not_found"))
-            })
+            .map_err(edge_error)
     }
 
     async fn jobs_job_by_source(
@@ -101,7 +98,6 @@ impl QueryRoot {
         }
     }
 
-    // the arguments are the sealed SDL's own connection arguments, not a signature we chose
     #[allow(clippy::too_many_arguments)]
     async fn jobs_logs(
         &self,
@@ -149,8 +145,6 @@ impl QueryRoot {
         project::fleet_views(state, runner_type.as_deref()).await
     }
 
-    /// The maximum priority that applies to the caller: their own, or the
-    /// service default. Open to any active human.
     async fn jobs_my_max_priority(&self, ctx: &Context<'_>) -> Result<GqlMyMaxPriority> {
         let user_id = own_user(ctx)?;
         let state = ctx.data::<EdgeState>()?;
@@ -162,10 +156,6 @@ impl QueryRoot {
         })
     }
 
-    /// The maximum priority of each user asked for — their own or the service
-    /// default, and which of the two applies — with the caller's affordances
-    /// of setting and clearing it. Platform administrators only; at most 200
-    /// users per read, each answered once.
     async fn jobs_user_max_priorities(
         &self,
         ctx: &Context<'_>,

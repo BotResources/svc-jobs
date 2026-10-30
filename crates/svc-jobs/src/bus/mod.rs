@@ -290,7 +290,7 @@ fn settle(outcome: Result<(), ServiceError>) -> MessageOutcome {
             tracing::error!(detail, "an integration command failed on infrastructure");
             MessageOutcome::Nak(None)
         }
-        Err(ServiceError::Contended) => {
+        Err(ServiceError::Contended(_)) => {
             tracing::debug!("an integration command lost a write race, redelivered");
             MessageOutcome::Nak(None)
         }

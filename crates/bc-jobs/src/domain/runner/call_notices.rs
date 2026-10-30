@@ -62,7 +62,7 @@ mod tests {
     use crate::domain::job::resolution::JobFailureCause;
     use crate::domain::keys::ReasonCode;
     use crate::event::job_facts::{JobFailed, RunCancelled, RunCompleted, RunStarted};
-    use crate::event::run_inbox::tests::every_kind_of_event;
+    use crate::event::run_inbox::samples::every_kind_of_event;
     use crate::fixtures::{instance, job_id, resolution_id, run_id};
     use uuid::Uuid;
 

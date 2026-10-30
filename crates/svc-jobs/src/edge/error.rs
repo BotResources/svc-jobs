@@ -15,7 +15,7 @@ pub fn of_service(error: ServiceError) -> EdgeError {
         ServiceError::RunnerTypeNotFound => {
             EdgeError::not_found().with_reason("runner_type_not_found")
         }
-        ServiceError::Contended => EdgeError::conflict().with_reason("concurrent_modification"),
+        ServiceError::Contended(_) => EdgeError::conflict().with_reason("concurrent_modification"),
         ServiceError::Infra(detail) => EdgeError::internal(detail),
         other => EdgeError::internal(other.to_string()),
     }
@@ -24,7 +24,7 @@ pub fn of_service(error: ServiceError) -> EdgeError {
 pub fn of_port(error: PortError) -> EdgeError {
     match error {
         PortError::StoredStateRejected(domain) => of_domain(&domain),
-        PortError::ConcurrentModification => {
+        PortError::ConcurrentModification | PortError::TreeLockTimeout => {
             EdgeError::conflict().with_reason("concurrent_modification")
         }
         PortError::Unavailable { detail } => EdgeError::internal(detail),

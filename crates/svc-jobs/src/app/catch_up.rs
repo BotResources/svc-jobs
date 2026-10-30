@@ -21,7 +21,14 @@ pub async fn apply_acknowledged_start(jobs: &Jobs, run_id: RunId) -> Result<(), 
         instance_key: instance_key.as_str().to_owned(),
     };
     match run_facts::started(jobs, &runner_type, &fact).await {
-        Ok(()) | Err(ServiceError::Contended) => Ok(()),
+        Ok(()) => Ok(()),
+        Err(error @ ServiceError::Contended(_)) => {
+            if jobs.store.awaiting_start(run_id).await?.is_none() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
         Err(error) => Err(error),
     }
 }

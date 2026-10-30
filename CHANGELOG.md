@@ -30,11 +30,24 @@ form to decide whether a version ships.
   an event does to the inbox of a Run (`bc-jobs` `RunInboxEffect`) decides both
   the lock and the notices, and a new kind of event does not compile until it
   is classified.
-- Waiting for the Tree lock is bounded (5 s): a write that cannot take it is
-  refused as `concurrent_modification` and a runner fact is redelivered, instead
-  of holding a connection and the status consumer for as long as another write
-  holds the Tree. An event that ends a Run or writes a call notice on a Job
-  whose Tree is unknown is refused (`job_not_found`) instead of going unlocked.
+- Waiting for the Tree lock is bounded (5 s), instead of holding a connection
+  and the status consumer for as long as another write holds the Tree. A wait
+  that ends is a distinct outcome of the runner surface, not a typed refusal:
+  a GraphQL runner gesture answers a top-level error with `data: null` and
+  `extensions {code: "CONFLICT", reason: "concurrent_modification"}` after
+  about 5 s (every typed refusal answers `{success, reason, message}`); a NATS
+  surface request (`register_agents`, `list_agents`, `mark_read`) gets no
+  reply, so the runner's own request times out; a runner status fact is
+  redelivered until the Tree is free. A timeout is not attempted again inside
+  the service, so a gesture waits 5 s once, not once per attempt. Each timeout
+  is logged at warn and counted in `jobs_tree_lock_timeouts_total`. An event
+  that ends a Run or writes a call notice on a Job whose Tree is unknown is
+  refused (`job_not_found`) instead of going unlocked.
+- A Run whose start fact was acknowledged but not yet applied is no longer
+  answered `run_not_started` when the start waits for a held Tree: the gesture
+  answers the conflict above, or goes on once the start is applied.
+- `jobsTreeAgents` answers `job_not_found` for an unknown Job from the
+  application, as every other gesture does, instead of from the resolver.
 
 ### Added
 
@@ -43,16 +56,16 @@ form to decide whether a version ships.
 
 ### Known gaps
 
-- The runner configuration is kept as a JSON value (stored as `jsonb`) and
-  serialized again for the runner, so the producer's own text is not kept; the
-  sealed test "Config and payload travel apart" says byte for byte.
 - A GraphQL runner call names its Instance by key alone and carries no runner
   type, so an Instance of another runner type with the same key is not told
   apart from the Instance that holds the Run; the NATS surface names the type
   and refuses it (`e2e_runner_isolation`,
   `a_graphql_call_of_another_runner_type_with_the_same_instance_key_is_not_refused_known_gap`).
-- The queue position of a call notice is measured while the Tree lock is held:
-  the lock cannot be released before the write ends.
+- The queue position of a call notice is measured while the Tree lock is
+  held, because the notice is written in the same transaction as the Job that
+  is queued: the lock cannot be released before the write ends. The cost is one
+  windowed query over the waiting Jobs of the runner type per queued call, so it
+  grows with the queue.
 
 ### Tests
 

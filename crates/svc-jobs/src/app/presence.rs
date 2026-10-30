@@ -69,11 +69,11 @@ async fn accepted(jobs: &Jobs, presence: &wire::Presence) -> Result<(), ServiceE
                 runner_type_catalog::project_committed(jobs, &key, &result.events).await;
                 return Ok(());
             }
-            Err(ServiceError::Contended) => continue,
+            Err(error) if error.is_write_race() => continue,
             Err(other) => return Err(other),
         }
     }
-    Err(ServiceError::Contended)
+    Err(ServiceError::write_race())
 }
 
 async fn refused(
@@ -145,11 +145,11 @@ pub async fn drained(
                 runner_type_catalog::project_committed(jobs, &key, &result.events).await;
                 return Ok(());
             }
-            Err(ServiceError::Contended) => continue,
+            Err(error) if error.is_write_race() => continue,
             Err(other) => return Err(other),
         }
     }
-    Err(ServiceError::Contended)
+    Err(ServiceError::write_race())
 }
 
 const PRESENCE_DECISION_ATTEMPTS: usize = 5;
@@ -266,7 +266,7 @@ pub async fn record_loss(
         .await
         {
             Ok(()) => return Ok(Some(session_id)),
-            Err(ServiceError::Contended) => continue,
+            Err(error) if error.is_write_race() => continue,
             Err(other) => return Err(other),
         }
     }
@@ -277,5 +277,5 @@ pub async fn record_loss(
         "an instance loss found the fleet moving under every attempt; its presence session stays \
          open and its runs wait for the backstop instead of being reclaimed"
     );
-    Err(ServiceError::Contended)
+    Err(ServiceError::write_race())
 }

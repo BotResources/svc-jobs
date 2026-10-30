@@ -22,6 +22,7 @@ pub mod reconcile;
 pub mod resolve;
 pub mod resolve_v3;
 pub mod restart;
+pub mod retry;
 pub mod run_end;
 pub mod run_facts;
 pub mod runner;

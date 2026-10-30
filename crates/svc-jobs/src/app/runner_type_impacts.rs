@@ -41,7 +41,7 @@ async fn emit_one_due(
     }
     let known = PgStore::load_fleet_in(&mut tx, &due.runner_type)
         .await?
-        .ok_or(ServiceError::Contended)?;
+        .ok_or_else(ServiceError::write_race)?;
     let window = RetirementWindow {
         evaluated_at: at,
         quiet_period,

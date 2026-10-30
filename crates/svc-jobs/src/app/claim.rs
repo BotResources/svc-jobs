@@ -101,7 +101,7 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
                 continue;
             }
             Ok(Reservation::NothingWaiting) => {}
-            Err(ServiceError::Contended) => {
+            Err(ServiceError::Contended(_)) => {
                 jobs.waiters.wake_one(&key);
                 continue;
             }
@@ -166,7 +166,7 @@ async fn reserve(
         };
     let job = PgStore::load_in(&mut tx, job_id)
         .await?
-        .ok_or(ServiceError::Contended)?;
+        .ok_or_else(ServiceError::write_race)?;
     let run_id = RunId::new(jobs.ids.next())?;
     let decided = job.reserve_run(
         ReserveRun {
