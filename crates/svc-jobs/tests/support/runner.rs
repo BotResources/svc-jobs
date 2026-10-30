@@ -46,7 +46,11 @@ impl<'a> FakeRunner<'a> {
     }
 
     pub async fn connect(&mut self) {
-        self.announce(wire::STATUS_READY).await;
+        self.connect_as(wire::STATUS_READY).await;
+    }
+
+    pub async fn connect_as(&mut self, status: &str) {
+        self.announce(status).await;
         self.start_refreshing().await;
     }
 
