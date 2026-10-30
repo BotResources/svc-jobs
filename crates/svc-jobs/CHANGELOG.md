@@ -14,6 +14,10 @@ to `## Unreleased`).
 
 ### Fixed
 
+- Administrators could not see the agent directory of a Tree, which the
+  sealed 0.6 gives them: `jobsTreeAgents(jobId)` reads it for the Tree of a
+  Job, as the runner listing shows it (the running agents and the finished
+  agents that can restart). It is a snapshot; no live delta carries it.
 - A Run start and every write that can put an item in an inbox (a mail, a cc
   notice, a call notice) take the Tree lock, so an item that reaches an agent
   whose restart Run starts at the same moment is either rung to that Run or
@@ -24,8 +28,83 @@ to `## Unreleased`).
 
 ### Tests
 
-- The end-to-end suite proves every clause of the sealed 0.6 tests that it only
-  partly proved: see the test files named in the pull request.
+The end-to-end suite now proves, on real Postgres and NATS, the clauses of the
+sealed 0.6 tests that it proved only in part:
+
+- A Result is kept for 7 days, erased on read, and read only by its addressee:
+  a read by reference erases it, a read with keep is read again by the Run of
+  the restart Job, and a later keep read moves the expiry forward.
+- A Run that ends after its Job was finished still ends as usual: no retry
+  starts, and a second fact for the ended Run is acknowledged and discarded.
+- A Run that fails or is cancelled cancels the Jobs it created: executing,
+  waiting, a restart Job and a manual-retry successor of the failed Run; a
+  terminal child stays and leaves the directory; the retry keeps its own.
+- A background answer comes by mail and no Result is kept: the mail reaches the
+  named address and a read of a Result is refused.
+- A background runner call confirms at once and sends notices: the queue
+  position is sent each time the Job starts to wait, not at each change; the
+  Job is not finished by its Run; a refused call creates no Job; cancelling the
+  Caller's Job cancels the called Jobs.
+- A bad recipient refuses the whole mail: a removed, an unknown and an
+  unrestartable address, each with its reason.
+- A cc recipient gets a notice, not the mail: attachments are fetched apart
+  (`jobsAttachment`), and the cc notice is read when the agent next starts.
+- A direct mail wakes a finished agent as a restart Job: the work carries no
+  state, agent id or mail; the old Job is untouched; a later mail starts a new
+  restart Job.
+- A failed or cancelled Run removes everything that depends on it: saved
+  state, unread notices and addresses; a mail to a removed agent is refused; the
+  cancel of a terminal Job removes its Runs and cancels what lives below.
+- A failed restart Run leaves the agents finished and the mail unread: only
+  what the restart Run added leaves; a cancel of the Tree removes the agent.
+- A failure notice wakes a finished background Caller: the restarted Caller
+  reads it; a cc notice starts nothing.
+- A failure report tells an agent what to decide: the message names the Job,
+  the Run, the reason and that the retries are spent; `DECLARED_BY_OWNER`.
+- A mail id cannot be reused for another mail: subject, body, recipients and
+  attachments, and the inbox is unchanged.
+- A mail names its author and its source conversation (author length,
+  blank author, UUIDv7 conversation, cc notice without either).
+- A payload kept by Jobs is uploaded before its Job exists, by a runner; and a
+  second upload for a Job id keeps the first payload.
+- A read marker keeps unread mail across a crash, in order of acceptance, for
+  mail and notices.
+- A restart Job keeps the parent and the Requester of its origin: Passport,
+  config, payload, mode, caller address, no predecessor, no source, forced
+  priority; the restart of an Initial Job is its own parent and is capped again.
+- A retired type leaves the mail unread with a reason; a terminal parent
+  refuses the mail and keeps a failure notice unread.
+- A retry gets new agents and a restart keeps its agent ids.
+- A runner uses only its own Runs, addresses and Jobs, and is refused first on
+  another Instance and without the runner scope.
+- A sync runner call ends with the answer or the failure in the Caller's Run,
+  stays in progress until the Caller finishes it, and is cancelled with it.
+- Acts-for is transitive across two restarts; a plain retry gets none of it.
+- Administrators do not read mail, Results or kept payloads, and see the agent
+  directory of the Tree.
+- Agent registration is answered and fail-closed: a refused registration
+  registers nothing; an ended Run registers no agent.
+- An item is announced to the Run and nothing is lost on reconnection: cc
+  notices and call notices ring as mail does.
+- Cancel comes from the Requester or the working runner and reaches every Job
+  below; cancelling a restart Job reaches the Jobs of the Runs it acts for.
+- Claim reservation waits for free capacity after a heartbeat lowers it.
+- Config and payload travel apart, to a manual-retry successor too, and a
+  reference is not read.
+- Every Job has a Passport that Jobs stores and hands on unchanged: the whole
+  Passport in every trigger, the implied KnownUser, `passport_user_mismatch`.
+- Mail stays inside one Tree: `other_tree`, `sender_not_of_run`,
+  `sender_unknown`.
+- Only the Requester finishes or fails a Job, and not through an ended Run.
+- Push dispatch waits for free capacity: a second Instance frees a slot, an
+  expiring one publishes nothing, a draining one adds no capacity.
+- Saved state: the last one counts, it has a size limit, and a restart without
+  a new state keeps the earlier one.
+- The Tree is always known: `initial_job_mismatch`, and every event names its
+  Job, parent and Initial Job.
+- The agent list shows the own Tree: running and restartable agents.
+- Unread mail at the end of a successful Run starts the restart at once and is
+  delivered unread; a cc notice starts nothing.
 - The doorbell rings are counted by the JSON path of their payload
   (`event_type`, `run_id`, `item_id`), no longer by a text pattern.
 - The tests of the backstop sweep live in `app/backstop/tests.rs` and record a
