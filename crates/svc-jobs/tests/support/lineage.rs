@@ -14,7 +14,7 @@ pub async fn live_runner<'a>(fixture: &'a JobsFixture, label: &str) -> FakeRunne
         &wire::unique_runner_type(label),
         "instance-a",
     )
-    .declaring_capacity(3);
+    .declaring_capacity(6);
     runner.connect().await;
     dispatch::await_live_instances(
         &fixture.gql(),
