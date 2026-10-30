@@ -15,6 +15,10 @@ every consumer, so each version is deliberate. Release headings are plain
   and the matching `evt_*_coords()`.
 - `runner::TriggerV2`, `runner::ClaimReplyV2`, `runner_transport::trigger_v2_subject`
   and `claim_v2_subject`.
+- `runner_surface`: the requests `jobs.runner.register_agents.{runner_type}`,
+  `jobs.runner.mark_read.{runner_type}` and `jobs.runner.list_agents.{runner_type}`
+  — `RegisterAgents`, `MarkRead`, `ListAgents`, their replies and the closed
+  reason codes.
 
 ## 0.6.0 - 2026-10-26
 

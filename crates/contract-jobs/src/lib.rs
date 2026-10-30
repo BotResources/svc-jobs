@@ -7,6 +7,7 @@ pub mod event_v2;
 #[cfg(feature = "integration")]
 mod integration;
 pub mod runner;
+pub mod runner_surface;
 pub mod runner_transport;
 pub mod segment;
 
@@ -31,6 +32,10 @@ pub const CMD_JOBS_TRIGGER_RUNNER_TYPE: &str = "jobs.trigger.{runner_type}";
 pub const CMD_JOBS_TRIGGER_V2_RUNNER_TYPE: &str = "jobs.trigger.v2.{runner_type}";
 pub const CMD_JOBS_CLAIM_V2_RUNNER_TYPE: &str = "jobs.claim.v2.{runner_type}";
 pub const CMD_JOBS_CLAIM_RUNNER_TYPE: &str = "jobs.claim.{runner_type}";
+pub const CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE: &str =
+    "jobs.runner.register_agents.{runner_type}";
+pub const CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE: &str = "jobs.runner.mark_read.{runner_type}";
+pub const CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE: &str = "jobs.runner.list_agents.{runner_type}";
 
 pub const EVT_JOB_CANCELLED_V1: &str = "integration.evt.jobs.job.cancelled.v1";
 pub const EVT_JOB_COMPLETED_V1: &str = "integration.evt.jobs.job.completed.v1";

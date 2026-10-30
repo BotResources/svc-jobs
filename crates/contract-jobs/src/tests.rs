@@ -55,6 +55,18 @@ const SUBJECTS: &[(&str, &str)] = &[
     ),
     ("CMD_JOBS_TRIGGER_RUNNER_TYPE", CMD_JOBS_TRIGGER_RUNNER_TYPE),
     ("CMD_JOBS_CLAIM_RUNNER_TYPE", CMD_JOBS_CLAIM_RUNNER_TYPE),
+    (
+        "CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE",
+        CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE,
+    ),
+    (
+        "CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE",
+        CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE,
+    ),
+    (
+        "CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE",
+        CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE,
+    ),
     ("KV_RUN_ID", KV_RUN_ID),
     ("KV_RUNNER_TYPE_INSTANCE_KEY", KV_RUNNER_TYPE_INSTANCE_KEY),
 ];
@@ -79,7 +91,6 @@ fn no_two_constants_name_the_same_subject() {
 
 #[test]
 fn a_presence_entry_carries_one_of_exactly_two_status_codes() {
-    // Given: a presence entry as a runner writes it
     let entry = serde_json::json!({
         "runner_type": "analyst",
         "instance_key": "pod-7",
@@ -87,9 +98,7 @@ fn a_presence_entry_carries_one_of_exactly_two_status_codes() {
         "status": "DRAINING",
         "capacity": 3,
     });
-    // When: it is read through the published contract
     let presence: runner::Presence = serde_json::from_value(entry).unwrap();
-    // Then: the status is the closed code, not free text, and the capacity is a real number
     assert_eq!(presence.status, runner::RunnerStatus::Draining);
     assert_eq!(presence.status.as_str(), runner::STATUS_DRAINING);
     assert_eq!(presence.capacity.get(), 3);
@@ -97,7 +106,6 @@ fn a_presence_entry_carries_one_of_exactly_two_status_codes() {
 
 #[test]
 fn a_presence_entry_carrying_an_unknown_status_is_refused_never_read_as_ready() {
-    // Given: entries whose status is not a code this contract defines
     for unknown in ["IDLE", "BUSY", "ready", "", "OFFLINE"] {
         let entry = serde_json::json!({
             "runner_type": "analyst",
@@ -106,7 +114,6 @@ fn a_presence_entry_carrying_an_unknown_status_is_refused_never_read_as_ready() 
             "status": unknown,
             "capacity": 1,
         });
-        // When/Then: the entry does not parse at all — it can never be mistaken for READY
         let refused = serde_json::from_value::<runner::Presence>(entry);
         assert!(
             refused.is_err(),
@@ -117,12 +124,10 @@ fn a_presence_entry_carrying_an_unknown_status_is_refused_never_read_as_ready() 
 
 #[test]
 fn a_presence_status_round_trips_as_its_contract_code() {
-    // Given: the two statuses a runner may report
     for (status, code) in [
         (runner::RunnerStatus::Ready, runner::STATUS_READY),
         (runner::RunnerStatus::Draining, runner::STATUS_DRAINING),
     ] {
-        // When/Then: the wire form is the code itself, both ways
         assert_eq!(serde_json::to_value(status).unwrap(), json_code(code));
         assert_eq!(
             serde_json::from_value::<runner::RunnerStatus>(json_code(code)).unwrap(),
@@ -149,7 +154,6 @@ fn failed_fact(kind: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn a_terminal_report_carries_one_of_exactly_two_retry_kinds() {
-    // Given: the two kinds a runner may declare on a failure
     for (code, kind) in [
         (
             runner::FAILURE_KIND_TRANSIENT,
@@ -160,10 +164,8 @@ fn a_terminal_report_carries_one_of_exactly_two_retry_kinds() {
             runner::FailureKind::Permanent,
         ),
     ] {
-        // When: the fact is read through the published contract
         let failed: runner::RunFailed =
             serde_json::from_value(failed_fact(json_code(code))).unwrap();
-        // Then: the retry vocabulary arrives typed, not as free text to be re-parsed later
         assert_eq!(failed.report.kind, Some(kind));
         assert_eq!(kind.as_str(), code);
     }
@@ -171,8 +173,6 @@ fn a_terminal_report_carries_one_of_exactly_two_retry_kinds() {
 
 #[test]
 fn a_terminal_report_naming_a_kind_outside_the_vocabulary_does_not_parse() {
-    // Given: reports whose kind is a word this contract does not define — the shape that
-    // reached production once, a runner announcing its own name as a failure kind
     for outside in [
         "scaffold",
         "transient",
@@ -181,14 +181,11 @@ fn a_terminal_report_naming_a_kind_outside_the_vocabulary_does_not_parse() {
         "RETRYABLE",
         "FATAL",
     ] {
-        // When/Then: the fact does not parse at all, so the producer's compiler is the only
-        // place that word can be caught — never a receiver deciding what to do with it
         assert!(
             serde_json::from_value::<runner::RunFailed>(failed_fact(json_code(outside))).is_err(),
             "'{outside}' must not enter as a failure kind",
         );
     }
-    // Then: a kind that is not even a string is refused on the same footing
     assert!(
         serde_json::from_value::<runner::RunFailed>(failed_fact(serde_json::json!(1))).is_err()
     );
@@ -196,24 +193,17 @@ fn a_terminal_report_naming_a_kind_outside_the_vocabulary_does_not_parse() {
 
 #[test]
 fn a_terminal_report_that_declares_no_kind_is_read_as_permanent() {
-    // Given: a report from a runner that classifies nothing — legal, and unchanged by the
-    // vocabulary becoming closed
     let fact = serde_json::json!({
         "run_id": uuid::Uuid::now_v7(),
         "report": { "reason_code": "provider_unavailable" },
     });
-    // When: it is read through the published contract
     let failed: runner::RunFailed = serde_json::from_value(fact).unwrap();
-    // Then: the absent kind is permanent — an unclassified failure never buys a retry
     assert_eq!(failed.report.kind, None);
     assert_eq!(
         failed.report.kind.unwrap_or_default(),
         runner::FailureKind::Permanent
     );
 
-    // And: an explicit null is the same third legal form. A runner serializing its optional
-    // kind as `null` writes this, and it must keep reading as "declared nothing" — not fail,
-    // and not be turned into a value by a later `#[serde(default)]` on the field
     let explicit_null: runner::RunFailed =
         serde_json::from_value(failed_fact(serde_json::Value::Null)).unwrap();
     assert_eq!(explicit_null.report.kind, None);
@@ -221,7 +211,6 @@ fn a_terminal_report_that_declares_no_kind_is_read_as_permanent() {
 
 #[test]
 fn a_report_writes_the_kind_it_declares_and_writes_nothing_when_it_declares_none() {
-    // Given: a report with a kind, and the same report without one
     let declared = runner::FailureReport {
         kind: Some(runner::FailureKind::Transient),
         reason_code: "provider_rate_limited".to_owned(),
@@ -232,11 +221,8 @@ fn a_report_writes_the_kind_it_declares_and_writes_nothing_when_it_declares_none
         kind: None,
         ..declared.clone()
     };
-    // When: each is written to the wire
     let written = serde_json::to_value(&declared).unwrap();
     let silent = serde_json::to_value(&unclassified).unwrap();
-    // Then: the code is the wire form, and an undeclared kind writes no field at all — the
-    // bytes a conforming runner sends today are the bytes it sends tomorrow
     assert_eq!(written["kind"], json_code(runner::FAILURE_KIND_TRANSIENT));
     assert!(
         silent.get("kind").is_none(),
@@ -246,7 +232,6 @@ fn a_report_writes_the_kind_it_declares_and_writes_nothing_when_it_declares_none
 
 #[test]
 fn a_presence_entry_without_a_usable_capacity_is_refused_never_defaulted() {
-    // Given: entries declaring no capacity, no room, or an impossible one
     for capacity in [
         serde_json::Value::Null,
         serde_json::json!(0),
@@ -260,13 +245,11 @@ fn a_presence_entry_without_a_usable_capacity_is_refused_never_defaulted() {
             "status": "READY",
             "capacity": capacity,
         });
-        // When/Then: the entry does not parse — capacity is declared or the entry is ignored
         assert!(
             serde_json::from_value::<runner::Presence>(entry).is_err(),
             "capacity {capacity} must not enter",
         );
     }
-    // Then: a missing field is refused too, never silently taken as one
     let absent = serde_json::json!({
         "runner_type": "analyst",
         "instance_key": "pod-7",
@@ -278,16 +261,13 @@ fn a_presence_entry_without_a_usable_capacity_is_refused_never_defaulted() {
 
 #[test]
 fn a_v2_creation_without_a_priority_is_the_v1_declaration() {
-    // Given: a v2 creation that names no priority
     let job_id = uuid::Uuid::now_v7();
     let wire = serde_json::json!({
         "job_id": job_id,
         "runner_type": "analyst",
         "producer": "projects",
     });
-    // When: it is read through the published contract
     let creation: command::CreateJobV2 = serde_json::from_value(wire).unwrap();
-    // Then: no priority is carried, and the v1 fields read as a v1 creation would
     assert_eq!(creation.priority, None);
     assert_eq!(creation.declaration().job_id, job_id);
     assert!(
@@ -300,30 +280,25 @@ fn a_v2_creation_without_a_priority_is_the_v1_declaration() {
 
 #[test]
 fn a_v2_priority_outside_the_scale_still_parses_so_it_can_be_rejected_by_code() {
-    // Given: a v2 creation naming priority 9
     let wire = serde_json::json!({
         "job_id": uuid::Uuid::now_v7(),
         "runner_type": "analyst",
         "producer": "projects",
         "priority": 9,
     });
-    // When/Then: it parses — the receiver answers invalid_priority, not malformed_payload
     let creation: command::CreateJobV2 = serde_json::from_value(wire).unwrap();
     assert_eq!(creation.priority, Some(9));
 }
 
 #[test]
 fn a_claim_names_its_instance_its_slot_and_its_wait() {
-    // Given: a claim as a runner writes it, without a version
     let claim_id = uuid::Uuid::now_v7();
     let wire = serde_json::json!({
         "instance_key": "pod-7",
         "claim_id": claim_id,
         "wait_ms": 20_000,
     });
-    // When: it is read through the published contract
     let claim: runner::Claim = serde_json::from_value(wire).unwrap();
-    // Then: it is wire v1 and carries the slot identity
     assert_eq!(claim.version, runner::WIRE_VERSION);
     assert_eq!(claim.claim_id, claim_id);
     assert_eq!(claim.wait_ms, 20_000);
@@ -331,7 +306,6 @@ fn a_claim_names_its_instance_its_slot_and_its_wait() {
 
 #[test]
 fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
-    // Given: a trigger, a reply serving it, an empty reply and a refusal
     let trigger = runner::Trigger {
         version: runner::WIRE_VERSION,
         run_id: uuid::Uuid::now_v7(),
@@ -346,8 +320,6 @@ fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
         runner::ClaimRefusal::NotClaimMode,
     ))
     .unwrap();
-    // When/Then: the served run is the trigger itself, the empty reply carries neither run nor
-    // reason, and a refusal carries its reason alone
     assert_eq!(served["run"], serde_json::to_value(&trigger).unwrap());
     assert!(empty.get("run").is_none() && empty.get("reason").is_none());
     assert!(refused.get("run").is_none());
@@ -356,9 +328,7 @@ fn a_claim_reply_carries_what_a_trigger_carries_or_nothing() {
 
 #[test]
 fn every_claim_refusal_is_written_as_its_published_code_and_nothing_else_parses() {
-    // Given: every refusal of the closed vocabulary
     for refusal in runner::ClaimRefusal::ALL {
-        // When/Then: its wire form is its code, both ways
         let written = serde_json::to_value(refusal).unwrap();
         assert_eq!(written, json_code(refusal.as_str()));
         assert_eq!(
@@ -366,7 +336,6 @@ fn every_claim_refusal_is_written_as_its_published_code_and_nothing_else_parses(
             refusal
         );
     }
-    // And: a word outside the vocabulary is not a refusal a runner could misread
     for outside in ["blank_value", "NOT_CLAIM_MODE", "overloaded", ""] {
         assert!(serde_json::from_value::<runner::ClaimRefusal>(json_code(outside)).is_err());
     }
@@ -374,13 +343,10 @@ fn every_claim_refusal_is_written_as_its_published_code_and_nothing_else_parses(
 
 #[test]
 fn a_busy_claim_names_how_long_to_wait_before_repeating_it() {
-    // Given: the reply of a pod that cannot hold the claim
     let reply = serde_json::to_value(runner::ClaimReply::busy(250)).unwrap();
-    // Then: it is a refusal with its back-off, and carries no run
     assert_eq!(reply["reason"], "busy");
     assert_eq!(reply["retry_after_ms"], 250);
     assert!(reply.get("run").is_none());
-    // And: every other answer carries no back-off
     let refused = serde_json::to_value(runner::ClaimReply::refused(
         runner::ClaimRefusal::ClaimSpent,
     ))

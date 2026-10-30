@@ -226,9 +226,11 @@ entirely draining reads as idle, unavailable, and offering no capacity.
 `capacity` is the number of runs the instance carries at once — required, at
 least 1, refreshed with every heartbeat and free to change over a session (a
 rewrite with a different capacity is an ordinary presence change, exactly like a
-status change). It is **declarative only**: dispatch stays pull-based and
-capacity never gates trigger delivery. It feeds what the fleet reads: an
-instance is busy once it carries as many runs as it declared
+status change). It gates work: a Run of a runner type is delivered (pushed or
+claimed) only while the type has free capacity, that is the capacity declared by
+its ready live instances minus the Runs of the type that have not ended; a Run
+that finds none waits, and the end of a Run wakes it. It also feeds what the
+fleet reads: an instance is busy once it carries as many runs as it declared
 (`JobsRunnerInstance.capacity`), and a runner type totals the capacity of its
 live, non-draining instances (`JobsRunnerType.totalCapacity`). A missing, zero
 or negative capacity never parses on the wire; a capacity above 10 000 parses

@@ -21,6 +21,11 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `ActingRunNotLive`, `PassportRequired`, `PassportMalformed`,
   `PassportUserMismatch`, `PassportParentMismatch`, `InitialJobMismatch`,
   `ParentNotOfRun`, `ModeRequired`, `CallerAddressNotHeld`, `PayloadTooLarge`.
+- `domain::directory`: `AgentId`, `AgentState`, `decide_registration`
+  (refusals `run_unknown`, `run_not_started`, `instance_mismatch`,
+  `agent_id_in_other_tree`, `agent_id_not_finished`, `malformed`) and
+  `DirectoryEntry` with `restartable_now`.
+- `JobsError::NoFreeCapacity`, `Fleet::declared_capacity` and `free_capacity`.
 - `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
   the Passport, the payload and the call.
 

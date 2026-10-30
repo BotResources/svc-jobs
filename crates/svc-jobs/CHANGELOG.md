@@ -14,8 +14,7 @@ to `## Unreleased`).
 
 Requester, Passport and lineage on every job. This release is a work in
 progress of the 0.6 line: the runner surface (agent directory, mail, results,
-saved state and restart, GraphQL `jobs:runner`) and capacity enforcement are
-not in it yet.
+saved state and restart, GraphQL `jobs:runner`) is not in it yet.
 
 ### Added
 
@@ -32,11 +31,17 @@ not in it yet.
   and `jobs.claim.v2.{runner_type}`.
 - A Run that fails or is cancelled cancels the Jobs it requested.
 - Migration `0004`: `requester`, `passport`, `payload`, `call` on `jobs`.
+- Capacity enforcement: a Run is pushed or claimed only while its runner type
+  has free capacity (the declared capacity of its ready live instances minus
+  its Runs that have not ended); otherwise it waits, and the end of a Run wakes
+  it. Refusal `no_free_capacity`. Migration `0005`: `current_runs`.
 
 ### Changed
 
 - A creation of a job with no parent, by version 1 or 2, is refused with
   `passport_required`.
+- A creation under an ended parent is refused with `parent_terminal` in the
+  version 2 rejection (version 1 keeps `parent_job_terminal`).
 - Rejections are published in both generations (`creation_rejected.v1` and `.v2`).
 
 ### Removed
