@@ -10,6 +10,7 @@ pub mod doorbell;
 pub mod due_work;
 pub mod fleet;
 pub mod hydrate;
+mod hydrate_sql;
 pub mod impacts;
 pub mod inbox;
 pub mod jobs;

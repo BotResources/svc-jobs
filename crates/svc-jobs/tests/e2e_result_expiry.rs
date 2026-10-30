@@ -31,11 +31,14 @@ async fn a_result_nobody_reads_is_gone_after_seven_days_and_is_purged() {
     let tree = correspondents(&fixture, "result-expiry").await;
     let result_id = keep_a_result(&fixture, &tree.child_work, &durable).await;
 
-    sqlx::query("UPDATE job_results SET kept_at = now() - interval '8 days' WHERE result_id = $1")
-        .bind(result_id)
-        .execute(durable.pool())
-        .await
-        .expect("the Result is aged");
+    sqlx::query(
+        "UPDATE job_results SET kept_at = now() - interval '8 days', \
+         expires_at = now() - interval '1 day' WHERE result_id = $1",
+    )
+    .bind(result_id)
+    .execute(durable.pool())
+    .await
+    .expect("the Result is aged");
 
     let read = fixture
         .gql()
@@ -85,7 +88,8 @@ async fn a_result_read_with_keep_lives_seven_days_from_that_read() {
     gesture::accepted(&read(true).await, "jobsReadResult");
     sqlx::query(
         "UPDATE job_results SET kept_at = now() - interval '9 days', \
-         read_at = now() - interval '3 days' WHERE result_id = $1",
+         read_at = now() - interval '3 days', expires_at = now() + interval '4 days' \
+         WHERE result_id = $1",
     )
     .bind(result_id)
     .execute(durable.pool())
@@ -93,11 +97,14 @@ async fn a_result_read_with_keep_lives_seven_days_from_that_read() {
     .expect("the Result is aged");
     gesture::accepted(&read(true).await, "jobsReadResult");
 
-    sqlx::query("UPDATE job_results SET read_at = now() - interval '8 days' WHERE result_id = $1")
-        .bind(result_id)
-        .execute(durable.pool())
-        .await
-        .expect("the read is aged");
+    sqlx::query(
+        "UPDATE job_results SET read_at = now() - interval '8 days', \
+         expires_at = now() - interval '1 day' WHERE result_id = $1",
+    )
+    .bind(result_id)
+    .execute(durable.pool())
+    .await
+    .expect("the read is aged");
     let expired = read(false).await;
     assert_eq!(
         gesture::refusal(&expired, "jobsReadResult"),

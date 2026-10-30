@@ -6,6 +6,7 @@ pub mod job;
 pub mod kept_payload;
 pub mod log;
 pub mod mail;
+pub mod restart;
 pub mod result;
 pub mod saved_state;
 pub mod transport;

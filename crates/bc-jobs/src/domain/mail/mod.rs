@@ -1,4 +1,5 @@
 pub mod access;
+pub mod attachment;
 pub mod author;
 pub mod content;
 pub mod delivery;

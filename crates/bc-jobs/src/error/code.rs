@@ -46,6 +46,7 @@ impl JobsError {
             Self::NotPlatformAdministrator => "not_platform_administrator",
             Self::NotSuperUser => "not_super_user",
             Self::NotActiveHuman => "not_active_human",
+            Self::NotRunnerService => "not_runner_service",
             Self::SuccessorStillActive { .. } => "successor_still_active",
             Self::ManualRetryAlreadyStarted { .. } => "manual_retry_already_started",
             Self::ManualRetryConflict { .. } => "manual_retry_conflict",

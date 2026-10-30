@@ -1,6 +1,7 @@
 use bc_jobs::domain::ids::{AgentId, AttachmentId, MailId};
+use bc_jobs::domain::mail::attachment::AttachmentBody;
 use bc_jobs::domain::mail::author::{MailAuthor, SourceConversation};
-use bc_jobs::domain::mail::content::{AttachmentBody, AttachmentRef, MailContent};
+use bc_jobs::domain::mail::content::{AttachmentRef, MailContent};
 use bc_jobs::domain::mail::views::MailRead;
 use bc_jobs::ports::mail::{
     AttachmentStore, MailReader, MailSender, Minting, SendMail, Sent, UploadAttachment,

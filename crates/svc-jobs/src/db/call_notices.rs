@@ -1,6 +1,9 @@
 use bc_jobs::domain::ids::{AgentId, ItemId, JobId, ResultId, RunId};
+use bc_jobs::domain::job::JobCall;
 use bc_jobs::domain::mail::inbox::{ItemKind, Notice};
 use bc_jobs::domain::payload::PayloadAttachment;
+use bc_jobs::domain::requester::Requester;
+use bc_jobs::domain::runner::call_notices::CallNotices;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::environment::IdFactory;
 use br_core_events::EventMetadata;
@@ -37,6 +40,30 @@ const LIVE_RUNS_REACHED_SQL: &str = "WITH RECURSIVE acting(run_id) AS ( \
      SELECT a.run_id::uuid FROM acting a \
      WHERE EXISTS (SELECT 1 FROM run_starts s WHERE s.run_id = a.run_id) \
        AND NOT EXISTS (SELECT 1 FROM run_terminals t WHERE t.run_id = a.run_id)";
+
+pub async fn call_notices_of(
+    tx: &mut PgConnection,
+    job_id: JobId,
+) -> Result<Option<CallNotices>, PortError> {
+    let row: Option<(Option<serde_json::Value>, Option<serde_json::Value>)> =
+        sqlx::query_as("SELECT requester, call FROM jobs WHERE id = $1")
+            .bind(job_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+    let Some((Some(requester), Some(call))) = row else {
+        return Ok(None);
+    };
+    let requester: Requester = serde_json::from_value(requester).map_err(stored)?;
+    let call: JobCall = serde_json::from_value(call).map_err(stored)?;
+    Ok(CallNotices::of(&requester, Some(&call)))
+}
+
+fn stored(error: serde_json::Error) -> PortError {
+    PortError::Unavailable {
+        detail: error.to_string(),
+    }
+}
 
 pub async fn queue_position(
     tx: &mut PgConnection,

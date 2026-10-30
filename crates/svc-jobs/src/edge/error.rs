@@ -117,7 +117,8 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::RunnerNotWorkingTheJob
         | JobsError::NotPlatformAdministrator
         | JobsError::NotSuperUser
-        | JobsError::NotActiveHuman => EdgeError::forbidden(),
+        | JobsError::NotActiveHuman
+        | JobsError::NotRunnerService => EdgeError::forbidden(),
 
         JobsError::CorruptState { .. }
         | JobsError::UnknownEnumValue { .. }

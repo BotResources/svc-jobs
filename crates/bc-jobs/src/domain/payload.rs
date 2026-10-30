@@ -24,22 +24,22 @@ pub enum JobPayload {
 }
 
 impl JobPayload {
+    pub fn inline_content_size(message: &str, attachments: &[PayloadAttachment]) -> usize {
+        message.len()
+            + attachments
+                .iter()
+                .map(|attachment| {
+                    attachment.name.len() + attachment.content_type.len() + attachment.content.len()
+                })
+                .sum::<usize>()
+    }
+
     pub fn inline_size(&self) -> usize {
         match self {
             Self::Inline {
                 message,
                 attachments,
-            } => {
-                message.len()
-                    + attachments
-                        .iter()
-                        .map(|attachment| {
-                            attachment.name.len()
-                                + attachment.content_type.len()
-                                + attachment.content.len()
-                        })
-                        .sum::<usize>()
-            }
+            } => Self::inline_content_size(message, attachments),
             Self::Kept | Self::Reference { .. } => 0,
         }
     }

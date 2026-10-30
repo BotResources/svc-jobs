@@ -42,6 +42,7 @@ impl JobsError {
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman
+            | Self::NotRunnerService
             | Self::JobStillActive
             | Self::RetryNotScheduled
             | Self::EmptyPlan => json!({}),

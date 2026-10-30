@@ -99,6 +99,7 @@ pub enum JobsError {
     NotPlatformAdministrator,
     NotSuperUser,
     NotActiveHuman,
+    NotRunnerService,
     SuccessorStillActive {
         successor_job_id: Uuid,
     },

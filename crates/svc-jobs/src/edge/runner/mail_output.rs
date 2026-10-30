@@ -1,5 +1,5 @@
 use async_graphql::SimpleObject;
-use bc_jobs::domain::mail::content::AttachmentBody;
+use bc_jobs::domain::mail::attachment::AttachmentBody;
 use bc_jobs::domain::mail::refusal::BadAddress;
 use bc_jobs::domain::mail::views::{AttachmentMeta as MailAttachmentMeta, MailRead, UnreadItem};
 use bc_jobs::domain::runner::refusal::RunnerRefusal;

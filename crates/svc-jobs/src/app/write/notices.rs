@@ -1,7 +1,6 @@
 use bc_jobs::domain::ids::{JobId, RunId};
-use bc_jobs::domain::job::JobCall;
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
-use bc_jobs::domain::requester::Requester;
+use bc_jobs::domain::runner::answer::InlineAnswer;
 use bc_jobs::domain::runner::call_notices::{CallNotices, NoticePlan};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::IdFactory;
@@ -12,9 +11,8 @@ use sqlx::PgConnection;
 
 use crate::app::integration::message::failure_message;
 use crate::db::call_notices::{
-    Delivering, NoticeFor, insert_notice, queue_position, result_of_run,
+    Delivering, NoticeFor, call_notices_of, insert_notice, queue_position, result_of_run,
 };
-use crate::db::hydrate::unavailable;
 use crate::db::restart::wake_run;
 use crate::error::ServiceError;
 
@@ -54,24 +52,6 @@ pub async fn tell_callers(
         }
     }
     Ok(())
-}
-
-async fn call_notices_of(
-    tx: &mut PgConnection,
-    job_id: JobId,
-) -> Result<Option<CallNotices>, ServiceError> {
-    let row: Option<(Option<serde_json::Value>, Option<serde_json::Value>)> =
-        sqlx::query_as("SELECT requester, call FROM jobs WHERE id = $1")
-            .bind(job_id.as_uuid())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(unavailable)?;
-    let Some((Some(requester), Some(call))) = row else {
-        return Ok(None);
-    };
-    let requester: Requester = serde_json::from_value(requester)?;
-    let call: JobCall = serde_json::from_value(call)?;
-    Ok(CallNotices::of(&requester, Some(&call)))
 }
 
 async fn build(
@@ -143,10 +123,10 @@ async fn run_completed(
     let Some(kept) = result_of_run(tx, job_id, run_id).await? else {
         return Ok(base);
     };
-    let answer = json!({ "message": kept.message, "attachments": kept.attachments });
-    let within = serde_json::to_vec(&answer).is_ok_and(|bytes| bytes.len() <= inline_max_bytes);
+    let inline = InlineAnswer::decide(&kept.message, &kept.attachments, inline_max_bytes);
     Ok(Notice {
-        answer: within.then_some(answer),
+        answer: inline
+            .map(|answer| json!({ "message": answer.message, "attachments": answer.attachments })),
         result_id: Some(kept.result_id),
         ..base
     })

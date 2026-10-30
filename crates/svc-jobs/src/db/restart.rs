@@ -1,4 +1,7 @@
+use async_trait::async_trait;
+use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::restart::RestartWakes;
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -96,16 +99,26 @@ pub async fn consume_wake(tx: &mut PgConnection, origin_run: Uuid) -> Result<(),
     Ok(())
 }
 
-impl PgStore {
-    pub async fn due_wakes(&self) -> Result<Vec<Uuid>, PortError> {
-        sqlx::query_scalar("SELECT run_id::uuid FROM restart_wakes ORDER BY requested_at, run_id")
-            .fetch_all(self.pool())
-            .await
-            .map_err(unavailable)
+#[async_trait]
+impl RestartWakes for PgStore {
+    async fn due(&self) -> Result<Vec<RunId>, PortError> {
+        let runs: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT run_id::uuid FROM restart_wakes ORDER BY requested_at, run_id",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        runs.into_iter()
+            .map(|run| RunId::new(run).map_err(PortError::from))
+            .collect()
     }
 
-    pub async fn drop_wake(&self, origin_run: Uuid) -> Result<(), PortError> {
+    async fn drop_wake(&self, origin_run: RunId) -> Result<(), PortError> {
         let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        consume_wake(&mut connection, origin_run).await
+        consume_wake(&mut connection, origin_run.as_uuid()).await
+    }
+
+    async fn origin_job_of(&self, origin_run: RunId) -> Result<Option<JobId>, PortError> {
+        self.job_of_run(origin_run.as_uuid()).await
     }
 }

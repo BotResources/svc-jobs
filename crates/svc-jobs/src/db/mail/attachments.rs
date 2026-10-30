@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, AttachmentId, MailId};
-use bc_jobs::domain::mail::content::{
+use bc_jobs::domain::mail::attachment::{
     AttachmentAdmission, AttachmentBody, StoredAttachment, decide_attachment_upload,
 };
 use bc_jobs::domain::mail::refusal::MailRefusal;

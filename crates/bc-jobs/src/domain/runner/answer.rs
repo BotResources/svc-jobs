@@ -1,7 +1,7 @@
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::ids::RunId;
-use crate::domain::payload::CallMode;
+use crate::domain::payload::{CallMode, JobPayload, PayloadAttachment};
 use crate::domain::requester::ActsFor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,25 @@ impl ResultRefusal {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineAnswer {
+    pub message: String,
+    pub attachments: Vec<PayloadAttachment>,
+}
+
+impl InlineAnswer {
+    pub fn decide(
+        message: &str,
+        attachments: &[PayloadAttachment],
+        maximum: usize,
+    ) -> Option<Self> {
+        (JobPayload::inline_content_size(message, attachments) <= maximum).then(|| Self {
+            message: message.to_owned(),
+            attachments: attachments.to_vec(),
+        })
+    }
+}
+
 pub const RESULT_RETENTION: TimeDelta = TimeDelta::days(7);
 
 pub fn result_expires_at(kept_at: DateTime<Utc>, read_at: Option<DateTime<Utc>>) -> DateTime<Utc> {
@@ -36,11 +55,10 @@ pub fn result_expires_at(kept_at: DateTime<Utc>, read_at: Option<DateTime<Utc>>)
 }
 
 pub fn guard_result_alive(
-    kept_at: DateTime<Utc>,
-    read_at: Option<DateTime<Utc>>,
+    expires_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Result<(), ResultRefusal> {
-    if now < result_expires_at(kept_at, read_at) {
+    if now < expires_at {
         Ok(())
     } else {
         Err(ResultRefusal::ResultUnknown)
@@ -75,9 +93,10 @@ mod tests {
     fn a_result_nobody_reads_lives_seven_days_from_the_moment_it_was_kept() {
         let kept = chrono::DateTime::<Utc>::UNIX_EPOCH;
         let last_moment = kept + RESULT_RETENTION - TimeDelta::seconds(1);
-        assert_eq!(guard_result_alive(kept, None, last_moment), Ok(()));
+        let expires = result_expires_at(kept, None);
+        assert_eq!(guard_result_alive(expires, last_moment), Ok(()));
         assert_eq!(
-            guard_result_alive(kept, None, kept + RESULT_RETENTION),
+            guard_result_alive(expires, kept + RESULT_RETENTION),
             Err(ResultRefusal::ResultUnknown)
         );
     }
@@ -86,12 +105,13 @@ mod tests {
     fn a_result_read_with_keep_lives_seven_days_from_that_read() {
         let kept = chrono::DateTime::<Utc>::UNIX_EPOCH;
         let read = kept + TimeDelta::days(5);
+        let expires = result_expires_at(kept, Some(read));
         assert_eq!(
-            guard_result_alive(kept, Some(read), kept + TimeDelta::days(11)),
+            guard_result_alive(expires, kept + TimeDelta::days(11)),
             Ok(())
         );
         assert_eq!(
-            guard_result_alive(kept, Some(read), read + RESULT_RETENTION),
+            guard_result_alive(expires, read + RESULT_RETENTION),
             Err(ResultRefusal::ResultUnknown)
         );
     }
@@ -121,5 +141,33 @@ mod tests {
             guard_reads_result(addressed, run_id(), &ActsFor::new([addressed])),
             Ok(())
         );
+    }
+}
+
+#[cfg(test)]
+mod inline_answer_tests {
+    use super::*;
+
+    fn attachment(content: &str) -> PayloadAttachment {
+        PayloadAttachment {
+            name: "n".to_owned(),
+            content_type: "t".to_owned(),
+            content: content.to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_answer_rides_in_the_notice_up_to_the_inline_maximum_measured_like_a_payload() {
+        let attachments = [attachment("abcd")];
+        let size = JobPayload::Inline {
+            message: "hello".to_owned(),
+            attachments: attachments.to_vec(),
+        }
+        .inline_size();
+        assert_eq!(size, 5 + 1 + 1 + 4);
+        let fits = InlineAnswer::decide("hello", &attachments, size).unwrap();
+        assert_eq!(fits.message, "hello");
+        assert_eq!(fits.attachments, attachments.to_vec());
+        assert_eq!(InlineAnswer::decide("hello", &attachments, size - 1), None);
     }
 }

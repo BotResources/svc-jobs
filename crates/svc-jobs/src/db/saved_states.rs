@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, RunId};
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
-use bc_jobs::domain::runner::saved_state::{SavedStateRefusal, guard_state_within};
+use bc_jobs::domain::runner::saved_state::{SavedState, SavedStateRefusal};
 use bc_jobs::domain::runner::views::SavedStateView;
 use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
@@ -20,7 +20,7 @@ const SAVED_STATE_RUN_SQL: &str = "WITH RECURSIVE chain(run_id, depth) AS ( \
       UNION ALL \
         SELECT ro.restarts_run_id, c.depth + 1 FROM chain c \
         JOIN runs r ON r.id = c.run_id \
-        JOIN restart_origins ro ON ro.job_id = r.job_id WHERE c.depth < 64) \
+        JOIN restart_origins ro ON ro.job_id = r.job_id) \
     SELECT c.run_id::uuid FROM chain c \
     JOIN saved_states s ON s.run_id = c.run_id ORDER BY c.depth LIMIT 1";
 
@@ -41,7 +41,7 @@ impl SavedStates for PgStore {
     async fn save_state(
         &self,
         work: WorkNamed<'_>,
-        state: &serde_json::Value,
+        state: &SavedState,
         maximum_bytes: usize,
         at: DateTime<Utc>,
     ) -> Result<Result<(), RunnerRefusal>, PortError> {
@@ -50,8 +50,7 @@ impl SavedStates for PgStore {
             Ok(context) => context,
             Err(refusal) => return Ok(Err(refusal.into())),
         };
-        let size = serde_json::to_vec(state).map_or(usize::MAX, |bytes| bytes.len());
-        if let Err(refusal) = guard_state_within(size, maximum_bytes) {
+        if let Err(refusal) = state.guard_within(maximum_bytes) {
             return Ok(Err(refusal.into()));
         }
         sqlx::query(
@@ -59,7 +58,7 @@ impl SavedStates for PgStore {
              ON CONFLICT (run_id) DO UPDATE SET state = EXCLUDED.state, saved_at = EXCLUDED.saved_at",
         )
         .bind(context.run_id.as_uuid())
-        .bind(state)
+        .bind(state.as_value())
         .bind(at)
         .execute(&mut *tx)
         .await
