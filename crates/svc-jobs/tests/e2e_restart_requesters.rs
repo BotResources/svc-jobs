@@ -37,6 +37,53 @@ async fn a_background_call_keeps_no_result() {
         gesture::refusal(&refused, "jobsUploadResult"),
         "not_sync_call"
     );
+    let answerer = support::surface::Agent::with_inbox();
+    let answerer_id = answerer.agent_id;
+    support::surface::register(
+        fixture.nats(),
+        &calling.pair.child,
+        work.run_id,
+        &[answerer],
+    )
+    .await;
+    let answer =
+        gesture::Mail::new(answerer_id, &[calling.address]).with_body("the answer by mail");
+    gesture::accepted(
+        &gesture::send_mail(&fixture.gql(), &runner_access(), &work, &answer).await,
+        "jobsSendMail",
+    );
+    let mails: Vec<serde_json::Value> = gesture::items(
+        &gesture::unread(
+            &fixture.gql(),
+            &runner_access(),
+            &calling.work,
+            Some(calling.address),
+        )
+        .await,
+    )
+    .into_iter()
+    .filter(|item| item["itemKind"] == "MAIL")
+    .collect();
+    assert_eq!(
+        mails.len(),
+        1,
+        "the answer waits at the address the call named"
+    );
+    assert_eq!(mails[0]["body"], "the answer by mail");
+    assert_eq!(mails[0]["from"], answerer_id.to_string());
+    let read = fixture
+        .gql()
+        .query(
+            &runner_access(),
+            gesture::READ_RESULT,
+            json!({ "input": { "work": calling.work.wire(), "resultId": Uuid::now_v7().to_string(), "keep": false } }),
+        )
+        .await;
+    assert_eq!(
+        gesture::refusal(&read, "jobsReadResult"),
+        "result_unknown",
+        "there is no Result to read"
+    );
     durable
         .assert_count(
             "SELECT count(*) FROM job_results WHERE job_id = $1",
