@@ -1,7 +1,7 @@
 use bc_jobs::JobsError;
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
 use bc_jobs::domain::directory::caller_address;
-use bc_jobs::domain::ids::KnownUserId;
+use bc_jobs::domain::ids::{KnownUserId, RunId};
 use bc_jobs::domain::ownership::ActorRef;
 use bc_jobs::domain::priority::PriorityBasis;
 use bc_jobs::domain::requester::Requester;
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 mod declare;
 
 use super::integration::Lineage;
-use super::write::{CreationRefusal, PriorityPremise};
+use super::write::{CallerAddressPremise, CreationRefusal, PriorityPremise};
 use super::{Jobs, acting, write};
 use crate::error::ServiceError;
 
@@ -91,26 +91,34 @@ async fn requester_of(
     Ok((wire, Requester::Run(acting.run_id)))
 }
 
-async fn guard_caller_address(
-    jobs: &Jobs,
-    wire: &CreateJobV3,
-    run_id: bc_jobs::domain::ids::RunId,
-) -> Result<(), ServiceError> {
-    let Some(mode) = wire.mode else {
-        return Ok(());
-    };
-    let holder = match wire.caller_address {
-        Some(address) => jobs.store.mail_address_run(address).await?,
-        None => None,
-    };
-    let mode = match mode {
+fn caller_address_premise(wire: &CreateJobV3, run_id: RunId) -> Option<CallerAddressPremise> {
+    let mode = match wire.mode? {
         CallMode::Sync => bc_jobs::domain::payload::CallMode::Sync,
         CallMode::Background => bc_jobs::domain::payload::CallMode::Background,
     };
-    Ok(caller_address::guard_caller_address(
+    Some(CallerAddressPremise {
         mode,
-        wire.caller_address,
-        run_id,
+        address: wire.caller_address,
+        caller: run_id,
+    })
+}
+
+async fn guard_caller_address(
+    jobs: &Jobs,
+    wire: &CreateJobV3,
+    run_id: RunId,
+) -> Result<(), ServiceError> {
+    let Some(premise) = caller_address_premise(wire, run_id) else {
+        return Ok(());
+    };
+    let holder = match premise.address {
+        Some(address) => jobs.store.mail_address_run(address).await?,
+        None => None,
+    };
+    Ok(caller_address::guard_caller_address(
+        premise.mode,
+        premise.address,
+        premise.caller,
         holder,
     )?)
 }
@@ -161,8 +169,13 @@ async fn decide(
                 admitted_under,
                 user_maximum.as_ref(),
             );
+            let caller_premise = match command.requester {
+                Requester::Run(run_id) => caller_address_premise(wire, run_id),
+                Requester::Service(_) => None,
+            };
             let change = write::JobChange::new(command.id, None, result.events)
                 .claiming_source(command.source())
+                .holding_caller_address(caller_premise)
                 .on_priority_premise(premise);
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
@@ -170,7 +183,9 @@ async fn decide(
                     | JobsError::RunnerTypeRetired { .. }
                     | JobsError::ParentJobTerminal { .. }
                     | JobsError::ParentJobDeleted { .. }
-                    | JobsError::ParentJobUnknown { .. }),
+                    | JobsError::ParentJobUnknown { .. }
+                    | JobsError::CallerAddressNotHeld
+                    | JobsError::CallerAddressNotOfRun),
                 )) => reject(jobs, wire, &refusal, metadata).await,
                 settled => settled,
             }

@@ -1,5 +1,6 @@
-use bc_jobs::domain::ids::{AgentId, ItemId, JobId, RunId};
-use bc_jobs::domain::mail::content::{MailContent, SendAdmission};
+use bc_jobs::domain::ids::{AgentId, AttachmentId, ItemId, JobId, RunId};
+use bc_jobs::domain::mail::access::guard_sender_holds;
+use bc_jobs::domain::mail::content::{MailContent, SendAdmission, guard_attachments_uploaded};
 use bc_jobs::domain::mail::delivery::{
     AddressStanding, Deliveries, Recipient, RecipientKind, decide_deliveries,
 };
@@ -72,7 +73,7 @@ impl PgStore {
             Ok(plan) => plan,
             Err(refusal) => return Ok(Err(refusal.into())),
         };
-        insert_mail(
+        let inserted = insert_mail(
             &mut tx,
             &content,
             context.run_id,
@@ -80,6 +81,9 @@ impl PgStore {
             minting.at,
         )
         .await?;
+        if !inserted {
+            return Ok(Err(MailRefusal::MailIdReused.into()));
+        }
         for delivery in &plan {
             let item_id = ItemId::new(minting.ids.next())?;
             let kind = match delivery.kind {
@@ -145,35 +149,31 @@ pub(super) async fn guard_sender(
     .fetch_optional(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(match holder {
-        None => Err(MailRefusal::SenderUnknown),
-        Some(holder) if holder == run_id.as_uuid() => Ok(()),
-        Some(_) => Err(MailRefusal::SenderNotOfRun),
-    })
+    let holder = holder.map(RunId::new).transpose()?;
+    Ok(guard_sender_holds(holder, run_id))
 }
 
 async fn guard_attachments(
     tx: &mut PgConnection,
     content: &MailContent,
 ) -> Result<Result<(), MailRefusal>, PortError> {
-    for attachment in &content.attachments {
-        let uploaded: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM mail_attachments \
-             WHERE mail_id = $1 AND attachment_id = $2 AND uploader_address = $3)",
-        )
-        .bind(content.mail_id.as_uuid())
-        .bind(attachment.attachment_id.as_uuid())
-        .bind(content.from.as_uuid())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        if !uploaded {
-            return Ok(Err(MailRefusal::AttachmentNotUploaded {
-                attachment_id: attachment.attachment_id,
-            }));
-        }
-    }
-    Ok(Ok(()))
+    let named: Vec<Uuid> = content
+        .attachments
+        .iter()
+        .map(|attachment| attachment.attachment_id.as_uuid())
+        .collect();
+    let uploaded: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT attachment_id FROM mail_attachments \
+         WHERE mail_id = $1 AND uploader_address = $2 AND attachment_id = ANY($3)",
+    )
+    .bind(content.mail_id.as_uuid())
+    .bind(content.from.as_uuid())
+    .bind(&named)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    let uploaded: Vec<AttachmentId> = uploaded.into_iter().map(AttachmentId::new).collect();
+    Ok(guard_attachments_uploaded(&uploaded, content))
 }
 
 async fn recipients_of(
@@ -214,11 +214,11 @@ async fn insert_mail(
     run_id: RunId,
     initial_job_id: JobId,
     at: DateTime<Utc>,
-) -> Result<(), PortError> {
-    sqlx::query(
+) -> Result<bool, PortError> {
+    let inserted = sqlx::query(
         "INSERT INTO mails (mail_id, sender_address, sender_run_id, initial_job_id, author, \
             source_conversation_id, subject, body, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (mail_id) DO NOTHING",
     )
     .bind(content.mail_id.as_uuid())
     .bind(content.from.as_uuid())
@@ -231,7 +231,11 @@ async fn insert_mail(
     .bind(at)
     .execute(&mut *tx)
     .await
-    .map_err(unavailable)?;
+    .map_err(unavailable)?
+    .rows_affected();
+    if inserted == 0 {
+        return Ok(false);
+    }
     for (address, kind) in content
         .to
         .iter()
@@ -264,7 +268,7 @@ async fn insert_mail(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    Ok(true)
 }
 
 pub async fn insert_item(

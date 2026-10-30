@@ -56,6 +56,12 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   a manual retry dispatches only while the type has free capacity.
 - `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
   the Passport, the payload and the call.
+- `ExistingJob` and `decide_upload`: an upload for a Job that exists is refused
+  unless its payload is of the kept form; `guard_job_serves_kept_payload`.
+- `guard_sender_holds`, `guard_attachments_uploaded`, `decide_attachment_upload`
+  (`AttachmentBody`, `StoredAttachment`, `AttachmentAdmission`): the mail
+  decisions that were in the Postgres adapter.
+- `runs_lost_with_instance` also covers the live Run of a finished Job.
 
 ## 0.7.0 - 2026-10-29
 

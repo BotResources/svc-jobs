@@ -215,3 +215,53 @@ async fn mail_belongs_to_its_addressee_alone_and_administrators_read_none() {
     assert!(administrator["data"].is_null() || administrator["data"]["jobsMail"].is_null());
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_marker_names_only_items_of_the_run_and_a_refused_marker_marks_nothing() {
+    let fixture = JobsFixture::start().await;
+    let gql = fixture.gql();
+    let runner = runner_access();
+    let tree = correspondents(&fixture, "mail-marker").await;
+    for body in ["first", "second"] {
+        let mail = Mail::new(tree.sender, &[tree.receiver]).with_body(body);
+        gesture::accepted(
+            &gesture::send_mail(&gql, &runner, &tree.parent_work, &mail).await,
+            "jobsSendMail",
+        );
+    }
+    let waiting = gesture::items(
+        &gesture::unread(&gql, &runner, &tree.child_work, Some(tree.receiver)).await,
+    );
+    let ids: Vec<Uuid> = waiting
+        .iter()
+        .map(|item| Uuid::parse_str(item["itemId"].as_str().unwrap()).unwrap())
+        .collect();
+
+    let with_unknown = gesture::mark_read(
+        fixture.nats(),
+        &tree.pair.child,
+        tree.child_work.run_id,
+        &[ids[0], Uuid::now_v7()],
+    )
+    .await;
+    assert_eq!(support::surface::reason(&with_unknown), "item_not_yours");
+    let still_waiting = gesture::items(
+        &gesture::unread(&gql, &runner, &tree.child_work, Some(tree.receiver)).await,
+    );
+    assert_eq!(still_waiting.len(), 2, "a refused marker marks nothing");
+
+    let repeated = gesture::mark_read(
+        fixture.nats(),
+        &tree.pair.child,
+        tree.child_work.run_id,
+        &[ids[0], ids[0]],
+    )
+    .await;
+    assert_eq!(repeated["accepted"], true, "{repeated}");
+    let after = gesture::items(
+        &gesture::unread(&gql, &runner, &tree.child_work, Some(tree.receiver)).await,
+    );
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0]["itemId"], ids[1].to_string());
+    fixture.shutdown().await;
+}

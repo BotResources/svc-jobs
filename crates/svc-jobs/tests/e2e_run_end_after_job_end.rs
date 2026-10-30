@@ -1,11 +1,11 @@
 mod support;
 
 use support::db::{self, Durable};
-use support::fixture::JobsFixture;
+use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::surface::{self, Agent};
-use support::{LONG, dispatch, gql, wire};
+use support::{LONG, dispatch, gql, infra, wire};
 
 async fn started_run_with_agent<'a>(
     fixture: &'a JobsFixture,
@@ -144,6 +144,110 @@ async fn a_permanent_failure_of_the_live_run_of_a_finished_job_ends_the_run_and_
         "COMPLETED",
         "the Job does not change"
     );
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+async fn finished(fixture: &JobsFixture, declaration: &JobDeclaration) {
+    Producer::new(fixture.fabric(), "projects")
+        .finish_v2(declaration.job_id)
+        .await;
+    gql::wait_for_status(
+        &fixture.gql(),
+        fixture.admin(),
+        declaration.job_id,
+        "COMPLETED",
+        LONG,
+    )
+    .await;
+}
+
+fn quick_overrun() -> Knobs {
+    Knobs {
+        run_max_duration_seconds: 3,
+        backstop_interval_seconds: 1,
+        ..Knobs::default()
+    }
+}
+
+#[tokio::test]
+async fn the_crash_of_the_runner_of_a_finished_job_fails_its_live_run_as_instance_lost() {
+    let fixture = JobsFixture::start().await;
+    let (mut instance, declaration, trigger) =
+        started_run_with_agent(&fixture, "end-after-crash").await;
+    let run = runner::run_id(&trigger);
+    let durable = Durable::open(&fixture.app_url()).await;
+    finished(&fixture, &declaration).await;
+
+    instance.crash();
+    tokio::time::sleep(infra::PRESENCE_TTL).await;
+
+    durable
+        .await_count(db::TERMINALS_OF_RUN, run, 1, "the lost Run is failed")
+        .await;
+    durable
+        .await_count(db::CURRENT_RUNS_OF_RUN, run, 0, "its capacity is released")
+        .await;
+    durable
+        .await_count(db::AGENTS_OF_RUN, run, 0, "its agents leave the directory")
+        .await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_live_run_of_a_finished_job_that_overruns_is_failed_by_the_backstop() {
+    let fixture = JobsFixture::start_with(quick_overrun()).await;
+    let (_instance, declaration, trigger) =
+        started_run_with_agent(&fixture, "end-after-overrun").await;
+    let run = runner::run_id(&trigger);
+    let durable = Durable::open(&fixture.app_url()).await;
+    finished(&fixture, &declaration).await;
+
+    durable
+        .await_count(
+            db::TERMINALS_OF_RUN,
+            run,
+            1,
+            "the overrunning Run is failed",
+        )
+        .await;
+    durable
+        .await_count(db::CURRENT_RUNS_OF_RUN, run, 0, "its capacity is released")
+        .await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_live_run_of_a_finished_and_deleted_job_that_overruns_is_still_failed() {
+    let fixture = JobsFixture::start_with(quick_overrun()).await;
+    let (_instance, declaration, trigger) =
+        started_run_with_agent(&fixture, "end-after-delete").await;
+    let run = runner::run_id(&trigger);
+    let durable = Durable::open(&fixture.app_url()).await;
+    finished(&fixture, &declaration).await;
+    let deleted = gql::delete_job(&fixture.gql(), fixture.admin(), declaration.job_id).await;
+    gql::expect_success(
+        &deleted,
+        wire::FIELD_DELETE_JOB,
+        "an administrator deletes a finished Job whose Run still lives",
+    );
+
+    durable
+        .await_count(
+            db::TERMINALS_OF_RUN,
+            run,
+            1,
+            "the overrunning Run is failed",
+        )
+        .await;
+    durable
+        .await_count(db::CURRENT_RUNS_OF_RUN, run, 0, "its capacity is released")
+        .await;
+    durable
+        .await_count(db::AGENTS_OF_RUN, run, 0, "its agents leave the directory")
+        .await;
     durable.close().await;
     fixture.shutdown().await;
 }

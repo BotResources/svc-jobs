@@ -1,8 +1,9 @@
 use bc_jobs::domain::ownership::ActorRef;
-use bc_jobs::domain::payload::PayloadAttachment;
+use bc_jobs::domain::payload::{JobPayload, PayloadAttachment};
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::kept_payload::{
-    KeptPayload, StoredPayload, UploadAdmission, decide_upload,
+    ExistingJob, KeptPayload, StoredPayload, UploadAdmission, decide_upload,
+    guard_job_serves_kept_payload,
 };
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
@@ -79,13 +80,12 @@ impl PgStore {
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
-        let job_requester = job_requester(&mut tx, for_job_id).await?;
+        let job = existing_job(&mut tx, for_job_id).await?;
         let known = stored(&mut tx, for_job_id).await?;
-        let admission =
-            match decide_upload(&uploader, &payload, job_requester.as_ref(), known.as_ref()) {
-                Ok(admission) => admission,
-                Err(refusal) => return Ok(Err(refusal.into())),
-            };
+        let admission = match decide_upload(&uploader, &payload, job.as_ref(), known.as_ref()) {
+            Ok(admission) => admission,
+            Err(refusal) => return Ok(Err(refusal.into())),
+        };
         if admission == UploadAdmission::Store {
             sqlx::query(
                 "INSERT INTO kept_payloads (job_id, uploader, message, attachments, uploaded_at) \
@@ -118,6 +118,10 @@ impl PgStore {
             Ok(context) => context,
             Err(refusal) => return Ok(Err(refusal.into())),
         };
+        let payload = job_payload(&mut tx, context.job_id.as_uuid()).await?;
+        if let Err(refusal) = guard_job_serves_kept_payload(payload.as_ref()) {
+            return Ok(Err(refusal));
+        }
         let source: Option<Uuid> = sqlx::query_scalar(PAYLOAD_SOURCE_SQL)
             .bind(context.job_id.as_uuid())
             .fetch_optional(&mut *tx)
@@ -133,11 +137,11 @@ impl PgStore {
     }
 }
 
-async fn job_requester(
+async fn existing_job(
     tx: &mut PgConnection,
     job_id: Uuid,
-) -> Result<Option<Requester>, PortError> {
-    let row = sqlx::query("SELECT requester FROM jobs WHERE id = $1")
+) -> Result<Option<ExistingJob>, PortError> {
+    let row = sqlx::query("SELECT requester, payload FROM jobs WHERE id = $1")
         .bind(job_id)
         .fetch_optional(&mut *tx)
         .await
@@ -145,8 +149,26 @@ async fn job_requester(
     let Some(row) = row else {
         return Ok(None);
     };
-    match row.get::<Option<serde_json::Value>, _>("requester") {
-        Some(stored) => serde_json::from_value(stored).map(Some).map_err(corrupt),
-        None => Ok(Some(Requester::Service(None))),
-    }
+    let requester = match row.get::<Option<serde_json::Value>, _>("requester") {
+        Some(stored) => serde_json::from_value(stored).map_err(corrupt)?,
+        None => Requester::Service(None),
+    };
+    let payload = match row.get::<Option<serde_json::Value>, _>("payload") {
+        Some(stored) => Some(serde_json::from_value(stored).map_err(corrupt)?),
+        None => None,
+    };
+    Ok(Some(ExistingJob { requester, payload }))
+}
+
+async fn job_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<JobPayload>, PortError> {
+    let stored: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT payload FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?
+            .flatten();
+    stored
+        .map(|stored| serde_json::from_value(stored).map_err(corrupt))
+        .transpose()
 }

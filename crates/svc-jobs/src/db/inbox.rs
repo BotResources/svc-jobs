@@ -117,8 +117,9 @@ impl PgStore {
         let acts_for = acts_for_in(&mut tx, run_id).await?;
         let reachable: Vec<Uuid> = sqlx::query_scalar(
             "SELECT item_id::uuid FROM inbox_items \
-             WHERE address = ANY($1) OR run_id = ANY($2)",
+             WHERE item_id = ANY($1) AND (address = ANY($2) OR run_id = ANY($3))",
         )
+        .bind(item_ids)
         .bind(&addresses)
         .bind(runs_reachable(run_id, &acts_for))
         .fetch_all(&mut *tx)

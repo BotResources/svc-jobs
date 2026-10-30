@@ -100,7 +100,6 @@ pub fn runs_lost_with_instance(
     jobs: &[Job],
 ) -> Vec<RunLostWithInstance> {
     jobs.iter()
-        .filter(|job| !job.is_terminal())
         .filter_map(|job| {
             job.active_run()
                 .filter(|run| session.carried(run))
@@ -174,6 +173,27 @@ mod tests {
             intents,
             vec![RunLostWithInstance {
                 job_id: executing.id(),
+                run_id: running_id
+            }]
+        );
+    }
+
+    #[test]
+    fn a_finished_job_whose_run_is_still_live_loses_that_run_with_its_instance() {
+        use crate::domain::job::resolution::JobResolution;
+        use crate::fixtures::resolution_id;
+        let running = RunBuilder::new(1).started(ts(5)).build();
+        let running_id = running.id();
+        let finished = JobBuilder::new()
+            .with_run(running)
+            .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
+            .build();
+        let intents =
+            runs_lost_with_instance(&session(instance()), std::slice::from_ref(&finished));
+        assert_eq!(
+            intents,
+            vec![RunLostWithInstance {
+                job_id: finished.id(),
                 run_id: running_id
             }]
         );

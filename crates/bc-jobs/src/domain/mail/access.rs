@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::delivery::RecipientKind;
 use super::refusal::MailRefusal;
-use crate::domain::ids::{AgentId, ItemId};
+use crate::domain::ids::{AgentId, ItemId, RunId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemNotYours;
@@ -15,6 +15,14 @@ pub fn guard_address_is_of_the_run(
         Ok(())
     } else {
         Err(MailRefusal::AddressNotYours)
+    }
+}
+
+pub fn guard_sender_holds(holder: Option<RunId>, run: RunId) -> Result<(), MailRefusal> {
+    match holder {
+        None => Err(MailRefusal::SenderUnknown),
+        Some(holder) if holder == run => Ok(()),
+        Some(_) => Err(MailRefusal::SenderNotOfRun),
     }
 }
 
@@ -69,6 +77,21 @@ mod tests {
         for kind in [RecipientKind::Direct, RecipientKind::Cc] {
             assert_eq!(guard_reads_mail(mine, &[mine], Some(kind)), Ok(kind));
         }
+    }
+
+    #[test]
+    fn a_sender_address_is_held_by_the_run_that_sends_or_the_mail_is_refused() {
+        let run = RunId::new(Uuid::now_v7()).unwrap();
+        let other = RunId::new(Uuid::now_v7()).unwrap();
+        assert_eq!(guard_sender_holds(Some(run), run), Ok(()));
+        assert_eq!(
+            guard_sender_holds(None, run),
+            Err(MailRefusal::SenderUnknown)
+        );
+        assert_eq!(
+            guard_sender_holds(Some(other), run),
+            Err(MailRefusal::SenderNotOfRun)
+        );
     }
 
     #[test]

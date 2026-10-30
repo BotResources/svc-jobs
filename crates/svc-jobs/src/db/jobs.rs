@@ -183,7 +183,11 @@ impl PgStore {
             "SELECT j.id::uuid AS id FROM jobs j \
              JOIN runner_types rt ON rt.id = j.runner_type_id \
              WHERE rt.type_key = $1 \
-               AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id)",
+               AND (NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
+                    OR EXISTS (SELECT 1 FROM runs r \
+                        JOIN run_starts rs ON rs.run_id = r.id \
+                        LEFT JOIN run_terminals t ON t.run_id = r.id \
+                        WHERE r.job_id = j.id AND t.run_id IS NULL))",
         )
         .bind(runner_type)
         .fetch_all(self.pool())

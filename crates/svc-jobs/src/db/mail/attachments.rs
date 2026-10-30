@@ -1,4 +1,7 @@
 use bc_jobs::domain::ids::{AgentId, AttachmentId, MailId};
+use bc_jobs::domain::mail::content::{
+    AttachmentAdmission, AttachmentBody, StoredAttachment, decide_attachment_upload,
+};
 use bc_jobs::domain::mail::refusal::MailRefusal;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
@@ -73,48 +76,40 @@ impl PgStore {
         if let Err(refusal) = guard_sender(&mut tx, request.from, context.run_id).await? {
             return Ok(Err(refusal.into()));
         }
-        let existing = sqlx::query(
-            "SELECT uploader_address, name, content_type, content, \
-                EXISTS (SELECT 1 FROM mails WHERE mail_id = $1) AS sent \
-             FROM mail_attachments WHERE mail_id = $1 AND attachment_id = $2",
-        )
-        .bind(request.mail_id.as_uuid())
-        .bind(request.attachment_id.as_uuid())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        if let Some(row) = existing {
-            let same_uploader = row.get::<Uuid, _>("uploader_address") == request.from.as_uuid();
-            let identical = row.get::<String, _>("name") == request.name
-                && row.get::<String, _>("content_type") == request.content_type
-                && row.get::<String, _>("content") == request.content;
-            if same_uploader && identical {
-                return Ok(Ok(()));
-            }
-            if !same_uploader || row.get::<bool, _>("sent") {
-                return Ok(Err(MailRefusal::MailIdReused.into()));
-            }
-        }
-        sqlx::query(
+        let incoming = AttachmentBody {
+            name: request.name.clone(),
+            content_type: request.content_type.clone(),
+            content: request.content.clone(),
+        };
+        let inserted = sqlx::query(
             "INSERT INTO mail_attachments \
                 (mail_id, attachment_id, uploader_address, name, content_type, content, size, \
                  uploaded_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-             ON CONFLICT (mail_id, attachment_id) DO UPDATE SET name = EXCLUDED.name, \
-                content_type = EXCLUDED.content_type, content = EXCLUDED.content, \
-                size = EXCLUDED.size, uploaded_at = EXCLUDED.uploaded_at",
+             ON CONFLICT (mail_id, attachment_id) DO NOTHING",
         )
         .bind(request.mail_id.as_uuid())
         .bind(request.attachment_id.as_uuid())
         .bind(request.from.as_uuid())
-        .bind(&request.name)
-        .bind(&request.content_type)
-        .bind(&request.content)
-        .bind(i64::try_from(request.content.len()).unwrap_or(i64::MAX))
+        .bind(&incoming.name)
+        .bind(&incoming.content_type)
+        .bind(&incoming.content)
+        .bind(i64::try_from(incoming.content.len()).unwrap_or(i64::MAX))
         .bind(at)
         .execute(&mut *tx)
         .await
-        .map_err(unavailable)?;
+        .map_err(unavailable)?
+        .rows_affected();
+        if inserted == 0 {
+            let stored = locked_attachment(&mut tx, request.mail_id, request.attachment_id).await?;
+            match decide_attachment_upload(stored.as_ref(), request.from, &incoming) {
+                AttachmentAdmission::Absorb => return Ok(Ok(())),
+                AttachmentAdmission::Refuse(refusal) => return Ok(Err(refusal.into())),
+                AttachmentAdmission::Store => {
+                    replace_attachment(&mut tx, &request, &incoming, at).await?;
+                }
+            }
+        }
         tx.commit().await.map_err(unavailable)?;
         Ok(Ok(()))
     }
@@ -156,4 +151,55 @@ impl PgStore {
             None => Err(MailRefusal::MailNotYours.into()),
         })
     }
+}
+
+async fn locked_attachment(
+    tx: &mut PgConnection,
+    mail_id: MailId,
+    attachment_id: AttachmentId,
+) -> Result<Option<StoredAttachment>, PortError> {
+    let row = sqlx::query(
+        "SELECT uploader_address, name, content_type, content, \
+            EXISTS (SELECT 1 FROM mails WHERE mail_id = $1) AS sent \
+         FROM mail_attachments WHERE mail_id = $1 AND attachment_id = $2 FOR UPDATE",
+    )
+    .bind(mail_id.as_uuid())
+    .bind(attachment_id.as_uuid())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    Ok(row.map(|row| StoredAttachment {
+        uploader: AgentId::new(row.get("uploader_address")),
+        body: AttachmentBody {
+            name: row.get("name"),
+            content_type: row.get("content_type"),
+            content: row.get("content"),
+        },
+        mail_sent: row.get("sent"),
+    }))
+}
+
+async fn replace_attachment(
+    tx: &mut PgConnection,
+    request: &UploadAttachment<'_>,
+    body: &AttachmentBody,
+    at: DateTime<Utc>,
+) -> Result<(), PortError> {
+    sqlx::query(
+        "UPDATE mail_attachments SET name = $4, content_type = $5, content = $6, size = $7, \
+            uploaded_at = $8 \
+         WHERE mail_id = $1 AND attachment_id = $2 AND uploader_address = $3",
+    )
+    .bind(request.mail_id.as_uuid())
+    .bind(request.attachment_id.as_uuid())
+    .bind(request.from.as_uuid())
+    .bind(&body.name)
+    .bind(&body.content_type)
+    .bind(&body.content)
+    .bind(i64::try_from(body.content.len()).unwrap_or(i64::MAX))
+    .bind(at)
+    .execute(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    Ok(())
 }

@@ -92,5 +92,8 @@ pub const OUTBOX_MENTIONING: &str =
 pub const AGENTS_OF_RUN: &str = "SELECT count(*) FROM directory_agents WHERE run_id = $1";
 pub const FINISHED_AGENTS_OF_RUN: &str =
     "SELECT count(*) FROM directory_agents WHERE run_id = $1 AND state = 'FINISHED'";
+pub const SAVED_STATES_OF_RUN: &str = "SELECT count(*) FROM saved_states WHERE run_id = $1";
+pub const SAVED_STATE_AGENTS_OF_RUN: &str =
+    "SELECT count(*) FROM saved_state_agents WHERE run_id = $1";
 pub const TERMINALS_OF_RUN: &str = "SELECT count(*) FROM run_terminals WHERE run_id = $1";
 pub const CURRENT_RUNS_OF_RUN: &str = "SELECT count(*) FROM current_runs WHERE run_id = $1";

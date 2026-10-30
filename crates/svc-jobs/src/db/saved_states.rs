@@ -48,7 +48,7 @@ impl PgStore {
         at: DateTime<Utc>,
     ) -> Result<Result<(), RunnerRefusal>, PortError> {
         let mut tx = self.begin().await?;
-        let context = match require_work(&mut tx, work, false).await? {
+        let context = match require_work(&mut tx, work, true).await? {
             Ok(context) => context,
             Err(refusal) => return Ok(Err(refusal.into())),
         };

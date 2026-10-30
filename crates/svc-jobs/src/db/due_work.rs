@@ -53,8 +53,7 @@ impl DueWorkReader for PgStore {
     ) -> Result<Vec<Job>, PortError> {
         let sql = format!(
             "SELECT j.id::uuid AS id FROM jobs j \
-             WHERE NOT EXISTS (SELECT 1 FROM job_deletions jd WHERE jd.job_id = j.id) \
-               AND EXISTS (SELECT 1 FROM runs r \
+             WHERE EXISTS (SELECT 1 FROM runs r \
                 JOIN run_starts rs ON rs.run_id = r.id \
                 LEFT JOIN run_terminals t ON t.run_id = r.id \
                 WHERE r.job_id = j.id AND t.run_id IS NULL \

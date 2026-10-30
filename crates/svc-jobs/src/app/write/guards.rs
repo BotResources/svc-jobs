@@ -1,4 +1,5 @@
 use bc_jobs::domain::actions::fleet::guard_accept_job;
+use bc_jobs::domain::directory::caller_address::guard_caller_address;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
@@ -114,6 +115,9 @@ pub(super) async fn lock_directory_trees(
         if let Some(restart) = &change.restart {
             trees.push(restart.tree);
         }
+        if let Some(premise) = &change.caller_address {
+            trees.extend(crate::db::directory::tree_of_run(tx, premise.caller).await?);
+        }
         if !change.removes_directory && !change.events.iter().any(ends_a_run) {
             continue;
         }
@@ -140,6 +144,20 @@ pub(super) async fn guard_restarts_still_due(
             return Err(ServiceError::RestartNotDue);
         }
         crate::db::restart::consume_wake(tx, restart.origin_run).await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn guard_caller_addresses_still_held(
+    tx: &mut sqlx::PgConnection,
+    changes: &[JobChange],
+) -> Result<(), ServiceError> {
+    for premise in changes.iter().filter_map(|change| change.caller_address) {
+        let holder = match premise.address {
+            Some(address) => crate::db::directory::address_holder_in(tx, address).await?,
+            None => None,
+        };
+        guard_caller_address(premise.mode, premise.address, premise.caller, holder)?;
     }
     Ok(())
 }

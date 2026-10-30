@@ -174,14 +174,34 @@ impl PgStore {
     }
 
     pub async fn mail_address_run(&self, address: Uuid) -> Result<Option<RunId>, PortError> {
-        let found: Option<Uuid> = sqlx::query_scalar(
-            "SELECT run_id::uuid FROM directory_agents WHERE agent_id = $1 AND has_inbox",
-        )
-        .bind(address)
-        .fetch_optional(self.pool())
+        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
+        address_holder_in(&mut connection, address).await
+    }
+}
+
+pub async fn address_holder_in(
+    tx: &mut PgConnection,
+    address: Uuid,
+) -> Result<Option<RunId>, PortError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT run_id::uuid FROM directory_agents WHERE agent_id = $1 AND has_inbox",
+    )
+    .bind(address)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    found.map(RunId::new).transpose().map_err(PortError::from)
+}
+
+pub async fn tree_of_run(tx: &mut PgConnection, run_id: RunId) -> Result<Option<JobId>, PortError> {
+    let job: Option<Uuid> = sqlx::query_scalar("SELECT job_id::uuid FROM runs WHERE id = $1")
+        .bind(run_id.as_uuid())
+        .fetch_optional(&mut *tx)
         .await
         .map_err(unavailable)?;
-        found.map(RunId::new).transpose().map_err(PortError::from)
+    match job {
+        Some(job) => PgStore::initial_job_of(tx, JobId::new(job)?).await,
+        None => Ok(None),
     }
 }
 

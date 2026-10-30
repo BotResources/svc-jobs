@@ -150,6 +150,21 @@ kept payloads.
 
 - A root Job is no longer its own parent when the restart obstacle
   "parent Job terminal" is read for the listing and for mail.
+- A Job that finished while its Run was still live: the Run is now reclaimed when
+  it overruns its maximum duration (also after the Job was deleted) and failed
+  with its instance when the runner is lost; its capacity slot and its directory
+  entries are released.
+- A payload cannot be uploaded for a Job that already carries an inline or a
+  reference payload (`payload_already_uploaded`), and a Run fetches a kept
+  payload only when its Job has the kept form (`no_kept_payload`).
+- Marking items read checks only the requested items.
+- Saving a state takes the Tree lock, so a save no longer leaves a state behind
+  a Run that was removed at the same time.
+- Two uploads of the same attachment id, or two mails of the same mail id, from
+  two Trees at once keep one content and one uploader; the other is refused with
+  `mail_id_reused`.
+- The caller address of a background call is checked again under the Tree lock
+  of the calling Run in the transaction that creates the Job.
 
 ### Removed
 
