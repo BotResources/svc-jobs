@@ -15,7 +15,6 @@ use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::directory_entry::{ENTRY_TABLES, entry_columns, entry_of};
 use super::hydrate::unavailable;
 
 const STANDING_SQL: &str = "SELECT rt.type_key, ri.instance_key, \
@@ -112,17 +111,9 @@ impl AgentDirectory for PgStore {
             Ok(initial_job_id) => initial_job_id,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        let sql = format!(
-            "SELECT {} {} WHERE d.initial_job_id = $1 ORDER BY d.registered_at, d.agent_id",
-            entry_columns(),
-            ENTRY_TABLES
-        );
-        let rows = sqlx::query(&sql)
-            .bind(initial_job_id.as_uuid())
-            .fetch_all(&mut *tx)
+        super::directory_tree::entries_in(&mut tx, initial_job_id)
             .await
-            .map_err(unavailable)?;
-        rows.iter().map(listed).collect::<Result<_, _>>().map(Ok)
+            .map(Ok)
     }
 }
 
@@ -190,11 +181,6 @@ pub async fn tree_of_run(tx: &mut PgConnection, run_id: RunId) -> Result<Option<
         Some(job) => PgStore::initial_job_of(tx, JobId::new(job)?).await,
         None => Ok(None),
     }
-}
-
-fn listed(row: &sqlx::postgres::PgRow) -> Result<ListedEntry, PortError> {
-    let (entry, obstacles) = entry_of(row)?;
-    Ok(ListedEntry { entry, obstacles })
 }
 
 async fn held_agents(
