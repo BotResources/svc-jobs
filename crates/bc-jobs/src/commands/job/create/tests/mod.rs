@@ -1,8 +1,9 @@
 use super::*;
 use crate::domain::job::resolution::JobResolution;
+use crate::domain::requester::Requester;
 use crate::fixtures::{
-    JobBuilder, RunBuilder, job_id, producer, resolution_id, runner_type, source_entity_id, ts,
-    user,
+    JobBuilder, RunBuilder, job_id, producer, resolution_id, runner_type, service_passport,
+    source_entity_id, ts, user, user_passport,
 };
 use serde_json::json;
 
@@ -25,13 +26,18 @@ fn command() -> CreateJob {
         source_entity_id: None,
         max_attempts: None,
         requested_priority: Priority::DEFAULT,
+        initial_job_id: None,
+        requester: Requester::Service(None),
+        passport: Some(service_passport()),
+        payload: None,
+        call: None,
     }
 }
 
 fn queued(outcome: CreateOutcome) -> JobQueued {
     match outcome {
         CreateOutcome::Queued(result) => match result.events.into_iter().next() {
-            Some(JobEvent::JobQueued(fact)) => fact,
+            Some(JobEvent::JobQueued(fact)) => *fact,
             other => panic!("expected a JobQueued fact, got {other:?}"),
         },
         CreateOutcome::AlreadyQueued => panic!("expected the job to be queued"),
@@ -59,6 +65,7 @@ fn the_queued_fact_carries_the_user_the_work_runs_for() {
     let known = user();
     let command = CreateJob {
         triggered_by: Some(known.clone()),
+        passport: Some(user_passport(&known)),
         ..command()
     };
     // When: it is queued

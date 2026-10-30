@@ -14,8 +14,10 @@ use crate::domain::job::resolution::JobResolution;
 use crate::domain::job::{Job, JobState};
 use crate::domain::keys::{DisplayName, InstanceKey, ProducerKey, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
+use crate::domain::passport::{JobPassport, PassportSubject};
 use crate::domain::priority::{JobPriority, Priority};
 use crate::domain::references::KnownUser;
+use crate::domain::requester::Requester;
 use crate::domain::run::failure::{RunFailureKind, RunFailureReport};
 use crate::domain::run::parts::{
     RetrySchedule, RunReservation, RunStart, RunTerminal, RunnerInstanceReference,
@@ -70,6 +72,24 @@ pub fn producer() -> ProducerKey {
 
 pub fn instance() -> RunnerInstanceReference {
     RunnerInstanceReference::new(runner_type(), InstanceKey::new("pod-7").expect("valid key"))
+}
+
+pub fn service_passport() -> JobPassport {
+    JobPassport::new(
+        PassportSubject::Service(Uuid::from_u128(7)),
+        None,
+        serde_json::json!({ "kind": "service" }),
+    )
+    .expect("valid passport")
+}
+
+pub fn user_passport(known: &KnownUser) -> JobPassport {
+    JobPassport::new(
+        PassportSubject::User(known.id().0),
+        Some(known.display_name().as_str().to_owned()),
+        serde_json::json!({ "kind": "user" }),
+    )
+    .expect("valid passport")
 }
 
 pub fn user() -> KnownUser {
@@ -233,6 +253,11 @@ impl JobBuilder {
                 resolution: None,
                 deletion: None,
                 manual_retry: None,
+                initial_job_id: None,
+                requester: Requester::Service(None),
+                passport: Some(service_passport()),
+                payload: None,
+                call: None,
             },
         }
     }
@@ -252,8 +277,24 @@ impl JobBuilder {
         self
     }
 
+    pub fn with_requester(mut self, requester: Requester) -> Self {
+        self.state.requester = requester;
+        self
+    }
+
+    pub fn with_passport(mut self, passport: JobPassport) -> Self {
+        self.state.passport = Some(passport);
+        self
+    }
+
+    pub fn with_initial_job(mut self, initial_job_id: JobId) -> Self {
+        self.state.initial_job_id = Some(initial_job_id);
+        self
+    }
+
     pub fn with_parent(mut self, parent_job_id: JobId) -> Self {
         self.state.parent_job_id = Some(parent_job_id);
+        self.state.initial_job_id = Some(parent_job_id);
         self.state.owner = JobOwner::Runner {
             parent_job_id,
             runner_type: runner_type(),

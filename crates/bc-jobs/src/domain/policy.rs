@@ -6,6 +6,8 @@ use crate::error::JobsError;
 
 const BASIS: i64 = 10_000;
 
+pub const DEFAULT_INLINE_PAYLOAD_MAX_BYTES: usize = 524_288;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Jitter(i64);
 
@@ -37,6 +39,7 @@ pub struct ServiceLimits {
     inactivity_timeout: TimeDelta,
     retirement_quiet_period: TimeDelta,
     default_max_priority: Priority,
+    inline_payload_max_bytes: usize,
 }
 
 impl Default for ServiceLimits {
@@ -48,6 +51,7 @@ impl Default for ServiceLimits {
             inactivity_timeout: TimeDelta::hours(24),
             retirement_quiet_period: TimeDelta::hours(24),
             default_max_priority: Priority::DEFAULT,
+            inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
         }
     }
 }
@@ -68,6 +72,7 @@ impl ServiceLimits {
             inactivity_timeout: positive("inactivity_timeout", inactivity_timeout)?,
             retirement_quiet_period: positive("retirement_quiet_period", retirement_quiet_period)?,
             default_max_priority: Priority::DEFAULT,
+            inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
         })
     }
 
@@ -77,6 +82,16 @@ impl ServiceLimits {
     pub fn with_default_max_priority(mut self, maximum: Priority) -> Self {
         self.default_max_priority = maximum;
         self
+    }
+
+    #[must_use]
+    pub fn with_inline_payload_max_bytes(mut self, maximum: usize) -> Self {
+        self.inline_payload_max_bytes = maximum;
+        self
+    }
+
+    pub fn inline_payload_max_bytes(&self) -> usize {
+        self.inline_payload_max_bytes
     }
 
     pub fn default_max_priority(&self) -> Priority {

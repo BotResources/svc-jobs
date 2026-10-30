@@ -8,11 +8,15 @@ use crate::domain::ids::{
     ClaimId, JobId, KnownUserId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId,
     RunId,
 };
+use crate::domain::job::JobCall;
 use crate::domain::job::resolution::JobFailureCause;
 use crate::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
+use crate::domain::passport::JobPassport;
+use crate::domain::payload::JobPayload;
 use crate::domain::priority::Priority;
 use crate::domain::references::{KnownUser, SourceReference};
+use crate::domain::requester::Requester;
 use crate::domain::run::failure::RunFailureReport;
 use crate::domain::run::origin::RunOrigin;
 use crate::domain::run::plan::{DeclarationNumber, RunPlanItem};
@@ -38,6 +42,16 @@ pub struct JobQueued {
     /// forced at the parent's level from its first fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forced_priority: Option<Priority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_job_id: Option<JobId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requester: Option<Requester>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport: Option<JobPassport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<JobPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<JobCall>,
 }
 
 /// What a fact recorded before priorities existed reads as: the default level,

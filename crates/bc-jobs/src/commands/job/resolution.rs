@@ -52,7 +52,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.requester.guard_may_resolve()?;
+        command.requester.guard_may_resolve(self.requester())?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobCompleted(JobCompleted {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -67,7 +67,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.requester.guard_may_resolve()?;
+        command.requester.guard_may_resolve(self.requester())?;
         self.resolve_after_withdrawing_its_run(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,

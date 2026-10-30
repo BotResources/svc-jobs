@@ -66,6 +66,7 @@ pub enum CommandWarning {
         submitted: u32,
     },
     CancellationIsBestEffort,
+    CancelledJobAlreadyTerminal,
     CommandAlreadyApplied {
         command: &'static str,
     },
@@ -79,6 +80,7 @@ impl CommandWarning {
             Self::FactAlreadyRecorded { .. } => "fact_already_recorded",
             Self::StepIndexNotAdvancing { .. } => "step_index_not_advancing",
             Self::CancellationIsBestEffort => "cancellation_is_best_effort",
+            Self::CancelledJobAlreadyTerminal => "cancelled_job_already_terminal",
             Self::CommandAlreadyApplied { .. } => "command_already_applied",
         }
     }
@@ -95,7 +97,7 @@ impl CommandWarning {
             Self::StepIndexNotAdvancing { current, submitted } => {
                 json!({ "current": current, "submitted": submitted })
             }
-            Self::CancellationIsBestEffort => json!({}),
+            Self::CancellationIsBestEffort | Self::CancelledJobAlreadyTerminal => json!({}),
             Self::CommandAlreadyApplied { command } => json!({ "command": command }),
         }
     }

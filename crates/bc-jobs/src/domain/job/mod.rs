@@ -14,8 +14,11 @@ use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
+use crate::domain::passport::JobPassport;
+use crate::domain::payload::{CallMode, JobPayload};
 use crate::domain::priority::JobPriority;
 use crate::domain::references::KnownUser;
+use crate::domain::requester::Requester;
 use crate::domain::run::Run;
 use crate::error::JobsError;
 
@@ -37,6 +40,11 @@ pub struct JobState {
     pub resolution: Option<JobResolution>,
     pub deletion: Option<JobDeletion>,
     pub manual_retry: Option<ManualRetryRecord>,
+    pub initial_job_id: Option<JobId>,
+    pub requester: Requester,
+    pub passport: Option<JobPassport>,
+    pub payload: Option<JobPayload>,
+    pub call: Option<JobCall>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +65,27 @@ pub struct Job {
     resolution: Option<JobResolution>,
     deletion: Option<JobDeletion>,
     manual_retry: Option<ManualRetryRecord>,
+    initial_job_id: JobId,
+    requester: Requester,
+    passport: Option<JobPassport>,
+    payload: Option<JobPayload>,
+    call: Option<JobCall>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct JobCall {
+    pub mode: CallMode,
+    pub caller_address: Option<uuid::Uuid>,
+}
+
+impl JobCall {
+    pub fn guard_coherent(&self) -> Result<(), JobsError> {
+        match (self.mode, self.caller_address) {
+            (CallMode::Background, None) => Err(corrupt("background_call_without_caller_address")),
+            (CallMode::Sync, Some(_)) => Err(corrupt("sync_call_with_caller_address")),
+            _ => Ok(()),
+        }
+    }
 }
 
 fn corrupt(reason_code: &'static str) -> JobsError {
@@ -74,6 +103,13 @@ impl Job {
             return Err(JobsError::SelfReference {
                 field: "predecessor_job_id",
             });
+        }
+        let initial_job_id = state.initial_job_id.unwrap_or(state.id);
+        if state.parent_job_id.is_some() && initial_job_id == state.id {
+            return Err(corrupt("child_job_is_its_own_initial_job"));
+        }
+        if let Some(call) = &state.call {
+            call.guard_coherent()?;
         }
         if state.owner.parent_job_id() != state.parent_job_id {
             return Err(corrupt("owner_does_not_match_parent"));
@@ -145,6 +181,11 @@ impl Job {
             resolution: state.resolution,
             deletion: state.deletion,
             manual_retry: state.manual_retry,
+            initial_job_id,
+            requester: state.requester,
+            passport: state.passport,
+            payload: state.payload,
+            call: state.call,
         })
     }
 
@@ -210,5 +251,29 @@ impl Job {
 
     pub fn manual_retry(&self) -> Option<&ManualRetryRecord> {
         self.manual_retry.as_ref()
+    }
+
+    pub fn initial_job_id(&self) -> JobId {
+        self.initial_job_id
+    }
+
+    pub fn wire_parent_job_id(&self) -> JobId {
+        self.parent_job_id.unwrap_or(self.id)
+    }
+
+    pub fn requester(&self) -> &Requester {
+        &self.requester
+    }
+
+    pub fn passport(&self) -> Option<&JobPassport> {
+        self.passport.as_ref()
+    }
+
+    pub fn payload(&self) -> Option<&JobPayload> {
+        self.payload.as_ref()
+    }
+
+    pub fn call(&self) -> Option<&JobCall> {
+        self.call.as_ref()
     }
 }

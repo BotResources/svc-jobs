@@ -24,6 +24,17 @@ impl JobsError {
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
             | Self::NotOwner
+            | Self::NotRequester
+            | Self::RunnerNotWorkingTheJob
+            | Self::ActingRunMissing
+            | Self::ActingRunNotLive
+            | Self::PassportRequired
+            | Self::PassportUserMismatch
+            | Self::PassportParentMismatch
+            | Self::InitialJobMismatch
+            | Self::ParentNotOfRun
+            | Self::ModeRequired
+            | Self::CallerAddressNotHeld
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman
@@ -31,6 +42,9 @@ impl JobsError {
             | Self::RetryNotScheduled
             | Self::EmptyPlan => json!({}),
             Self::RunnerTypeHasNoLiveInstances | Self::RunnerTypeAlreadyActive => json!({}),
+            Self::PayloadTooLarge { size, maximum } => {
+                json!({ "size": size, "maximum": maximum })
+            }
             Self::JobIdConflict { job_id } => json!({ "jobId": job_id }),
             Self::SourceAlreadyActive { active_job_id } => json!({ "activeJobId": active_job_id }),
             Self::ParentJobUnknown { parent_job_id }

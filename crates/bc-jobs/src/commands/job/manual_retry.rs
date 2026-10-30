@@ -69,7 +69,7 @@ pub fn manual_retry(
         },
     };
     let priority = JobPriority::admitted(predecessor.priority().requested(), basis);
-    let mut successor = vec![JobEvent::JobQueued(JobQueued {
+    let mut successor = vec![JobEvent::JobQueued(Box::new(JobQueued {
         job_id: command.successor_job_id,
         runner_type: predecessor.runner_type().clone(),
         producer: predecessor.producer().clone(),
@@ -83,7 +83,12 @@ pub fn manual_retry(
         requested_priority: priority.requested(),
         effective_priority: priority.effective(),
         forced_priority: priority.forced(),
-    })];
+        initial_job_id: Some(predecessor.initial_job_id()),
+        requester: Some(*predecessor.requester()),
+        passport: predecessor.passport().cloned(),
+        payload: predecessor.payload().cloned(),
+        call: predecessor.call().copied(),
+    }))];
     let first_run_id = match command.dispatch {
         SuccessorDispatch::Push {
             first_run_id,
