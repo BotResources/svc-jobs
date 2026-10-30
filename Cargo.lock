@@ -574,6 +574,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "br-util-scope-declaration"
+version = "0.1.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=br-util-scope-declaration%2Fv0.1.0#5fef8fc9e285e2255547632c58679aa7469d6c31"
+dependencies = [
+ "br-core-integration",
+ "br-core-scope",
+ "br-scope-declaration-contract",
+ "br-util-axum-readiness",
+ "br-util-nats-fabric",
+ "chrono",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3369,12 +3385,14 @@ dependencies = [
  "br-core-auth",
  "br-core-events",
  "br-core-integration",
+ "br-core-scope",
  "br-test-harness",
  "br-util-axum-readiness",
  "br-util-graphql",
  "br-util-nats-fabric",
  "br-util-observability",
  "br-util-postgres",
+ "br-util-scope-declaration",
  "chrono",
  "contract-jobs",
  "dotenvy",

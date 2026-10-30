@@ -13,6 +13,7 @@ use crate::app::runner_type_lifecycle::{self, RunnerTypeAction};
 use crate::app::{priority, runner_type_settings};
 use crate::error::ServiceError;
 
+#[derive(Default)]
 pub struct MutationRoot;
 
 #[Object(name = "Mutation")]

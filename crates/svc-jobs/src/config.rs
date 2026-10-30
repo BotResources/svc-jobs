@@ -53,6 +53,7 @@ pub struct Settings {
     pub restart_policy: RestartPolicy,
     pub log_partition_horizon_warning: TimeDelta,
     pub claims: ClaimSettings,
+    pub scope_declaration_enabled: bool,
 }
 
 /// How long a claim is held open, and how long a Run it reserved may wait for
@@ -246,6 +247,7 @@ impl Settings {
                 reservation_delay: TimeDelta::seconds(claim_reservation_seconds),
                 max_held: claim_max_held,
             },
+            scope_declaration_enabled: read("SCOPE_DECLARATION_ENABLED", true)?,
         })
     }
 }

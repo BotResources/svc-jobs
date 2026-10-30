@@ -5,6 +5,7 @@ pub mod log_page;
 pub mod mutation;
 pub mod project;
 pub mod query;
+pub mod runner;
 pub mod state;
 pub mod subscription;
 pub mod tree;
@@ -25,15 +26,23 @@ use br_util_graphql::EdgeError;
 use futures::StreamExt;
 use serde_json::{Value, json};
 
+use async_graphql::MergedObject;
 use mutation::MutationRoot;
 use query::QueryRoot;
+use runner::{RunnerMutation, RunnerQuery};
 use state::EdgeState;
 use subscription::SubscriptionRoot;
 
-pub type JobsSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
+#[derive(MergedObject, Default)]
+pub struct Query(QueryRoot, RunnerQuery);
 
-pub fn schema_builder() -> SchemaBuilder<QueryRoot, MutationRoot, SubscriptionRoot> {
-    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
+#[derive(MergedObject, Default)]
+pub struct Mutation(MutationRoot, RunnerMutation);
+
+pub type JobsSchema = Schema<Query, Mutation, SubscriptionRoot>;
+
+pub fn schema_builder() -> SchemaBuilder<Query, Mutation, SubscriptionRoot> {
+    Schema::build(Query::default(), Mutation::default(), SubscriptionRoot)
 }
 
 pub fn build_schema(state: EdgeState) -> JobsSchema {

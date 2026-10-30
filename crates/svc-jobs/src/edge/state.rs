@@ -21,28 +21,25 @@ pub struct EdgeState {
     pub hub: Hub,
 }
 
-fn passport<'a>(ctx: &'a Context<'_>) -> Result<&'a Passport> {
+pub fn passport_of<'a>(ctx: &'a Context<'_>) -> Result<&'a Passport> {
     ctx.data_opt::<Passport>()
         .ok_or_else(|| async_graphql::Error::from(EdgeError::unauthenticated()))
 }
 
 pub fn principal(ctx: &Context<'_>) -> Result<PrincipalFacts> {
-    Ok(principal_of(passport(ctx)?))
+    Ok(principal_of(passport_of(ctx)?))
 }
 
 pub fn administrator(ctx: &Context<'_>) -> Result<KnownUser> {
-    known_administrator(passport(ctx)?)
+    known_administrator(passport_of(ctx)?)
 }
 
-/// The human acting, as the actions it takes are recorded under. Whether it
-/// may act is the domain's decision, taken on [`principal`].
 pub fn actor(ctx: &Context<'_>) -> Result<KnownUser> {
-    known_user(passport(ctx)?)
+    known_user(passport_of(ctx)?)
 }
 
-/// The caller of the user surface: an active human, reading their own data.
 pub fn own_user(ctx: &Context<'_>) -> Result<uuid::Uuid> {
-    let passport = passport(ctx)?;
+    let passport = passport_of(ctx)?;
     principal_of(passport)
         .guard_reads_own_max_priority()
         .map_err(|refusal| async_graphql::Error::from(of_domain(&refusal)))?;

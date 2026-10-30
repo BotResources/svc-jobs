@@ -29,6 +29,7 @@ pub struct Knobs {
     pub claim_max_wait_seconds: u64,
     /// `None` leaves JOBS_CLAIM_MAX_HELD unset, so the service default applies.
     pub claim_max_held: Option<u64>,
+    pub scope_declaration: bool,
 }
 
 impl Default for Knobs {
@@ -45,6 +46,7 @@ impl Default for Knobs {
             claim_reservation_seconds: 600,
             claim_max_wait_seconds: 30,
             claim_max_held: None,
+            scope_declaration: false,
         }
     }
 }
@@ -243,6 +245,13 @@ pub fn impersonating_admin() -> (Passport, Uuid) {
     (passport, operator_id)
 }
 
+pub fn runner_access() -> Passport {
+    PassportBuilder::new()
+        .user_id(Uuid::now_v7())
+        .claim("scopes", vec!["jobs:runner"])
+        .build_service()
+}
+
 pub fn machine_caller() -> Passport {
     PassportBuilder::new()
         .user_id(Uuid::now_v7())
@@ -273,7 +282,9 @@ async fn spawn_instance(
     let claim_max_wait = knobs.claim_max_wait_seconds.to_string();
     let claim_max_held = knobs.claim_max_held.map(|held| held.to_string());
 
+    let scope_declaration = knobs.scope_declaration.to_string();
     let mut env: Vec<(&str, &str)> = vec![
+        ("SCOPE_DECLARATION_ENABLED", scope_declaration.as_str()),
         ("DATABASE_URL", app_url.as_str()),
         ("DATABASE_URL_OWNER", owner_url.as_str()),
         ("HOST", "127.0.0.1"),

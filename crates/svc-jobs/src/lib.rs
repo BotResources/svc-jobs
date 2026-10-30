@@ -7,6 +7,7 @@ pub mod error;
 mod pg;
 pub mod runner_transport;
 pub mod runtime;
+pub mod scope_declaration;
 pub mod stream;
 pub mod supervision;
 pub mod tasks;
@@ -120,6 +121,7 @@ async fn boot(
     app::runner_type_catalog::reconcile(&jobs).await?;
     app::backstop::repair_every_access_path(&jobs).await?;
 
+    scope_declaration::spawn(&supervisor, &fabric, settings.scope_declaration_enabled);
     tasks::spawn_supervised(
         &supervisor,
         &settings,
