@@ -323,7 +323,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bc-jobs"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "br-core-events",
@@ -466,6 +466,31 @@ dependencies = [
 
 [[package]]
 name = "br-test-harness"
+version = "0.1.0"
+source = "git+https://github.com/BotResources/br-e2e-harness?tag=br-test-harness%2Fv0.1.0#c8a1819a6423885e9af01a30f306a6eaf121df34"
+dependencies = [
+ "async-nats",
+ "br-core-auth",
+ "br-core-directory",
+ "br-core-integration",
+ "br-scope-declaration-contract",
+ "br-util-nats-fabric",
+ "clap",
+ "dotenvy",
+ "futures-util",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "br-test-harness"
 version = "0.1.1"
 source = "git+https://github.com/BotResources/br-e2e-harness?tag=br-test-harness%2Fv0.1.1#7d104afd1ee8eff3b141a07140ecc163611dc34b"
 dependencies = [
@@ -571,6 +596,22 @@ dependencies = [
  "thiserror",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "br-util-scope-declaration"
+version = "0.1.0"
+source = "git+https://github.com/BotResources/br-rust-common?tag=br-util-scope-declaration%2Fv0.1.0#5fef8fc9e285e2255547632c58679aa7469d6c31"
+dependencies = [
+ "br-core-integration",
+ "br-core-scope",
+ "br-scope-declaration-contract",
+ "br-util-axum-readiness",
+ "br-util-nats-fabric",
+ "chrono",
+ "serde_json",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -714,6 +755,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "conformance-scope"
+version = "0.1.0"
+source = "git+https://github.com/BotResources/br-e2e-harness?tag=conformance-scope%2Fv0.1.0#e5d06abc129b89bb5ce8e0609f9e7259f06cdb2c"
+dependencies = [
+ "br-core-integration",
+ "br-core-scope",
+ "br-scope-declaration-contract",
+ "br-test-harness 0.1.0",
+ "br-util-nats-fabric",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,7 +787,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contract-jobs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "br-core-integration",
  "br-util-nats-fabric",
@@ -3358,7 +3418,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svc-jobs"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "async-graphql",
  "async-nats",
@@ -3369,13 +3429,17 @@ dependencies = [
  "br-core-auth",
  "br-core-events",
  "br-core-integration",
- "br-test-harness",
+ "br-core-scope",
+ "br-scope-declaration-contract",
+ "br-test-harness 0.1.1",
  "br-util-axum-readiness",
  "br-util-graphql",
  "br-util-nats-fabric",
  "br-util-observability",
  "br-util-postgres",
+ "br-util-scope-declaration",
  "chrono",
+ "conformance-scope",
  "contract-jobs",
  "dotenvy",
  "futures",

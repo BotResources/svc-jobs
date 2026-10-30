@@ -1,3 +1,4 @@
+use br_core_auth::{AuthMethod, Passport, PassportClaims};
 use br_core_integration::IntegrationCommand;
 use br_test_harness::FabricTestNats;
 use serde_json::{Map, Value, json};
@@ -93,6 +94,21 @@ impl JobDeclaration {
         self
     }
 
+    fn passport(&self) -> Value {
+        let passport = match &self.triggered_by {
+            Some(user) => Passport::human(
+                user.id(),
+                false,
+                true,
+                AuthMethod::Jwt,
+                None,
+                PassportClaims::new(),
+            ),
+            None => Passport::service(Uuid::from_u128(0x7e57), PassportClaims::new()),
+        };
+        serde_json::to_value(passport).expect("a passport serializes")
+    }
+
     pub fn payload(&self, producer: &str) -> Value {
         let mut fields = Map::new();
         fields.insert("job_id".to_owned(), json!(self.job_id.to_string()));
@@ -117,6 +133,9 @@ impl JobDeclaration {
         if let Some(priority) = self.priority {
             fields.insert("priority".to_owned(), json!(priority));
         }
+        if self.parent_job_id.is_none() {
+            fields.insert("passport".to_owned(), self.passport());
+        }
         Value::Object(fields)
     }
 }
@@ -137,9 +156,10 @@ impl<'a> Producer<'a> {
     }
 
     pub fn create_command(&self, declaration: &JobDeclaration) -> IntegrationCommand<Value> {
-        wire::command_envelope(
+        wire::command_envelope_at(
             Uuid::now_v7(),
             wire::VERB_CREATE,
+            wire::CONTRACT_V3,
             Uuid::now_v7(),
             self.account_id,
             declaration.payload(&self.bc),
@@ -147,7 +167,12 @@ impl<'a> Producer<'a> {
     }
 
     pub async fn send(&self, verb: &str, command: &IntegrationCommand<Value>) {
-        self.send_at(verb, wire::CONTRACT_V1, command).await;
+        let version = if verb == wire::VERB_CREATE {
+            wire::CONTRACT_V3
+        } else {
+            wire::CONTRACT_V1
+        };
+        self.send_at(verb, version, command).await;
     }
 
     pub async fn send_at(&self, verb: &str, version: u8, command: &IntegrationCommand<Value>) {
@@ -167,23 +192,40 @@ impl<'a> Producer<'a> {
     }
 
     pub async fn declare_v2(&self, declaration: &JobDeclaration) -> IntegrationCommand<Value> {
+        self.declare(declaration).await
+    }
+
+    pub async fn send_v3(&self, verb: &str, payload: Value) -> IntegrationCommand<Value> {
         let command = wire::command_envelope_at(
             Uuid::now_v7(),
-            wire::VERB_CREATE,
-            wire::CONTRACT_V2,
+            verb,
+            wire::CONTRACT_V3,
             Uuid::now_v7(),
             self.account_id,
-            declaration.payload(&self.bc),
+            payload,
         );
-        self.send_at(wire::VERB_CREATE, wire::CONTRACT_V2, &command)
-            .await;
+        self.send_at(verb, wire::CONTRACT_V3, &command).await;
+        command
+    }
+
+    pub async fn send_v1(&self, verb: &str, payload: Value) -> IntegrationCommand<Value> {
+        let command = wire::command_envelope_at(
+            Uuid::now_v7(),
+            verb,
+            wire::CONTRACT_V1,
+            Uuid::now_v7(),
+            self.account_id,
+            payload,
+        );
+        self.send_at(verb, wire::CONTRACT_V1, &command).await;
         command
     }
 
     pub async fn declare_payload(&self, payload: Value) {
-        let command = wire::command_envelope(
+        let command = wire::command_envelope_at(
             Uuid::now_v7(),
             wire::VERB_CREATE,
+            wire::CONTRACT_V3,
             Uuid::now_v7(),
             self.account_id,
             payload,

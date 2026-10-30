@@ -1,15 +1,15 @@
 use async_trait::async_trait;
-use bc_jobs::domain::ids::JobId;
+use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::references::SourceReference;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::job::{DUE_WORK_BATCH, DueWorkReader, JobReader};
-use chrono::{DateTime, TimeDelta, Utc};
+use bc_jobs::ports::job::JobReader;
+use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use super::PgStore;
-use super::dispatch_order::{PUSHED_TYPES, pushed_in_order};
+use super::dispatch_order::PUSHED_TYPES;
 use super::hydrate::{load_many, unavailable};
 
 pub(crate) const NO_ACTIVE_RUN: &str = "NOT EXISTS (SELECT 1 FROM runs r \
@@ -78,16 +78,53 @@ impl PgStore {
         load_many(&mut connection, ids).await
     }
 
-    pub async fn next_retry_due_at(&self) -> Result<Option<DateTime<Utc>>, PortError> {
+    pub async fn next_retry_due_at(
+        &self,
+        types: &[String],
+    ) -> Result<Option<DateTime<Utc>>, PortError> {
         let sql = format!(
             "SELECT min(w.due_at) AS due_at FROM waiting_jobs w \
-             WHERE w.due_at IS NOT NULL AND w.runner_type_id IN ({PUSHED_TYPES})"
+             WHERE w.due_at IS NOT NULL AND w.runner_type_id IN ({PUSHED_TYPES}) \
+               AND w.runner_type_id IN (SELECT id FROM runner_types WHERE type_key = ANY($1))"
         );
         let row = sqlx::query(&sql)
+            .bind(types)
             .fetch_one(self.pool())
             .await
             .map_err(unavailable)?;
         Ok(row.get("due_at"))
+    }
+
+    pub async fn initial_job_of(
+        tx: &mut PgConnection,
+        job_id: JobId,
+    ) -> Result<Option<JobId>, PortError> {
+        let sql = format!(
+            "SELECT ({})::uuid FROM jobs j WHERE j.id = $1",
+            super::lineage::root_of("j")
+        );
+        let found: Option<Uuid> = sqlx::query_scalar(&sql)
+            .bind(job_id.as_uuid())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        found.map(JobId::new).transpose().map_err(PortError::from)
+    }
+
+    pub async fn current_runs_by_type(
+        &self,
+    ) -> Result<std::collections::HashMap<String, u32>, PortError> {
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT rt.type_key, count(*) FROM current_runs c \
+             JOIN runner_types rt ON rt.id = c.runner_type_id GROUP BY rt.type_key",
+        )
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, count)| (key, u32::try_from(count).unwrap_or(u32::MAX)))
+            .collect())
     }
 
     pub async fn declaring_actor(&self, job_id: JobId) -> Result<Option<Uuid>, PortError> {
@@ -101,6 +138,18 @@ impl PgStore {
         .await
         .map_err(unavailable)?;
         Ok(found.and_then(|raw| Uuid::parse_str(&raw).ok()))
+    }
+
+    pub async fn jobs_requested_by_run(&self, run_id: RunId) -> Result<Vec<JobId>, PortError> {
+        let rows: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id::uuid FROM jobs WHERE requester ->> 'Run' = $1")
+                .bind(run_id.as_uuid().to_string())
+                .fetch_all(self.pool())
+                .await
+                .map_err(unavailable)?;
+        rows.into_iter()
+            .map(|id| JobId::new(id).map_err(PortError::from))
+            .collect()
     }
 
     pub async fn job_of_run(&self, run_id: Uuid) -> Result<Option<JobId>, PortError> {
@@ -134,7 +183,11 @@ impl PgStore {
             "SELECT j.id::uuid AS id FROM jobs j \
              JOIN runner_types rt ON rt.id = j.runner_type_id \
              WHERE rt.type_key = $1 \
-               AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id)",
+               AND (NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
+                    OR EXISTS (SELECT 1 FROM runs r \
+                        JOIN run_starts rs ON rs.run_id = r.id \
+                        LEFT JOIN run_terminals t ON t.run_id = r.id \
+                        WHERE r.job_id = j.id AND t.run_id IS NULL))",
         )
         .bind(runner_type)
         .fetch_all(self.pool())
@@ -143,7 +196,7 @@ impl PgStore {
         self.load_batch(&ids).await
     }
 
-    async fn ids(&self, sql: &str, at: DateTime<Utc>) -> Result<Vec<Uuid>, PortError> {
+    pub(super) async fn ids(&self, sql: &str, at: DateTime<Utc>) -> Result<Vec<Uuid>, PortError> {
         let rows = sqlx::query(sql)
             .bind(at)
             .fetch_all(self.pool())
@@ -190,110 +243,5 @@ impl JobReader for PgStore {
             None => Ok(None),
             Some(id) => Ok(self.load_batch(&[id]).await?.pop()),
         }
-    }
-}
-
-#[async_trait]
-impl DueWorkReader for PgStore {
-    async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
-        let ids: Vec<Uuid> = sqlx::query_scalar(&pushed_in_order())
-            .bind(at)
-            .bind(i64::try_from(DUE_WORK_BATCH).unwrap_or(i64::MAX))
-            .fetch_all(self.pool())
-            .await
-            .map_err(unavailable)?;
-        let mut jobs = self.load_batch(&ids).await?;
-        jobs.sort_by_key(|job| {
-            ids.iter()
-                .position(|id| *id == job.id().as_uuid())
-                .unwrap_or(usize::MAX)
-        });
-        Ok(jobs)
-    }
-
-    async fn jobs_with_outrun_runs(
-        &self,
-        now: DateTime<Utc>,
-        service_default: TimeDelta,
-    ) -> Result<Vec<Job>, PortError> {
-        let sql = format!(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             WHERE {NOT_RESOLVED} AND EXISTS (SELECT 1 FROM runs r \
-                JOIN run_starts rs ON rs.run_id = r.id \
-                LEFT JOIN run_terminals t ON t.run_id = r.id \
-                WHERE r.job_id = j.id AND t.run_id IS NULL \
-                  AND rs.started_at + make_interval(secs => \
-                      coalesce(r.max_run_duration_seconds, $2)::double precision) < $1) \
-             LIMIT {DUE_WORK_BATCH}"
-        );
-        let rows = sqlx::query(&sql)
-            .bind(now)
-            .bind(service_default.num_seconds())
-            .fetch_all(self.pool())
-            .await
-            .map_err(unavailable)?;
-        let ids: Vec<Uuid> = rows.iter().map(|row| row.get("id")).collect();
-        self.load_batch(&ids).await
-    }
-
-    async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
-        let sql = format!(
-            "SELECT DISTINCT r.job_id::uuid AS id FROM run_reservations rr \
-             JOIN runs r ON r.id = rr.run_id \
-             WHERE rr.settled_at IS NULL AND rr.reserved_at < $1 \
-             LIMIT {DUE_WORK_BATCH}"
-        );
-        let ids = self.ids(&sql, cutoff).await?;
-        self.load_batch(&ids).await
-    }
-
-    async fn jobs_with_stranded_triggers(
-        &self,
-        cutoff: DateTime<Utc>,
-    ) -> Result<Vec<Job>, PortError> {
-        // The outstanding triggers alone are read — never the ledger: a
-        // trigger is stranded once its type has been claimed from for the
-        // whole delay, counted from the switch or from its dispatch, whichever
-        // is later.
-        let sql = format!(
-            "SELECT DISTINCT u.job_id::uuid AS id FROM unstarted_pushed_runs u \
-             JOIN registered_runner_types reg ON reg.runner_type_id = u.runner_type_id \
-                AND reg.dispatch_mode = 'CLAIM' \
-             WHERE greatest(u.dispatched_at, \
-                    coalesce(reg.dispatch_mode_since, reg.registered_at)) < $1 \
-             LIMIT {DUE_WORK_BATCH}"
-        );
-        let ids = self.ids(&sql, cutoff).await?;
-        self.load_batch(&ids).await
-    }
-
-    async fn jobs_idle_since(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError> {
-        let sql = format!(
-            "SELECT j.id::uuid AS id FROM jobs j \
-             JOIN LATERAL (SELECT max(activity.moment) AS last_activity FROM ( \
-                    SELECT r.dispatched_at AS moment FROM runs r WHERE r.job_id = j.id \
-                    UNION ALL \
-                    SELECT rs.started_at FROM run_starts rs \
-                        JOIN runs r ON r.id = rs.run_id WHERE r.job_id = j.id \
-                    UNION ALL \
-                    SELECT t.occurred_at FROM run_terminals t \
-                        JOIN runs r ON r.id = t.run_id WHERE r.job_id = j.id \
-                    UNION ALL \
-                    SELECT s.started_at FROM steps s \
-                        JOIN runs r ON r.id = s.run_id WHERE r.job_id = j.id \
-                    UNION ALL \
-                    SELECT sc.due_at FROM run_retry_schedules sc \
-                        JOIN runs r ON r.id = sc.failed_run_id WHERE r.job_id = j.id \
-                    UNION ALL \
-                    SELECT j.created_at) activity) idle ON true \
-             WHERE {NOT_RESOLVED} AND {NO_ACTIVE_RUN} \
-               AND EXISTS (SELECT 1 FROM runs r \
-                    WHERE r.job_id = j.id AND r.withdrawn_reason IS NULL) \
-               AND NOT EXISTS ({UNCONSUMED_RETRY}) \
-               AND idle.last_activity < $1 \
-             LIMIT {DUE_WORK_BATCH}"
-        );
-        let ids = self.ids(&sql, at).await?;
-        self.load_batch(&ids).await
     }
 }

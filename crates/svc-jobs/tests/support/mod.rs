@@ -2,6 +2,7 @@
 
 pub mod adversary;
 pub mod broker;
+pub mod call_notices;
 pub mod catalog;
 pub mod claim;
 pub mod clock;
@@ -13,14 +14,18 @@ pub mod dispatch;
 pub mod docs;
 pub mod events;
 pub mod fixture;
+pub mod gesture;
 pub mod gql;
 pub mod infra;
 pub mod priority;
 pub mod producer;
 pub mod refusal;
+pub mod restart;
 pub mod runner;
 pub mod stream;
 pub mod subs;
+pub mod surface;
+pub mod tree;
 pub mod views;
 pub mod wire;
 

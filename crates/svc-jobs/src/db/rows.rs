@@ -56,6 +56,25 @@ pub fn config(value: Option<serde_json::Value>) -> Result<Option<RunnerConfig>, 
     value.map(RunnerConfig::new).transpose()
 }
 
+pub fn json_part<T: serde::de::DeserializeOwned>(
+    value: Option<serde_json::Value>,
+) -> Result<Option<T>, JobsError> {
+    value
+        .map(|value| {
+            serde_json::from_value(value).map_err(|_| JobsError::CorruptState {
+                reason_code: "job_part_not_readable",
+            })
+        })
+        .transpose()
+}
+
+pub fn initial_job(id: JobId, root: Option<Uuid>) -> Result<Option<JobId>, JobsError> {
+    match root.map(JobId::new).transpose()? {
+        Some(root) if root != id => Ok(Some(root)),
+        _ => Ok(None),
+    }
+}
+
 pub fn step_index(value: i32) -> StepIndex {
     StepIndex::new(u32::try_from(value).unwrap_or(0))
 }

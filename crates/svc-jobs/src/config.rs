@@ -13,6 +13,8 @@ const DEFAULT_INACTIVITY_TIMEOUT_SECONDS: i64 = 86_400;
 const DEFAULT_RUN_MAX_DURATION_SECONDS: i64 = 259_200;
 const DEFAULT_RETRY_BASE_DELAY_SECONDS: i64 = 10;
 const DEFAULT_MAX_ATTEMPTS_CEILING: u32 = 10;
+const DEFAULT_PAYLOAD_INLINE_MAX_BYTES: usize = 524_288;
+const DEFAULT_SAVED_STATE_MAX_BYTES: usize = bc_jobs::domain::policy::DEFAULT_SAVED_STATE_MAX_BYTES;
 const DEFAULT_BACKSTOP_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_DISPATCH_MINIMUM_WAKE_MILLISECONDS: u64 = 250;
 const DEFAULT_MAX_ATTEMPTS: u32 = 3;
@@ -50,15 +52,13 @@ pub struct Settings {
     pub restart_policy: RestartPolicy,
     pub log_partition_horizon_warning: TimeDelta,
     pub claims: ClaimSettings,
+    pub scope_declaration_enabled: bool,
 }
 
-/// How long a claim is held open, and how long a Run it reserved may wait for
-/// its Instance to start it before failing with `claim_lost`.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimSettings {
     pub max_wait: Duration,
     pub reservation_delay: TimeDelta,
-    /// The claims one pod holds open at once; a claim beyond is answered empty.
     pub max_held: usize,
 }
 
@@ -127,6 +127,12 @@ impl Settings {
         )?;
         let max_attempts_ceiling: u32 =
             read("JOBS_MAX_ATTEMPTS_CEILING", DEFAULT_MAX_ATTEMPTS_CEILING)?;
+        let payload_inline_max_bytes: usize = read(
+            "JOBS_PAYLOAD_INLINE_MAX_BYTES",
+            DEFAULT_PAYLOAD_INLINE_MAX_BYTES,
+        )?;
+        let saved_state_max_bytes: usize =
+            read("JOBS_SAVED_STATE_MAX_BYTES", DEFAULT_SAVED_STATE_MAX_BYTES)?;
         let backstop_interval_seconds: u64 = read(
             "JOBS_BACKSTOP_INTERVAL_SECONDS",
             DEFAULT_BACKSTOP_INTERVAL_SECONDS,
@@ -173,7 +179,9 @@ impl Settings {
             TimeDelta::seconds(inactivity_timeout_seconds),
             TimeDelta::seconds(retirement_quiet_period_seconds),
         )?
-        .with_default_max_priority(Priority::new(default_max_priority)?);
+        .with_default_max_priority(Priority::new(default_max_priority)?)
+        .with_inline_payload_max_bytes(payload_inline_max_bytes)
+        .with_saved_state_max_bytes(saved_state_max_bytes);
         bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_seconds(
             run_max_duration_seconds,
         )?;
@@ -189,9 +197,6 @@ impl Settings {
                 value: claim_max_wait_seconds.to_string(),
             });
         }
-        // A held claim must be answered well before a reservation made for it
-        // could be judged lost: the reservation delay outlasts the longest
-        // wait a claim may be held.
         if u64::try_from(claim_reservation_seconds).unwrap_or(0) <= claim_max_wait_seconds {
             return Err(ServiceError::Configuration {
                 key: "JOBS_CLAIM_RESERVATION_SECONDS",
@@ -235,6 +240,7 @@ impl Settings {
                 reservation_delay: TimeDelta::seconds(claim_reservation_seconds),
                 max_held: claim_max_held,
             },
+            scope_declaration_enabled: read("SCOPE_DECLARATION_ENABLED", true)?,
         })
     }
 }

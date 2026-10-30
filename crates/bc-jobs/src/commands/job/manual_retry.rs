@@ -20,9 +20,6 @@ pub struct ManualRetryJob {
     pub successor_job_id: JobId,
     pub dispatch: SuccessorDispatch,
     pub requested_by: KnownUser,
-    /// The maximum that applies to the user the successor runs for — theirs or
-    /// the service default — which caps the request it copies when it has no
-    /// parent.
     pub applicable_maximum: Priority,
 }
 
@@ -69,7 +66,7 @@ pub fn manual_retry(
         },
     };
     let priority = JobPriority::admitted(predecessor.priority().requested(), basis);
-    let mut successor = vec![JobEvent::JobQueued(JobQueued {
+    let mut successor = vec![JobEvent::JobQueued(Box::new(JobQueued {
         job_id: command.successor_job_id,
         runner_type: predecessor.runner_type().clone(),
         producer: predecessor.producer().clone(),
@@ -83,7 +80,14 @@ pub fn manual_retry(
         requested_priority: priority.requested(),
         effective_priority: priority.effective(),
         forced_priority: priority.forced(),
-    })];
+        initial_job_id: Some(predecessor.initial_job_id()),
+        requester: Some(*predecessor.requester()),
+        passport: predecessor.passport().cloned(),
+        payload: predecessor.payload().cloned(),
+        call: predecessor.call().copied(),
+        restart_of_run_id: predecessor.restart_of_run_id(),
+        restart_of_job_id: None,
+    }))];
     let first_run_id = match command.dispatch {
         SuccessorDispatch::Push {
             first_run_id,
@@ -102,7 +106,7 @@ pub fn manual_retry(
             }));
             Some(first_run_id)
         }
-        SuccessorDispatch::AwaitClaim => None,
+        SuccessorDispatch::Wait => None,
     };
     Ok(ManualRetryOutcome::Started(Box::new(ManualRetryPlan {
         predecessor: CommandResult::from_event(JobEvent::ManualRetryStarted(ManualRetryStarted {

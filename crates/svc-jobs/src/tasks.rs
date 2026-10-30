@@ -59,11 +59,6 @@ fn spawn_durable_fanout(supervisor: &Supervisor, pool: sqlx::PgPool, fabric: Fab
 }
 
 fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>, hub: Hub) {
-    // Once, here: the series the transport publishes are described where the
-    // transport is composed, not inside a consumer. A supervised consumer
-    // restarts, and a describe that rides a restart says the metric depends on
-    // a task being alive — while the whole point of the discarded-fact series
-    // is to exist before anything has been discarded.
     runner_transport::observability::describe();
 
     let presence_channels = channels.clone();
@@ -90,6 +85,14 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
         async move { runner_transport::claim::respond(channels, jobs, established).await }
     });
 
+    let surface_channels = channels.clone();
+    let surface_jobs = Arc::clone(&jobs);
+    supervisor.spawn("runner surface responder", move |established| {
+        let channels = surface_channels.clone();
+        let jobs = Arc::clone(&surface_jobs);
+        async move { runner_transport::surface::respond(channels, jobs, established).await }
+    });
+
     let wake_jobs = Arc::clone(&jobs);
     supervisor.spawn("held claim wake router", move |established| {
         let jobs = Arc::clone(&wake_jobs);
@@ -105,6 +108,7 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
 }
 
 fn spawn_bus(supervisor: &Supervisor, fabric: Fabric, jobs: Arc<Jobs>) {
+    bus::v3::spawn(supervisor, &fabric, &jobs);
     let creations = fabric.clone();
     let creation_jobs = Arc::clone(&jobs);
     supervisor.spawn("job-creation consumer", move |established| {

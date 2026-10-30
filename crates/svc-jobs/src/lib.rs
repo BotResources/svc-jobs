@@ -7,6 +7,7 @@ pub mod error;
 mod pg;
 pub mod runner_transport;
 pub mod runtime;
+pub mod scope_declaration;
 pub mod stream;
 pub mod supervision;
 pub mod tasks;
@@ -58,6 +59,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/graphql", post(edge::graphql_route).get(edge::playground))
         .layer(axum::middleware::from_fn(edge::auth::passport_layer))
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .route("/livez", liveness_route())
         .route("/readyz", readiness_route(readiness))
         .route("/metrics", metrics_route(metrics))
@@ -120,6 +122,7 @@ async fn boot(
     app::runner_type_catalog::reconcile(&jobs).await?;
     app::backstop::repair_every_access_path(&jobs).await?;
 
+    scope_declaration::spawn(&supervisor, &fabric, settings.scope_declaration_enabled);
     tasks::spawn_supervised(
         &supervisor,
         &settings,

@@ -1,11 +1,3 @@
-//! The dispatch mode of each runner type, offered on the Published Language
-//! bucket under `jobs.dispatch_mode.{runner_type}`, so a runner learns whether
-//! its type is pushed triggers or claims its runs without asking.
-//!
-//! The entry exists for every runner type Jobs knows and does not retire; it
-//! is rewritten when a platform administrator switches the mode and repaired
-//! at boot and periodically.
-
 use serde::{Deserialize, Serialize};
 
 use crate::runner::WIRE_VERSION;
@@ -19,13 +11,10 @@ fn wire_version() -> u8 {
     WIRE_VERSION
 }
 
-/// How the runs of a runner type reach its instances.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DispatchMode {
-    /// Jobs publishes a trigger per run on `jobs.trigger.{runner_type}`.
     Push,
-    /// Instances claim their next run on `jobs.claim.{runner_type}`.
     Claim,
 }
 
@@ -40,7 +29,6 @@ impl DispatchMode {
     }
 }
 
-/// The value at `jobs.dispatch_mode.{runner_type}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerTypeDispatchMode {
     #[serde(default = "wire_version")]

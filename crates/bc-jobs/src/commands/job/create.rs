@@ -2,14 +2,18 @@ use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
+use crate::domain::directory::caller_address::guard_caller_address_is_named;
 use crate::domain::ids::{JobId, SourceEntityId};
-use crate::domain::job::Job;
 use crate::domain::job::parenting::guard_parent_admits_work;
+use crate::domain::job::{Job, JobCall};
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
+use crate::domain::passport::JobPassport;
+use crate::domain::payload::JobPayload;
 use crate::domain::policy::ServiceLimits;
 use crate::domain::priority::{JobPriority, Priority, PriorityBasis, UserMaxPriority};
 use crate::domain::references::{KnownUser, SourceReference};
+use crate::domain::requester::Requester;
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::JobQueued;
@@ -24,8 +28,12 @@ pub struct CreateJob {
     pub triggered_by: Option<KnownUser>,
     pub source_entity_id: Option<SourceEntityId>,
     pub max_attempts: Option<MaxAttempts>,
-    /// The level the producer requested; the default when it named none.
     pub requested_priority: Priority,
+    pub initial_job_id: Option<JobId>,
+    pub requester: Requester,
+    pub passport: Option<JobPassport>,
+    pub payload: Option<JobPayload>,
+    pub call: Option<JobCall>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,10 +42,26 @@ pub enum CreateOutcome {
     AlreadyQueued,
 }
 
+fn unless_given_or_equal<T: PartialEq>(given: Option<&T>, stored: Option<&T>) -> bool {
+    given.is_none() || given == stored
+}
+
 impl CreateJob {
     pub fn source(&self) -> Option<SourceReference> {
         self.source_entity_id
             .map(|entity_id| SourceReference::new(self.producer.clone(), entity_id))
+    }
+
+    pub fn user_the_work_runs_for(&self) -> Result<Option<KnownUser>, JobsError> {
+        match (&self.triggered_by, &self.passport) {
+            (Some(given), Some(passport)) => {
+                passport.guard_matches_user(Some(given))?;
+                Ok(Some(given.clone()))
+            }
+            (Some(given), None) => Ok(Some(given.clone())),
+            (None, Some(passport)) => passport.known_user(),
+            (None, None) => Ok(None),
+        }
     }
 
     fn is_the_same_declaration_as(&self, existing: &Job) -> bool {
@@ -45,7 +69,14 @@ impl CreateJob {
             && existing.producer() == &self.producer
             && existing.config() == self.config.as_ref()
             && existing.parent_job_id() == self.parent_job_id
-            && existing.triggered_by() == self.triggered_by.as_ref()
+            && unless_given_or_equal(self.triggered_by.as_ref(), existing.triggered_by())
+            && unless_given_or_equal(self.passport.as_ref(), existing.passport())
+            && unless_given_or_equal(
+                self.initial_job_id.as_ref(),
+                Some(&existing.initial_job_id()),
+            )
+            && existing.payload() == self.payload.as_ref()
+            && existing.requester() == &self.requester
             && existing.source_entity_id() == self.source_entity_id
             && existing.max_attempts() == self.max_attempts
             && (self.parent_job_id.is_some()
@@ -53,8 +84,6 @@ impl CreateJob {
     }
 }
 
-/// `user_maximum` is the stored maximum of the user the Job runs for, absent
-/// when that user has none or the Job runs for nobody.
 pub fn create_job(
     command: CreateJob,
     existing: Option<&Job>,
@@ -82,13 +111,20 @@ pub fn create_job(
     }
     guard_source_free(command.source(), active_for_source)?;
     let (owner, parent) = resolve_owner(&command, parent)?;
+    let initial_job_id = resolve_initial_job(&command, parent)?;
+    let passport = resolve_passport(&command, parent)?;
+    let triggered_by = resolve_triggered_by(&command, parent, passport.as_ref())?;
+    let call = resolve_call(&command)?;
+    if let Some(payload) = &command.payload {
+        payload.guard_inline_within(limits.inline_payload_max_bytes())?;
+    }
     let priority = JobPriority::admitted(
         command.requested_priority,
         PriorityBasis::of(parent, user_maximum, limits),
     );
     let source = command.source();
     Ok(CreateOutcome::Queued(CommandResult::from_event(
-        JobEvent::JobQueued(JobQueued {
+        JobEvent::JobQueued(Box::new(JobQueued {
             job_id: command.id,
             runner_type: command.runner_type,
             producer: command.producer,
@@ -96,14 +132,77 @@ pub fn create_job(
             owner,
             parent_job_id: command.parent_job_id,
             predecessor_job_id: None,
-            triggered_by: command.triggered_by,
+            triggered_by,
             source,
             max_attempts: command.max_attempts,
             requested_priority: priority.requested(),
             effective_priority: priority.effective(),
             forced_priority: priority.forced(),
-        }),
+            initial_job_id: initial_job_id.filter(|initial| *initial != command.id),
+            requester: Some(command.requester),
+            passport,
+            payload: command.payload,
+            call,
+            restart_of_run_id: None,
+            restart_of_job_id: None,
+        })),
     )))
+}
+
+fn resolve_initial_job(
+    command: &CreateJob,
+    parent: Option<&Job>,
+) -> Result<Option<JobId>, JobsError> {
+    let expected = parent.map_or(command.id, Job::initial_job_id);
+    match command.initial_job_id {
+        Some(given) if given != expected => Err(JobsError::InitialJobMismatch),
+        _ => Ok(Some(expected)),
+    }
+}
+
+fn resolve_passport(
+    command: &CreateJob,
+    parent: Option<&Job>,
+) -> Result<Option<JobPassport>, JobsError> {
+    match (&command.passport, parent) {
+        (Some(given), Some(parent)) => match parent.passport() {
+            Some(stored) if stored != given => Err(JobsError::PassportParentMismatch),
+            _ => Ok(Some(given.clone())),
+        },
+        (None, Some(parent)) => Ok(parent.passport().cloned()),
+        (Some(given), None) => Ok(Some(given.clone())),
+        (None, None) => Err(JobsError::PassportRequired),
+    }
+}
+
+fn resolve_triggered_by(
+    command: &CreateJob,
+    parent: Option<&Job>,
+    passport: Option<&JobPassport>,
+) -> Result<Option<KnownUser>, JobsError> {
+    if let (Some(passport), Some(given)) = (passport, &command.triggered_by) {
+        passport.guard_matches_user(Some(given))?;
+    }
+    match (&command.triggered_by, passport, parent) {
+        (Some(given), _, _) => Ok(Some(given.clone())),
+        (None, Some(passport), _) => match passport.known_user()? {
+            Some(user) => Ok(Some(user)),
+            None => Ok(None),
+        },
+        (None, None, Some(parent)) => Ok(parent.triggered_by().cloned()),
+        (None, None, None) => Ok(None),
+    }
+}
+
+fn resolve_call(command: &CreateJob) -> Result<Option<JobCall>, JobsError> {
+    match (&command.requester, command.call) {
+        (Requester::Run(_), None) => Err(JobsError::ModeRequired),
+        (Requester::Run(_), Some(call)) => Ok(Some(JobCall {
+            mode: call.mode,
+            caller_address: guard_caller_address_is_named(call.mode, call.caller_address)?,
+        })),
+        (Requester::Service(_), _) => Ok(None),
+    }
 }
 
 fn resolve_owner<'a>(
@@ -111,6 +210,9 @@ fn resolve_owner<'a>(
     parent: Option<&'a Job>,
 ) -> Result<(JobOwner, Option<&'a Job>), JobsError> {
     let Some(parent_job_id) = command.parent_job_id else {
+        if matches!(command.requester, Requester::Run(_)) {
+            return Err(JobsError::ParentNotOfRun);
+        }
         return Ok((JobOwner::Producer(command.producer.clone()), None));
     };
     if parent_job_id == command.id {

@@ -8,11 +8,15 @@ use crate::domain::ids::{
     ClaimId, JobId, KnownUserId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId,
     RunId,
 };
+use crate::domain::job::JobCall;
 use crate::domain::job::resolution::JobFailureCause;
 use crate::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
+use crate::domain::passport::JobPassport;
+use crate::domain::payload::JobPayload;
 use crate::domain::priority::Priority;
 use crate::domain::references::{KnownUser, SourceReference};
+use crate::domain::requester::Requester;
 use crate::domain::run::failure::RunFailureReport;
 use crate::domain::run::origin::RunOrigin;
 use crate::domain::run::plan::{DeclarationNumber, RunPlanItem};
@@ -34,14 +38,24 @@ pub struct JobQueued {
     pub requested_priority: Priority,
     #[serde(default = "default_priority")]
     pub effective_priority: Priority,
-    /// Set when the Job is born under a parent a super user forced: it is
-    /// forced at the parent's level from its first fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forced_priority: Option<Priority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_job_id: Option<JobId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requester: Option<Requester>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport: Option<JobPassport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<JobPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<JobCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_of_run_id: Option<RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_of_job_id: Option<JobId>,
 }
 
-/// What a fact recorded before priorities existed reads as: the default level,
-/// requested and effective.
 fn default_priority() -> Priority {
     Priority::DEFAULT
 }
@@ -55,11 +69,8 @@ pub struct RunDispatched {
     pub origin: RunOrigin,
     pub automatic_retry_schedule_id: Option<RetryScheduleId>,
     pub automatic_retry_of_run_id: Option<RunId>,
-    /// The maximum duration the Run is dispatched with, from its RunnerType.
     #[serde(default)]
     pub max_run_duration: Option<MaxRunDuration>,
-    /// The claim the Run was reserved to, when an Instance claimed it rather
-    /// than finding it on the trigger stream.
     #[serde(default)]
     pub claimed_by: Option<RunClaim>,
 }
@@ -116,8 +127,6 @@ pub struct RunFailed {
 pub struct RunCancelled {
     pub job_id: JobId,
     pub run_id: RunId,
-    /// Set when the Run is withdrawn without counting as an attempt — its
-    /// trigger was stranded by a switch to `CLAIM` — so its Job waits again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub withdrawn_for: Option<ReasonCode>,
 }
@@ -169,8 +178,6 @@ pub struct ManualRetryStarted {
     pub failed_resolution_id: ResolutionId,
     pub successor_job_id: JobId,
     pub requested_by: KnownUser,
-    /// The successor's first Run, dispatched with the intervention. Absent for
-    /// a `CLAIM` RunnerType: the successor waits to be claimed like any Job.
     pub run_id: Option<RunId>,
 }
 
@@ -191,12 +198,7 @@ pub struct JobPriorityForced {
     pub job_id: JobId,
     pub priority: Priority,
     pub forced_by: KnownUser,
-    /// The Job a super user forced, when this one was forced as its waiting
-    /// descendant.
     pub originating_job_id: Option<JobId>,
-    /// The request an inheriting descendant now records: the level it
-    /// inherits, as at admission. Absent for the Job a super user forced, whose
-    /// own request stands.
     #[serde(default)]
     pub requested_priority: Option<Priority>,
 }
@@ -206,12 +208,8 @@ pub struct JobPriorityRecalculated {
     pub job_id: JobId,
     pub effective_priority: Priority,
     pub previous_priority: Priority,
-    /// The user whose maximum changed — absent when the Job re-derived its
-    /// level on going back to waiting.
     #[serde(default)]
     pub user_id: Option<KnownUserId>,
-    /// The request an inheriting descendant now records: its new level, as at
-    /// admission. Absent for a root, whose own request stands.
     #[serde(default)]
     pub requested_priority: Option<Priority>,
 }

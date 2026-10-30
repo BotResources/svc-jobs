@@ -5,8 +5,12 @@ use async_trait::async_trait;
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::config::RunnerConfig;
 use crate::domain::ids::{JobId, RunId};
+use crate::domain::job::{Job, JobCall};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
+use crate::domain::passport::JobPassport;
+use crate::domain::payload::JobPayload;
 use crate::domain::references::KnownUser;
+use crate::error::JobsError;
 use crate::ports::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +21,32 @@ pub struct RunTrigger {
     pub config: Option<RunnerConfig>,
     pub attempt: AttemptNumber,
     pub triggered_by: Option<KnownUser>,
+    pub parent_job_id: JobId,
+    pub initial_job_id: JobId,
+    pub passport: JobPassport,
+    pub payload: Option<JobPayload>,
+    pub call: Option<JobCall>,
+    pub restart_of_run_id: Option<RunId>,
+}
+
+impl RunTrigger {
+    pub fn of_job(job: &Job, run_id: RunId, attempt: AttemptNumber) -> Result<Self, JobsError> {
+        let passport = job.passport().cloned().ok_or(JobsError::PassportRequired)?;
+        Ok(Self {
+            job_id: job.id(),
+            run_id,
+            runner_type: job.runner_type().clone(),
+            config: job.config().cloned(),
+            attempt,
+            triggered_by: job.triggered_by().cloned(),
+            parent_job_id: job.wire_parent_job_id(),
+            initial_job_id: job.initial_job_id(),
+            passport,
+            payload: job.payload().cloned(),
+            call: job.call().copied(),
+            restart_of_run_id: job.restart_of_run_id(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,4 +70,28 @@ pub trait RunnerTransport: Send + Sync {
     ) -> Result<(), PortError>;
 
     async fn announced_instances(&self) -> Result<HashSet<AnnouncedInstance>, PortError>;
+
+    async fn acknowledged_start(
+        &self,
+        run_id: RunId,
+        runner_type: &RunnerTypeKey,
+    ) -> Result<Option<InstanceKey>, PortError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixtures::{JobBuilder, run_id};
+
+    #[test]
+    fn a_trigger_is_built_only_for_a_job_that_holds_a_passport() {
+        let attempt = AttemptNumber::new(1).unwrap();
+        let with = JobBuilder::new().build();
+        assert!(RunTrigger::of_job(&with, run_id(), attempt).is_ok());
+        let without = JobBuilder::new().without_passport().build();
+        assert_eq!(
+            RunTrigger::of_job(&without, run_id(), attempt),
+            Err(JobsError::PassportRequired)
+        );
+    }
 }

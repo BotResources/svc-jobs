@@ -1,18 +1,33 @@
+pub mod acts_for;
+pub mod answers;
 pub mod apply;
+pub mod call_notices;
 pub mod claim;
+pub mod directory;
+pub mod directory_entry;
 pub mod dispatch_order;
+pub mod doorbell;
+pub mod due_work;
 pub mod fleet;
 pub mod hydrate;
+mod hydrate_sql;
 pub mod impacts;
+pub mod inbox;
 pub mod jobs;
+pub mod kept_payloads;
 pub mod lineage;
 pub mod list;
 pub mod logs;
+pub mod mail;
 pub mod notify;
 pub mod partitions;
 pub mod priority;
+pub mod reach;
+pub mod restart;
 pub mod rows;
+pub mod saved_states;
 pub mod waiting_repair;
+pub mod work;
 
 use sqlx::PgPool;
 

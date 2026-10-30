@@ -1,9 +1,12 @@
+pub mod acting;
 pub mod admin;
 pub mod backstop;
+pub mod catch_up;
 pub mod claim;
 pub mod claim_waiters;
 pub mod claim_wakes;
 pub mod create;
+pub mod directory;
 pub mod dispatch;
 pub mod environment;
 pub mod fingerprint;
@@ -16,7 +19,11 @@ pub mod priority;
 pub mod reclaim;
 pub mod reconcile;
 pub mod resolve;
+pub mod resolve_v3;
+pub mod restart;
+pub mod run_end;
 pub mod run_facts;
+pub mod runner;
 pub mod runner_type_catalog;
 pub mod runner_type_impacts;
 pub mod runner_type_lifecycle;
@@ -27,6 +34,7 @@ pub mod write;
 
 use std::sync::Arc;
 
+use bc_jobs::JobsError;
 use bc_jobs::domain::actions::fleet::RetirementWindow;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
@@ -83,6 +91,12 @@ impl Jobs {
         metadata: &EventMetadata,
     ) -> Result<(), ServiceError> {
         let at = self.clock.now();
+        let may_wake_a_restart = changes.iter().any(|change| {
+            change
+                .events
+                .iter()
+                .any(|event| matches!(event, JobEvent::RunCompleted(_) | JobEvent::JobFailed(_)))
+        });
         let effects: Vec<(JobId, Vec<JobEvent>)> = changes
             .iter()
             .map(|change| (change.job_id, change.events.clone()))
@@ -98,10 +112,24 @@ impl Jobs {
             changes,
         )
         .await?;
+        let mut ended = Vec::new();
         for (job_id, events) in effects {
             self.after_commit(job_id, &events).await?;
+            ended.extend(run_end::ended_runs(job_id, &events));
+        }
+        for run in &ended {
+            Box::pin(run_end::cancel_jobs_requested_by(self, run, metadata)).await?;
+        }
+        if may_wake_a_restart {
+            Box::pin(self.start_due_restarts()).await;
         }
         Ok(())
+    }
+
+    pub async fn start_due_restarts(&self) {
+        if let Err(error) = restart::process_wakes(self).await {
+            tracing::warn!(error = %error, "starting the due restarts failed; the sweep retries");
+        }
     }
 
     async fn after_commit(&self, job_id: JobId, events: &[JobEvent]) -> Result<(), ServiceError> {
@@ -122,22 +150,24 @@ impl Jobs {
     async fn transport_effects(&self, job: &Job, events: &[JobEvent]) {
         for event in events {
             let outcome = match event {
-                // A claimed Run reaches its Instance in the claim reply, never on
-                // the trigger stream.
                 JobEvent::RunDispatched(fact) if fact.claimed_by.is_some() => Ok(()),
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
-                    Ok(run) => {
-                        self.transport
-                            .dispatch(&RunTrigger {
-                                job_id: job.id(),
-                                run_id: fact.run_id,
-                                runner_type: job.runner_type().clone(),
-                                config: job.config().cloned(),
-                                attempt: run.attempt_number(),
-                                triggered_by: job.triggered_by().cloned(),
-                            })
-                            .await
-                    }
+                    Ok(run) => match RunTrigger::of_job(job, fact.run_id, run.attempt_number()) {
+                        Ok(trigger) => self.transport.dispatch(&trigger).await,
+                        Err(JobsError::PassportRequired) => {
+                            if let Err(error) =
+                                Box::pin(reclaim::without_passport(self, job, fact.run_id)).await
+                            {
+                                tracing::error!(
+                                    job_id = %job.id().as_uuid(),
+                                    error = %error,
+                                    "a run with no Passport to send could not be failed"
+                                );
+                            }
+                            Ok(())
+                        }
+                        Err(error) => Err(bc_jobs::ports::PortError::StoredStateRejected(error)),
+                    },
                     Err(error) => Err(bc_jobs::ports::PortError::StoredStateRejected(error)),
                 },
                 JobEvent::RunCancellationRequested(fact) => {

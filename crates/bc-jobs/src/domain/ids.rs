@@ -56,10 +56,45 @@ uuid_v7_id!(SourceEntityId, "source_entity_id");
 uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
+uuid_v7_id!(ItemId, "item_id");
+uuid_v7_id!(ResultId, "result_id");
 
-/// The identity an Instance gives one claim — one free slot. The runner mints
-/// it; any non-nil UUID. Repeating a claim under the same identity is the same
-/// claim.
+macro_rules! any_uuid_id {
+    ($name:ident) => {
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+        )]
+        #[serde(from = "Uuid", into = "Uuid")]
+        pub struct $name(Uuid);
+
+        impl $name {
+            pub fn new(value: Uuid) -> Self {
+                Self(value)
+            }
+
+            pub fn as_uuid(&self) -> Uuid {
+                self.0
+            }
+        }
+
+        impl From<$name> for Uuid {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+
+        impl From<Uuid> for $name {
+            fn from(value: Uuid) -> Self {
+                Self(value)
+            }
+        }
+    };
+}
+
+any_uuid_id!(AgentId);
+any_uuid_id!(MailId);
+any_uuid_id!(AttachmentId);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "Uuid", into = "Uuid")]
 pub struct ClaimId(Uuid);
@@ -98,11 +133,8 @@ mod tests {
 
     #[test]
     fn an_id_that_is_not_uuid_v7_is_refused() {
-        // Given: a v4 uuid, which no caller of this service is allowed to mint
         let v4 = Uuid::parse_str("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e").unwrap();
-        // When: it is offered as a job id
         let result = JobId::new(v4);
-        // Then: construction is refused with the stable code
         assert_eq!(
             result,
             Err(JobsError::NotUuidV7 {
@@ -114,31 +146,34 @@ mod tests {
 
     #[test]
     fn a_uuid_v7_is_accepted_and_round_trips() {
-        // Given: a v7 uuid minted by a caller
         let raw = Uuid::now_v7();
-        // When: it becomes a job id and is serialized
         let id = JobId::new(raw).unwrap();
         let wire = serde_json::to_value(id).unwrap();
-        // Then: the wire form is the bare uuid and it parses back
         assert_eq!(wire, serde_json::json!(raw));
         assert_eq!(serde_json::from_value::<JobId>(wire).unwrap(), id);
     }
 
     #[test]
     fn deserializing_a_non_v7_id_from_the_wire_is_refused() {
-        // Given: a stored value that predates or violates the uuid_v7 domain
         let v4 = serde_json::json!("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e");
-        // When: it is read back as a run id
         let result = serde_json::from_value::<RunId>(v4);
-        // Then: hydration fails rather than admitting an illegal id
         assert!(result.is_err());
     }
 
     #[test]
-    fn a_claim_identity_is_any_uuid_but_the_nil_one() {
-        // Given: a v4 uuid a runner minted, and the nil uuid
+    fn an_agent_id_is_any_uuid_because_the_runner_makes_it() {
         let v4 = Uuid::parse_str("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e").unwrap();
-        // When/Then: the first names a claim, the second names nothing
+        assert_eq!(AgentId::new(v4).as_uuid(), v4);
+        let wire = serde_json::to_value(AgentId::new(v4)).unwrap();
+        assert_eq!(
+            serde_json::from_value::<AgentId>(wire).unwrap().as_uuid(),
+            v4
+        );
+    }
+
+    #[test]
+    fn a_claim_identity_is_any_uuid_but_the_nil_one() {
+        let v4 = Uuid::parse_str("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e").unwrap();
         assert_eq!(ClaimId::new(v4).unwrap().as_uuid(), v4);
         assert_eq!(
             ClaimId::new(Uuid::nil()),

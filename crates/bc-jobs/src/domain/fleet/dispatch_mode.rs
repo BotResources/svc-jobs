@@ -7,9 +7,6 @@ use crate::error::JobsError;
 pub const PUSH: &str = "PUSH";
 pub const CLAIM: &str = "CLAIM";
 
-/// How a RunnerType's waiting Jobs reach its Instances: published on the
-/// trigger stream (`PUSH`), or handed to an Instance that claims its next Run
-/// (`CLAIM`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DispatchMode {
@@ -38,18 +35,13 @@ impl DispatchMode {
     }
 }
 
-/// How the first Run of a manual-retry successor leaves the ledger, from the
-/// dispatch mode of its RunnerType.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuccessorDispatch {
-    /// Dispatched with the intervention, on the trigger stream — even when the
-    /// predecessor spent its whole budget.
     Push {
         first_run_id: RunId,
         max_run_duration: MaxRunDuration,
     },
-    /// Waiting to be claimed, at its effective priority, like any Job.
-    AwaitClaim,
+    Wait,
 }
 
 #[cfg(test)]
@@ -58,8 +50,6 @@ mod tests {
 
     #[test]
     fn a_stored_dispatch_mode_has_a_total_mapping() {
-        // Given: the two stored codes and one this version does not know
-        // When/Then: both round-trip and the unknown one fails loud
         for mode in [DispatchMode::Push, DispatchMode::Claim] {
             assert_eq!(DispatchMode::from_db_str(mode.as_str()), Ok(mode));
         }
@@ -68,7 +58,6 @@ mod tests {
 
     #[test]
     fn a_new_runner_type_is_pushed_to() {
-        // Given/When/Then: the default mode is the one every type had before claims existed
         assert_eq!(DispatchMode::default(), DispatchMode::Push);
     }
 }

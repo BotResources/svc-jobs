@@ -71,6 +71,8 @@ spec:
               value: {{ .Values.claims.reservationSeconds | quote }}
             - name: JOBS_CLAIM_MAX_HELD
               value: {{ .Values.claims.maxHeld | quote }}
+            - name: JOBS_SAVED_STATE_MAX_BYTES
+              value: {{ .Values.savedState.maxBytes | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -8,7 +8,6 @@ pub const COMMAND_TYPE_FINISH: &str = "job.finish";
 pub const COMMAND_TYPE_FAIL: &str = "job.fail";
 
 pub const SCHEMA_VERSION: u8 = 1;
-/// The schema version of `job.create.v2`.
 pub const CREATE_V2_SCHEMA_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,14 +52,6 @@ pub struct CreateJob {
     pub max_attempts: Option<i64>,
 }
 
-/// The payload of `integration.cmd.jobs.job.create.v2`: every field of
-/// [`CreateJob`], unchanged, plus an optional requested priority.
-///
-/// `priority` is a level from 1 (lowest) to 5 (highest); absent means 3. It
-/// is ignored for a child job, which takes its parent's effective priority. A
-/// level outside 1–5 is answered by `creation_rejected` with reason
-/// `invalid_priority` — the field is a plain integer on the wire so that the
-/// refusal is a typed rejection, never an unreadable payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateJobV2 {
     pub job_id: Uuid,
@@ -83,7 +74,6 @@ pub struct CreateJobV2 {
 }
 
 impl CreateJobV2 {
-    /// The version 1 fields, with the priority set aside.
     pub fn declaration(&self) -> CreateJob {
         CreateJob {
             job_id: self.job_id,

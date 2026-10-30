@@ -1,10 +1,13 @@
+use bc_jobs::JobsError;
 use bc_jobs::commands::job::deletion::DeleteJob;
 use bc_jobs::commands::job::manual_retry::{
     ManualRetryJob, ManualRetryOutcome, manual_retry as decide_manual_retry,
 };
 use bc_jobs::domain::actions::fleet::successor_dispatch;
+use bc_jobs::domain::fleet::dispatch_mode::SuccessorDispatch;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{JobId, KnownUserId, ManualRetryId, ResolutionId, RunId};
+use bc_jobs::domain::job::Job;
 use bc_jobs::domain::job::parenting::ParentContext;
 use bc_jobs::domain::ownership::CancelRequester;
 use bc_jobs::domain::priority::PriorityBasis;
@@ -64,18 +67,43 @@ pub async fn manual_retry(
     actor: KnownUser,
     input: ManualRetryInput,
 ) -> Result<(), ServiceError> {
-    let metadata = administrator_metadata(&actor);
     let predecessor = jobs.require(JobId::new(input.job_id)?).await?;
-    let parent = match predecessor.parent_job_id() {
-        Some(parent) => jobs.load(parent).await?,
-        None => None,
-    };
     let runner_type = FleetReader::load(&jobs.store, predecessor.runner_type()).await?;
+    let in_use = jobs
+        .store
+        .current_runs_by_type()
+        .await?
+        .get(predecessor.runner_type().as_str())
+        .copied()
+        .unwrap_or(0);
     let dispatch = successor_dispatch(
         runner_type.as_ref(),
         RunId::new(jobs.ids.next())?,
         MaxRunDuration::from_delta(jobs.limits.max_run_duration())?,
+        in_use,
     );
+    let pushed = matches!(dispatch, SuccessorDispatch::Push { .. });
+    let outcome = start_manual_retry(jobs, &actor, &input, &predecessor, dispatch).await;
+    match outcome {
+        Err(ServiceError::Domain(JobsError::NoFreeCapacity { .. })) if pushed => {
+            start_manual_retry(jobs, &actor, &input, &predecessor, SuccessorDispatch::Wait).await
+        }
+        other => other,
+    }
+}
+
+async fn start_manual_retry(
+    jobs: &Jobs,
+    actor: &KnownUser,
+    input: &ManualRetryInput,
+    predecessor: &Job,
+    dispatch: SuccessorDispatch,
+) -> Result<(), ServiceError> {
+    let metadata = administrator_metadata(actor);
+    let parent = match predecessor.parent_job_id() {
+        Some(parent) => jobs.load(parent).await?,
+        None => None,
+    };
     let user_maximum = match predecessor.triggered_by() {
         Some(user) => Some(
             UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user.id().0)?).await?,
@@ -87,7 +115,7 @@ pub async fn manual_retry(
         failed_resolution_id: ResolutionId::new(input.failed_resolution_id)?,
         successor_job_id: JobId::new(input.successor_job_id)?,
         dispatch,
-        requested_by: actor,
+        requested_by: actor.clone(),
         applicable_maximum: user_maximum.as_ref().map_or_else(
             || jobs.limits.default_max_priority(),
             |user| user.applicable(&jobs.limits),
@@ -105,7 +133,7 @@ pub async fn manual_retry(
         None => None,
     };
     let outcome = decide_manual_retry(
-        &predecessor,
+        predecessor,
         ParentContext::of(parent.as_ref()),
         active.as_ref(),
         command.clone(),
@@ -113,12 +141,21 @@ pub async fn manual_retry(
     match outcome {
         ManualRetryOutcome::AlreadyStarted => Ok(()),
         ManualRetryOutcome::Started(plan) => {
+            let mut successor =
+                JobChange::new(command.successor_job_id, None, plan.successor.events)
+                    .claiming_source(claimed_source)
+                    .on_priority_premise(premise);
+            if matches!(dispatch, SuccessorDispatch::Push { .. }) {
+                successor = successor.requiring_free_capacity(predecessor.runner_type().clone());
+            }
             jobs.commit(
                 vec![
-                    JobChange::new(command.successor_job_id, None, plan.successor.events)
-                        .claiming_source(claimed_source)
-                        .on_priority_premise(premise),
-                    JobChange::new(predecessor.id(), Some(predecessor), plan.predecessor.events),
+                    successor,
+                    JobChange::new(
+                        predecessor.id(),
+                        Some(predecessor.clone()),
+                        plan.predecessor.events,
+                    ),
                 ],
                 &metadata,
             )

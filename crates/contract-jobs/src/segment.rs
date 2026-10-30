@@ -94,11 +94,8 @@ mod tests {
 
     #[test]
     fn a_runner_type_carrying_a_subject_separator_is_refused() {
-        // Given: a runner type that would split `jobs.trigger.{runner_type}` into two segments
         let candidate = "worker.python";
-        // When: it is offered to the transport contract
         let result = SubjectSegment::runner_type(candidate);
-        // Then: it never reaches a subject builder
         assert_eq!(
             result,
             Err(SegmentError::Invalid {
@@ -110,17 +107,12 @@ mod tests {
 
     #[test]
     fn a_segment_carrying_a_wildcard_is_refused() {
-        // Given: the two NATS wildcards, which would widen a subject to a whole family
-        // When/Then: neither may address the runner transport
         assert!(SubjectSegment::runner_type("worker-*").is_err());
         assert!(SubjectSegment::runner_type(">").is_err());
     }
 
     #[test]
     fn an_instance_key_read_back_from_the_presence_bucket_is_validated_too() {
-        // Given: a key a runner wrote itself into the presence bucket
-        // When: it is turned into a segment
-        // Then: the separator is refused on that half as well
         assert!(SubjectSegment::instance_key("pod-7.evil").is_err());
         assert_eq!(
             SubjectSegment::instance_key("pod-7").unwrap().as_str(),
@@ -130,8 +122,6 @@ mod tests {
 
     #[test]
     fn a_blank_or_oversized_segment_is_refused() {
-        // Given: an empty key and one longer than a subject token may be
-        // When/Then: both are refused, naming the field at fault
         assert_eq!(
             SubjectSegment::runner_type(""),
             Err(SegmentError::Blank {

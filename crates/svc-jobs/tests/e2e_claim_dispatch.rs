@@ -569,7 +569,7 @@ async fn a_reservation_never_started_fails_as_claim_lost_and_the_job_waits_again
     fixture.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_beyond_the_per_pod_cap_are_refused_busy_at_once() {
     // Given: a pod holding at most two unanswered claims, a CLAIM type with four idle instances
     // and nothing waiting

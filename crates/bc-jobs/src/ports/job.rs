@@ -4,6 +4,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::domain::ids::JobId;
 use crate::domain::job::Job;
+use crate::domain::keys::RunnerTypeKey;
 use crate::domain::references::SourceReference;
 use crate::event::job::JobEvent;
 use crate::ports::PortError;
@@ -33,25 +34,28 @@ pub trait JobWriter: Send + Sync {
 
 pub const DUE_WORK_BATCH: usize = 200;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchWindow {
+    pub runner_type: RunnerTypeKey,
+    pub free: u32,
+}
+
 #[async_trait]
 pub trait DueWorkReader: Send + Sync {
-    /// The Jobs of `PUSH` runner types waiting at `at`, in dispatch order.
-    async fn jobs_awaiting_dispatch(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
+    async fn jobs_awaiting_dispatch(
+        &self,
+        at: DateTime<Utc>,
+        windows: &[DispatchWindow],
+    ) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs whose started Run is past its maximum duration at `now`: the one
-    /// it was dispatched with, `service_default` for a Run that carries none.
     async fn jobs_with_outrun_runs(
         &self,
         now: DateTime<Utc>,
         service_default: TimeDelta,
     ) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs whose Run was reserved by a claim before `cutoff` and never
-    /// started.
     async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs of `CLAIM` runner types whose Run was published on the trigger
-    /// stream before `cutoff` and never started nor reserved.
     async fn jobs_with_stranded_triggers(
         &self,
         cutoff: DateTime<Utc>,

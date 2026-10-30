@@ -111,6 +111,11 @@ async fn a_queued_job(fixture: &Fixture, parent: Option<&Job>) -> Job {
         source_entity_id: None,
         max_attempts: None,
         requested_priority: Priority::DEFAULT,
+        initial_job_id: None,
+        requester: bc_jobs::domain::requester::Requester::Service(None),
+        passport: Some(support::contention::service_passport()),
+        payload: None,
+        call: None,
     };
     let CreateOutcome::Queued(queued) =
         create_job(declaration, None, None, parent, None, &limits())

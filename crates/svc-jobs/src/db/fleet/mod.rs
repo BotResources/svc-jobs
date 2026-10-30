@@ -1,3 +1,4 @@
+pub mod capacity;
 pub mod decision;
 pub mod load;
 mod presence;

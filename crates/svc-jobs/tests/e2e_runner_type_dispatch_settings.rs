@@ -321,12 +321,12 @@ async fn each_runner_type_bounds_its_runs_by_its_own_maximum_duration() {
     default_instance.start_run(&bounded_trigger).await;
 
     // Then: the run on the type left at the default fails at the default, as transient
+    default_instance.await_cancel_entry(bounded_run, LONG).await;
     let overrun =
         stream::await_delta(&mut bounded_watch, JOB_CHANGED, wire::EVT_RUN_FAILED, LONG).await;
     let event = delta::event_of(&overrun, wire::EVT_RUN_FAILED, bounded_job.job_id);
     assert_eq!(event["runId"], json!(bounded_run.to_string()));
     assert_eq!(event["failureKind"], json!("TRANSIENT"));
-    default_instance.await_cancel_entry(bounded_run, LONG).await;
     gql::wait_for_status(&client, admin, bounded_job.job_id, "FAILED", LONG).await;
 
     // Then: the run on the 96-hour type is still alive well past the default

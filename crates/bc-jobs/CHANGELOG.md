@@ -8,6 +8,86 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.8.0 - 2026-10-30
+
+- `commands::job::restart::restart_job` and `RestartJob`: the restart Job of a
+  finished Run (`JobQueued.restart_of_run_id`, `restart_of_job_id`;
+  `Job::restart_of_run_id`, `is_restart`).
+- `RestartStanding` and `DirectoryEntry::restart_standing`: the one decision on
+  the restart of an agent, shared by the listing, the delivery of a mail and the
+  restart; `Delivery::starts_restart`.
+- `ActsFor::runs`; `RESULT_RETENTION`, `result_expires_at`, `guard_result_alive`.
+- `guard_kept_payload_uploaded`; `JobsError::PayloadNotUploaded` and
+  `PayloadUploaderMismatch`.
+- `domain::runner::call_notices`: `CallNotices` and `NoticePlan`, the notices a
+  runner call owes its Caller.
+- `Job` carries its Initial Job, `Requester` (a service actor or a Run),
+  `JobPassport`, `JobPayload` and `JobCall`; `CreateJob` and `JobQueued` carry
+  them; a root job without a Passport is refused (`PassportRequired`).
+- `Requester::guard_resolves` / `guard_cancels` decide who finishes, fails and
+  cancels; `ResolutionRequester::Caller` and `CancelRequester::Caller`; a cancel
+  of an ended job by its Requester changes nothing
+  (`CommandWarning::CancelledJobAlreadyTerminal`).
+- New refusals: `NotRequester`, `RunnerNotWorkingTheJob`, `ActingRunMissing`,
+  `ActingRunNotLive`, `PassportRequired`, `PassportMalformed`,
+  `PassportUserMismatch`, `PassportParentMismatch`, `InitialJobMismatch`,
+  `ParentNotOfRun`, `ModeRequired`, `CallerAddressNotHeld`, `PayloadTooLarge`.
+- `domain::directory`: `AgentId`, `AgentState`, `decide_registration`
+  (refusals `RegistrationRefusal::{RunUnknown, RunNotStarted, RunEnded,
+  RunRemoved, InstanceMismatch, AgentIdInOtherTree, AgentIdNotFinished,
+  AgentNamedTwice, Malformed}`; `AgentNamedTwice` and `Malformed` both travel
+  on the wire as `malformed`) and `DirectoryEntry` with `restartable_now`.
+- `JobsError::CallerAddressNotOfRun`, `AgentId`, and the `run_removed` refusal
+  of a registration. An `AgentId` is any UUID: the runner makes it.
+- `RunnerTransport::acknowledged_start`: the start fact of a Run that the
+  broker acknowledged and Jobs has not applied yet.
+- `JobsError::NoFreeCapacity`, `RunnerType::declared_capacity` and `free_capacity`.
+- `ports::directory::AgentDirectory` (`register`, `list`): the decision is
+  passed in, the adapter owns the transaction and the Tree lock.
+- `domain::directory::caller_address`: the single decision on the address of a
+  BACKGROUND call.
+- Mail, notices, kept payloads, Results and saved states: the pure decisions
+  `mail_id_reused`, the recipient rules, the read rules and the size rules.
+- A Job that is finished or declared failed keeps its live Run: finish and
+  declared failure withdraw nothing; the terminal fact of the Run applies as
+  usual and leaves the Job unchanged. `Job` may hold a live Run after its
+  resolution.
+- `SuccessorDispatch::Wait` and `RunnerType::successor_dispatch(current_runs)`:
+  a manual retry dispatches only while the type has free capacity.
+- `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
+  the Passport, the payload and the call.
+- `ExistingJob` and `decide_upload`: an upload for a Job that exists is refused
+  unless its payload is of the kept form; `guard_job_serves_kept_payload`.
+- `guard_sender_holds`, `guard_attachments_uploaded`, `decide_attachment_upload`
+  (`AttachmentBody`, `StoredAttachment`, `AttachmentAdmission`): the mail
+  decisions that were in the Postgres adapter.
+- `runs_lost_with_instance` also covers the live Run of a finished Job.
+- `Job::fail_run_for_missing_passport` and `PASSPORT_REQUIRED`: a Run whose Job holds
+  no Passport fails permanently, and a pushed Run may settle unstarted for that
+  reason. `RunTrigger::passport` is required and `RunTrigger::of_job` refuses a Job
+  without one (`PassportRequired`).
+- `RunRefusal`, `MarkReadRefusal`: the refusals of a call that names a Run only;
+  `RunnerRefusal::ItemNotYours` is removed.
+- Ports `MailSender`, `MailReader`, `AttachmentStore`, `Inbox`, `KeptPayloads`,
+  `Results` and `SavedStates`, with the read models `MailView`, `MailRead`,
+  `AttachmentMeta`, `UnreadItem`, `UnreadMail`, `SavedStateView`, `StoredResult`
+  and the request types `WorkNamed`, `SendMail`, `Sent`, `Minting`,
+  `UploadAttachment`, `Uploader`; `RefusedRestart::code` and `message`.
+- `RestartObstacles::restart_job_live`, `RestartStanding::RestartInFlight` and
+  `domain::directory::restart::decide_restart_wake` (`RestartWake`): the one
+  decision shared by the listing, the delivery and the wake.
+- `ports::restart::RestartWakes`.
+- `domain::mail::attachment` holds the attachment admission decisions; the
+  fixtures are split in `fixtures/`.
+- `InlineAnswer::decide` and `JobPayload::inline_content_size`;
+  `guard_result_alive` takes the stored expiry.
+- `PrincipalFacts::guard_holds_runner_scope` and `JobsError::NotRunnerService`.
+- `domain::runner::saved_state::SavedState::new(value, maximum_bytes)` owns the
+  size guard of a saved state and returns `SavedStateRefusal`; the port
+  `SavedStates::save_state` takes the checked `SavedState` and no maximum.
+- A mail or notice reaching an agent whose restart Job is live rings the live
+  Run of that restart Job (`Delivery::rings_live_run` for `RestartInFlight`).
+
 ## 0.7.0 - 2026-10-29
 
 - `PrincipalFacts::new` takes a `PlatformRole` (`Member` < `SuperUser`)

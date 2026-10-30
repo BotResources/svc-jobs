@@ -14,7 +14,7 @@ pub const JOB_AGGREGATE_TYPE: &str = "Job";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobEvent {
-    JobQueued(JobQueued),
+    JobQueued(Box<JobQueued>),
     RunDispatched(RunDispatched),
     RunStarted(RunStarted),
     RunPlanDeclared(RunPlanDeclared),
@@ -114,7 +114,7 @@ impl JobEvent {
 
     pub fn decode(event_type: &str, payload: Value) -> Result<Self, JobsError> {
         match event_type {
-            "JobQueued" => Ok(Self::JobQueued(fact_of(payload)?)),
+            "JobQueued" => Ok(Self::JobQueued(Box::new(fact_of(payload)?))),
             "RunDispatched" => Ok(Self::RunDispatched(fact_of(payload)?)),
             "RunStarted" => Ok(Self::RunStarted(fact_of(payload)?)),
             "RunPlanDeclared" => Ok(Self::RunPlanDeclared(fact_of(payload)?)),

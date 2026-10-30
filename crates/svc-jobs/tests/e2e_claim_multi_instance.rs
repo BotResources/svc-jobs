@@ -20,10 +20,8 @@ const JOBS: usize = 24;
 const LATE_JOBS: usize = 6;
 const CLAIM_WAIT: Duration = Duration::from_secs(3);
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
-    // Given: two Jobs pods over one database and one NATS, and a CLAIM type with thirty live
-    // instances seen by both pods
     let fixture = JobsFixture::start_cluster(2, Knobs::default()).await;
     let events = EventLog::open(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
@@ -48,7 +46,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
         "both pods read the one dispatch mode",
     );
 
-    // Given: many jobs waiting
     let mut declared = BTreeSet::new();
     for _ in 0..JOBS {
         let declaration = JobDeclaration::new(&runner_type);
@@ -70,7 +67,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
         listings.push(listing);
     }
 
-    // When: every instance claims at the same moment
     let answers: Vec<ClaimAnswer> = join_all(
         instances
             .iter()
@@ -78,13 +74,26 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
     )
     .await;
 
-    // Then: every job is reserved exactly once, each to exactly one claim
+    let lapsed = durable
+        .count_like(
+            "SELECT count(*) FROM runner_presence_sessions ps \
+             JOIN runner_instances ri ON ri.id = ps.instance_id \
+             JOIN runner_types rt ON rt.id = ri.runner_type_id \
+             WHERE rt.type_key = $1 AND ps.disconnected_at IS NOT NULL",
+            &runner_type,
+        )
+        .await;
+    assert_eq!(
+        lapsed, 0,
+        "presence of an instance was lost during the first claim round, so its run was \
+         reclaimed and retried: the test heartbeats were starved, not the claim path"
+    );
     let mut reserved: BTreeMap<String, (Uuid, Uuid)> = BTreeMap::new();
     let mut empty = Vec::new();
     for (instance, answer) in instances.iter().zip(&answers) {
         if answer.reply["run"].is_object() {
             let run = answer.expect_run("a concurrent claim served");
-            assert_eq!(runner::attempt_number(&run), 1);
+            assert_eq!(runner::attempt_number(&run), 1, "{}", fixture.logs());
             reserved.insert(
                 instance.instance_key.clone(),
                 (runner::job_id(&run), runner::run_id(&run)),
@@ -119,7 +128,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
             .await;
     }
 
-    // Then: both pods announce each dispatch exactly once
     for listing in listings.iter_mut() {
         let mut announced = BTreeSet::new();
         while announced.len() < JOBS {
@@ -135,7 +143,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
         stream::expect_no_delta(listing, JOBS_CHANGED, wire::EVT_RUN_DISPATCHED, QUIET).await;
     }
 
-    // Given: a few more jobs arrive
     let mut late = BTreeSet::new();
     for _ in 0..LATE_JOBS {
         let declaration = JobDeclaration::new(&runner_type);
@@ -146,7 +153,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
         late.insert(declaration.job_id);
     }
 
-    // When: every instance claims another free slot at the same moment, under a new claim id
     let second_round: Vec<ClaimAnswer> = join_all(
         instances
             .iter()
@@ -154,8 +160,6 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
     )
     .await;
 
-    // Then: only the late jobs are served, each once — a new claim id never re-serves a job
-    // already reserved, even to an instance that holds it
     let mut late_served = BTreeSet::new();
     for answer in &second_round {
         if answer.reply["run"].is_object() {
@@ -184,14 +188,12 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
             .await;
     }
 
-    // When: every instance repeats its first-round claim id at the same moment
     let repeats: Vec<ClaimAnswer> =
         join_all(instances.iter().zip(&answers).map(|(instance, first)| {
             claim::claim_again(fixture.nats(), instance, first.claim_id, CLAIM_WAIT)
         }))
         .await;
 
-    // Then: holders get their own reservation back, the others nothing, on whichever pod
     for (instance, answer) in instances.iter().zip(&repeats) {
         match reserved.get(&instance.instance_key) {
             Some((job_id, run_id)) => {

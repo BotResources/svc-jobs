@@ -67,8 +67,16 @@ impl RunnerType {
         Availability::from_guard(self.guard_dispatch())
     }
 
-    /// Publishing the trigger of a waiting Job: the type is available and its
-    /// Instances are pushed to.
+    pub fn guard_free_capacity(&self, current_runs: u32) -> Result<(), JobsError> {
+        if self.free_capacity(current_runs) > 0 {
+            Ok(())
+        } else {
+            Err(JobsError::NoFreeCapacity {
+                runner_type: self.key().as_str().to_owned(),
+            })
+        }
+    }
+
     pub fn guard_push_dispatch(&self) -> Result<(), JobsError> {
         self.guard_dispatch()?;
         match self.dispatch_mode() {
@@ -79,8 +87,6 @@ impl RunnerType {
         }
     }
 
-    /// Serving the claim of one Instance: the type accepts Jobs and is claimed
-    /// from, and the Instance is live and taking new work.
     pub fn guard_claim(&self, instance_key: &InstanceKey) -> Result<&RunnerInstance, JobsError> {
         self.guard_accept_job()?;
         if self.dispatch_mode() != DispatchMode::Claim {
@@ -101,8 +107,6 @@ impl RunnerType {
         Ok(live)
     }
 
-    /// The dispatch mode and the maximum Run duration are set at any time,
-    /// whatever the lifecycle: a change applies to Runs dispatched afterwards.
     pub fn guard_configure(&self) -> Result<(), JobsError> {
         Ok(())
     }
@@ -111,8 +115,6 @@ impl RunnerType {
         Availability::from_guard(self.guard_configure())
     }
 
-    /// Returning the type to the service default maximum: it has one of its
-    /// own to clear.
     pub fn guard_clear_max_run_duration(&self) -> Result<(), JobsError> {
         self.guard_configure()?;
         if self.own_max_run_duration().is_some() {
@@ -193,18 +195,18 @@ impl RunnerType {
     }
 }
 
-/// How the first Run of a manual-retry successor of a Job of `runner_type`
-/// leaves the ledger: a `CLAIM` type's successor waits to be claimed; any other
-/// — or a type never registered — is pushed with the intervention, held to the
-/// type's maximum duration or the service default.
 pub fn successor_dispatch(
     runner_type: Option<&RunnerType>,
     first_run_id: RunId,
     service_default: MaxRunDuration,
+    current_runs: u32,
 ) -> SuccessorDispatch {
     match runner_type {
-        Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
-            SuccessorDispatch::AwaitClaim
+        Some(known)
+            if known.dispatch_mode() == DispatchMode::Claim
+                || known.free_capacity(current_runs) == 0 =>
+        {
+            SuccessorDispatch::Wait
         }
         known => SuccessorDispatch::Push {
             first_run_id,

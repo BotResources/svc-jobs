@@ -16,6 +16,7 @@ fn a_users_cap_applies_at_admission_and_the_request_is_kept() {
     let known = user();
     let cap = capped_at(&known, Some(3));
     let command = CreateJob {
+        passport: Some(user_passport(&known)),
         triggered_by: Some(known),
         requested_priority: level(5),
         ..command()
@@ -44,6 +45,7 @@ fn a_job_created_without_a_priority_requests_three_under_the_default_cap() {
     let known = user();
     let cap = capped_at(&known, None);
     let command = CreateJob {
+        passport: Some(user_passport(&known)),
         triggered_by: Some(known),
         ..command()
     };
@@ -71,14 +73,16 @@ fn a_job_that_runs_for_nobody_is_capped_by_the_service_default() {
 #[test]
 fn a_child_waits_at_its_parents_effective_priority_whatever_it_requested() {
     // Given: a parent running at effective priority 5, and a user capped at 1
+    let known = user();
     let parent = JobBuilder::new()
         .with_priority(level(5), level(5), None)
+        .with_passport(user_passport(&known))
         .with_run(RunBuilder::new(1).started(ts(5)).build())
         .build();
-    let known = user();
     let cap = capped_at(&known, Some(1));
     let command = CreateJob {
         parent_job_id: Some(parent.id()),
+        passport: None,
         triggered_by: Some(known),
         requested_priority: level(1),
         ..command()

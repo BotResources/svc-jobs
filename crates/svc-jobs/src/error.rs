@@ -22,6 +22,9 @@ pub enum ServiceError {
     #[error("concurrent_modification")]
     Contended,
 
+    #[error("restart_not_due")]
+    RestartNotDue,
+
     #[error("infrastructure_failure: {0}")]
     Infra(String),
 }
@@ -53,6 +56,12 @@ impl From<serde_json::Error> for ServiceError {
 
 impl From<br_util_nats_fabric::FabricError> for ServiceError {
     fn from(error: br_util_nats_fabric::FabricError) -> Self {
+        Self::Infra(error.to_string())
+    }
+}
+
+impl From<br_core_integration::CoordError> for ServiceError {
+    fn from(error: br_core_integration::CoordError) -> Self {
         Self::Infra(error.to_string())
     }
 }

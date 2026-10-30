@@ -1,7 +1,3 @@
-//! Routes the pod's durable facts to the claims it holds open: each fact wakes
-//! only the claims of the runner type it concerns, and a fact no held claim
-//! can care about is dropped without touching the database.
-
 use std::sync::Arc;
 
 use bc_jobs::event::job::JobEvent;
@@ -49,13 +45,10 @@ async fn wake(jobs: &Jobs, fact: &Fact) -> Result<(), ServiceError> {
             JobEvent::RetryScheduled(_)
             | JobEvent::JobPriorityForced(_)
             | JobEvent::JobPriorityRecalculated(_)
+            | JobEvent::RunCompleted(_)
+            | JobEvent::RunFailed(_)
             | JobEvent::RunCancelled(_) => {
                 if !jobs.waiters.is_any_held() {
-                    return Ok(());
-                }
-                if let JobEvent::RunCancelled(cancelled) = event.as_ref()
-                    && cancelled.withdrawn_for.is_none()
-                {
                     return Ok(());
                 }
                 let Some(runner_type) = jobs.store.runner_type_of(*job_id).await? else {
@@ -65,8 +58,6 @@ async fn wake(jobs: &Jobs, fact: &Fact) -> Result<(), ServiceError> {
                     return Ok(());
                 }
                 match event.as_ref() {
-                    // A retry is one more Job to take once due: the type's one
-                    // timer is armed for it, never every claim woken now.
                     JobEvent::RetryScheduled(scheduled) => {
                         let due_in = (scheduled.due_at - jobs.clock.now())
                             .to_std()

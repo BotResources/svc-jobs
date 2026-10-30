@@ -9,7 +9,8 @@ use crate::domain::job::status::JobStatus;
 use crate::domain::keys::ReasonCode;
 use crate::domain::policy::{Jitter, RetryPolicy, ServiceLimits};
 use crate::domain::run::failure::{
-    CLAIM_LOST, INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport, TRIGGER_STRANDED,
+    CLAIM_LOST, INSTANCE_LOST, PASSPORT_REQUIRED, RUN_TIMEOUT, RunFailureKind, RunFailureReport,
+    TRIGGER_STRANDED,
 };
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -56,14 +57,28 @@ impl Job {
         policy: &RetryPolicy,
         limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
-            return Ok(discarded);
-        }
         let run = self.find_run(command.run_id)?;
         if let Some(discarded) = self.discard_settled("RunFailed", run) {
             return Ok(discarded);
         }
         let report = RunFailureReport::platform(RunFailureKind::Transient, INSTANCE_LOST)?;
+        let fact = command.into_failure(report);
+        Ok(CommandResult::new(
+            self.run_failure_events(run, &fact, policy, limits)?,
+        ))
+    }
+
+    pub fn fail_run_for_missing_passport(
+        &self,
+        command: ReclaimRun,
+        policy: &RetryPolicy,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        let run = self.find_run(command.run_id)?;
+        if let Some(discarded) = self.discard_settled("RunFailed", run) {
+            return Ok(discarded);
+        }
+        let report = RunFailureReport::platform(RunFailureKind::Permanent, PASSPORT_REQUIRED)?;
         let fact = command.into_failure(report);
         Ok(CommandResult::new(
             self.run_failure_events(run, &fact, policy, limits)?,
@@ -76,9 +91,6 @@ impl Job {
         policy: &RetryPolicy,
         limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
-            return Ok(discarded);
-        }
         let run = self.find_run(command.run_id)?;
         if let Some(discarded) = self.discard_settled("RunFailed", run) {
             return Ok(discarded);
@@ -103,10 +115,6 @@ impl Job {
         Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))
     }
 
-    /// A Run reserved by a claim and never started within the reservation
-    /// delay fails as transient with `claim_lost`. Its Instance is told to stop
-    /// in case it starts late: the Job waits again, and a late start is
-    /// discarded against the settled Run.
     pub fn fail_run_for_lost_claim(
         &self,
         command: ReclaimRun,
@@ -114,9 +122,6 @@ impl Job {
         policy: &RetryPolicy,
         limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
-            return Ok(discarded);
-        }
         let run = self.find_run(command.run_id)?;
         if let Some(discarded) = self.discard_settled("RunFailed", run) {
             return Ok(discarded);
@@ -151,25 +156,12 @@ impl Job {
         Ok(CommandResult::new(events).with_warning(CommandWarning::CancellationIsBestEffort))
     }
 
-    /// A Run of a `CLAIM` type still waiting on the trigger stream — published
-    /// before its type switched to claims — that no Instance started within
-    /// `delay` fails as transient with `trigger_stranded`: its retry waits to be
-    /// claimed. A pushed Instance that still takes the trigger is told to stop.
-    /// Withdraws a trigger its type stranded by switching to `CLAIM`: nobody
-    /// took it within `delay` after the switch (`claimed_since`, `None` when
-    /// the type is not claimed from). The Run is cancelled without counting as
-    /// an attempt, any late taker is told to stop, and the Job waits to be
-    /// claimed exactly as it waited before — no attempt spent, no retry
-    /// scheduled.
     pub fn withdraw_stranded_trigger(
         &self,
         command: WithdrawStrandedTrigger,
         claimed_since: Option<DateTime<Utc>>,
         delay: TimeDelta,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunCancelled") {
-            return Ok(discarded);
-        }
         let run = self.find_run(command.run_id)?;
         if let Some(discarded) = self.discard_settled("RunCancelled", run) {
             return Ok(discarded);
@@ -196,7 +188,7 @@ impl Job {
             JobEvent::RunCancelled(RunCancelled {
                 job_id: self.id(),
                 run_id: run.id(),
-                withdrawn_for: Some(reason),
+                withdrawn_for: (!self.is_terminal()).then_some(reason),
             }),
         ])
         .with_warning(CommandWarning::CancellationIsBestEffort))

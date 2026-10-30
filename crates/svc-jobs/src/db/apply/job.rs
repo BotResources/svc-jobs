@@ -32,9 +32,13 @@ pub async fn queued(
     let sql = format!(
         "INSERT INTO jobs (id, runner_type_id, config, parent_job_id, predecessor_job_id, \
          triggered_by_id, producer_id, source_entity_id, max_attempts, created_at, \
-         requested_priority, effective_priority, forced_priority, root_job_id) \
+         requested_priority, effective_priority, forced_priority, root_job_id, \
+         requester, passport, payload, call, parent_run_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
-            coalesce((SELECT {} FROM jobs p WHERE p.id = $4), $1))",
+            coalesce($14, (SELECT {} FROM jobs p WHERE p.id = $4), $1), $15, $16, $17, $18, \
+            coalesce( \
+                (SELECT r.id FROM runs r WHERE r.id = ($15::jsonb ->> 'Run')::uuid), \
+                (SELECT cr.run_id FROM current_runs cr WHERE cr.job_id = $4 LIMIT 1)))",
         crate::db::lineage::root_of("p"),
     );
     sqlx::query(&sql)
@@ -54,10 +58,36 @@ pub async fn queued(
         .bind(fact.requested_priority.get_i16())
         .bind(fact.effective_priority.get_i16())
         .bind(fact.forced_priority.map(|level| level.get_i16()))
+        .bind(fact.initial_job_id.map(|id| id.as_uuid()))
+        .bind(as_json(&fact.requester)?)
+        .bind(as_json(&fact.passport)?)
+        .bind(as_json(&fact.payload)?)
+        .bind(as_json(&fact.call)?)
         .execute(&mut *tx)
         .await
         .map_err(unavailable)?;
+    if let Some(restarted) = fact.restart_of_run_id {
+        sqlx::query("INSERT INTO restart_origins (job_id, restarts_run_id) VALUES ($1, $2)")
+            .bind(fact.job_id.as_uuid())
+            .bind(restarted.as_uuid())
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+    }
     super::waiting::begin_waiting(tx, fact.job_id.as_uuid(), None).await
+}
+
+fn as_json<T: serde::Serialize>(value: &Option<T>) -> Result<Option<serde_json::Value>, PortError> {
+    value
+        .as_ref()
+        .map(|value| {
+            serde_json::to_value(value).map_err(|_| {
+                PortError::from(bc_jobs::JobsError::CorruptState {
+                    reason_code: "job_fact_not_serializable",
+                })
+            })
+        })
+        .transpose()
 }
 
 pub async fn priority_forced(

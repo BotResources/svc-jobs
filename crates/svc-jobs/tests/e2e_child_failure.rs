@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() {
-    // Given: a parent job watched from the list and fleet streams before it exists
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
@@ -73,7 +72,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     assert_eq!(opening["job"]["status"], json!("PENDING"));
     delta::assert_active_affordances(&opening);
 
-    // When: the parent runner claims its work and reports its progression
     orchestrator.connect().await;
     let registered =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
@@ -150,7 +148,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         &orchestrator.version,
     );
 
-    // When: the parent runner spawns a child and an independent sibling
     let child = JobDeclaration::new(&child_type).with_parent(parent_id);
     let child_id = child.job_id;
     let sibling = JobDeclaration::new(&sibling_type).with_parent(parent_id);
@@ -174,7 +171,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         delta::assert_active_affordances(&gql::child_of(&tree["job"], descendant));
     }
 
-    // When: the child logs, then fails permanently with a structured report
     let mut child_tail =
         SseSubscription::open(fixture.url(), admin, &subs::log_tail(child_id)).await;
     stream::snapshot(&mut child_tail, LOG_TAIL, SHORT).await;
@@ -225,7 +221,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     );
     worker.expect_no_trigger(QUIET).await;
 
-    // Then: neither the parent nor the sibling moved
     let parent_view = gql::job_view(&client, admin, parent_id).await;
     assert_eq!(
         parent_view["job"]["status"],
@@ -267,7 +262,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     )
     .await;
 
-    // When: the parent runner decides to spawn an alternative child instead
     let alternative = JobDeclaration::new(&child_type).with_parent(parent_id);
     let alternative_id = alternative.job_id;
     owner.declare(&alternative).await;
@@ -330,7 +324,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     .await;
     delta::projection(&alternative_done, alternative_id, "IN_PROGRESS");
 
-    // When: the owner finishes the alternative child and then the parent
     owner.finish(alternative_id).await;
     events
         .expect_one(wire::FACT_COMPLETED, alternative_id, LONG)
@@ -352,20 +345,7 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
     )
     .await;
 
-    // When: the owner closes the parent while its own run is still executing
     producer.finish(parent_id).await;
-    let parent_stopped = stream::await_delta(
-        &mut parent_watch,
-        JOB_CHANGED,
-        wire::EVT_RUN_CANCELLED,
-        LONG,
-    )
-    .await;
-    assert_eq!(
-        delta::event_of(&parent_stopped, wire::EVT_RUN_CANCELLED, parent_id)["runId"],
-        json!(parent_run.to_string()),
-        "a job resolved by its owner withdraws the run it left executing, before it closes",
-    );
     let stop_order = orchestrator.await_cancel_entry(parent_run, LONG).await;
     assert_eq!(
         stop_order["run_id"],
@@ -403,17 +383,29 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
         closed_parent["resolution"]["id"], parent_resolution,
         "the read answers with the very resolution the stream announced: {closed_parent}",
     );
-    let withdrawn = gql::run_by_id(&closed_parent, parent_run);
+    let asked = gql::run_by_id(&closed_parent, parent_run);
     assert_eq!(
-        withdrawn["status"],
-        json!("CANCELLED"),
-        "the run the owner's decision withdrew is closed, never left STARTED for ever: \
-         {closed_parent}",
+        asked["status"],
+        json!("STARTED"),
+        "the run stays live until its own terminal fact ends it: {closed_parent}",
     );
     assert!(
-        !withdrawn["cancellationRequestedAt"].is_null(),
-        "the withdrawal is recorded on the run as a request, not only as a terminal status: \
-         {withdrawn}",
+        !asked["cancellationRequestedAt"].is_null(),
+        "the stop request is recorded on the run: {asked}",
+    );
+    orchestrator.complete_run(&parent_trigger).await;
+    let _ = stream::await_delta(
+        &mut parent_watch,
+        JOB_CHANGED,
+        wire::EVT_RUN_COMPLETED,
+        LONG,
+    )
+    .await;
+    orchestrator.await_no_cancel_entry(parent_run, LONG).await;
+    assert_eq!(
+        gql::status_of(&client, admin, parent_id).await,
+        "COMPLETED",
+        "the Job does not change when its run ends",
     );
     support::views::assert_views_agree(
         &durable,
@@ -472,7 +464,6 @@ async fn a_child_failure_informs_its_parent_without_deciding_the_parents_fate() 
 
 #[tokio::test]
 async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_report() {
-    // Given: a running parent whose child has just failed permanently
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
@@ -526,11 +517,9 @@ async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_repor
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: the parent's Owner judges the report unrecoverable and fails its own job on the bus
     let note = "the provider refused the only source this job had";
     producer.fail(parent_id, Some(note)).await;
 
-    // Then: the failure is published as declared, carrying no run report the parent never produced
     let declared = events.expect_one(wire::FACT_FAILED, parent_id, LONG).await;
     let payload = declared.payload();
     assert_eq!(
@@ -584,16 +573,15 @@ async fn an_owner_declares_its_own_job_failed_after_an_unrecoverable_child_repor
     );
     delta::assert_failed_affordances(&view);
 
-    // Then: a late fact from the parent's own runner cannot revive it
     orchestrator.complete_run(&parent_trigger).await;
     events
         .expect_none(wire::FACT_COMPLETED, parent_id, QUIET)
         .await;
-    stream::expect_no_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, QUIET).await;
+    let _ = stream::await_delta(&mut watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, LONG).await;
     assert_eq!(
         gql::status_of(&client, admin, parent_id).await,
         "FAILED",
-        "a status fact for a run whose job is already terminal is acknowledged and discarded",
+        "a terminal fact for a live run of a terminal job ends the run and leaves the job",
     );
     events
         .expect_exactly(wire::FACT_FAILED, parent_id, 1, QUIET)

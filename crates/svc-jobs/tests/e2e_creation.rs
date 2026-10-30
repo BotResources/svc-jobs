@@ -232,8 +232,8 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
             durable
                 .count_like(db::OUTBOX_MENTIONING, &format!("%{rejected}%"))
                 .await,
-            1,
-            "a rejected id owes exactly its refusal on the outbox, no other consequence",
+            2,
+            "a rejected id owes exactly its refusal on the outbox, in its two published forms, no other consequence",
         );
     }
     assert_eq!(

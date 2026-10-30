@@ -10,6 +10,7 @@ pub const INSTANCE_LOST: &str = "instance_lost";
 pub const RUN_TIMEOUT: &str = "run_timeout";
 pub const CLAIM_LOST: &str = "claim_lost";
 pub const TRIGGER_STRANDED: &str = "trigger_stranded";
+pub const PASSPORT_REQUIRED: &str = "passport_required";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -37,9 +38,6 @@ impl RunFailureKind {
         }
     }
 
-    /// The kind a runner declared, or permanent when it declared none. The rule
-    /// lives here, on the domain's own type: an unclassified failure never
-    /// burns retry budget, whoever the caller is.
     pub fn from_declared(declared: Option<Self>) -> Self {
         declared.unwrap_or(Self::Permanent)
     }
@@ -134,9 +132,6 @@ mod tests {
 
     #[test]
     fn an_unspecified_failure_kind_is_permanent() {
-        // Given: a runner that reported a failure without naming its kind
-        // When: the kind is read
-        // Then: it is permanent — an unclassified failure never burns retry budget
         assert_eq!(
             RunFailureKind::from_declared(None),
             RunFailureKind::Permanent
@@ -145,8 +140,6 @@ mod tests {
 
     #[test]
     fn a_declared_failure_kind_is_taken_as_declared() {
-        // Given: a runner that did name its kind
-        // When/Then: the rule applies to the absent case alone — nothing else is rewritten
         for kind in [RunFailureKind::Transient, RunFailureKind::Permanent] {
             assert_eq!(RunFailureKind::from_declared(Some(kind)), kind);
         }
@@ -154,15 +147,12 @@ mod tests {
 
     #[test]
     fn only_a_transient_failure_is_retryable() {
-        // Given: the two failure kinds
-        // When/Then: retry policy applies to the transient one alone
         assert!(RunFailureKind::Transient.is_retryable());
         assert!(!RunFailureKind::Permanent.is_retryable());
     }
 
     #[test]
     fn a_report_carries_its_code_params_and_diagnostic_untouched() {
-        // Given: a structured failure report from a runner
         let report = RunFailureReport::new(
             RunFailureKind::Transient,
             ReasonCode::new("provider_rate_limited").unwrap(),
@@ -171,7 +161,6 @@ mod tests {
             Some(TimeDelta::seconds(90)),
         )
         .unwrap();
-        // When/Then: every part survives for escalation to the owner as-is
         assert_eq!(report.reason_code().as_str(), "provider_rate_limited");
         assert_eq!(report.params(), &json!({ "provider": "acme" }));
         assert_eq!(report.diagnostic(), &json!({ "http_status": 429 }));
@@ -180,7 +169,6 @@ mod tests {
 
     #[test]
     fn a_report_whose_params_are_not_an_object_is_refused() {
-        // Given: a runner reporting `"params": null`, which the served contract declares non-null
         let result = RunFailureReport::new(
             RunFailureKind::Transient,
             ReasonCode::new("provider_rate_limited").unwrap(),
@@ -188,13 +176,11 @@ mod tests {
             json!({}),
             None,
         );
-        // Then: it never reaches storage, so no read can break on it later
         assert_eq!(result, Err(JobsError::NotAJsonObject { field: "params" }));
     }
 
     #[test]
     fn a_report_whose_diagnostic_is_a_bare_value_is_refused() {
-        // Given: a diagnostic sent as a string rather than a structured payload
         let result = RunFailureReport::new(
             RunFailureKind::Permanent,
             ReasonCode::new("provider_unavailable").unwrap(),
@@ -202,7 +188,6 @@ mod tests {
             json!("boom"),
             None,
         );
-        // Then: the same refusal applies to both structured halves of the report
         assert_eq!(
             result,
             Err(JobsError::NotAJsonObject {
@@ -213,7 +198,6 @@ mod tests {
 
     #[test]
     fn a_negative_retry_hint_is_refused() {
-        // Given: a runner hint that would pull the next attempt into the past
         let result = RunFailureReport::new(
             RunFailureKind::Transient,
             ReasonCode::new("provider_rate_limited").unwrap(),
@@ -221,7 +205,6 @@ mod tests {
             json!({}),
             Some(TimeDelta::seconds(-1)),
         );
-        // Then: the report is refused at construction
         assert_eq!(
             result,
             Err(JobsError::InvalidDuration {

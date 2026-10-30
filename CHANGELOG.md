@@ -9,6 +9,210 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-30
+
+Requester, Passport and lineage on every job, the runner surface, the agent
+directory, the restart of finished agents, the acts-for rule, the cascade to
+successors, the expiry of Results, the notices to Callers and the storage of
+kept payloads.
+
+### Added
+
+- Restart: a direct mail to a finished agent that holds a saved state starts a
+  restart Job (producer `jobs`) that keeps the parent, the Requester, the
+  Passport, the config, the payload, the mode and the caller address of its
+  origin and stays in the Tree of the origin, an Initial Job included. A cc
+  notice never starts a restart. A failure notice to a finished background
+  Caller, and the end of a successful Run that leaves mail unread, start it too.
+  The start is durable (`restart_wakes`), taken once under the Tree lock, and
+  processed after the commit and by the backstop sweep. A retired runner type
+  leaves the mail unread and the reply names the refusal; a terminal parent
+  refuses the mail. A failed restart Run puts the agents back to `FINISHED` in
+  the Run they came from. Migration `0008`: `directory_agents.restarted_from_run_id`,
+  `restart_wakes` and the index of the restart links.
+- The acts-for rule: a restart Run acts for the Runs it restarts, transitively,
+  for finish, fail and cancel of their Jobs, for the Results and for the unread
+  items addressed to them. A retry of the same Job does not.
+- A restart Run reads the saved state of the nearest Run of its chain; a
+  successful restart Run that saves its own state replaces the earlier states.
+- The cancel of a Job reaches its descendants, its restart Jobs, its
+  manual-retry successors and, for a restart Job, the Jobs created by the Runs
+  it acts for; a cancel of a terminal Job reaches the same non-terminal Jobs and
+  removes the same Runs from the directory.
+- A Result is kept for 7 days from its keeping, or from a read that asked to keep
+  it; the sweep erases the expired ones.
+- Notices to the Caller of a runner call: accepted, queue position (each time the
+  Job starts to wait), started, run completed (with the answer when it fits
+  `JOBS_PAYLOAD_INLINE_MAX_BYTES`, and a reference to the Result) and job failed
+  (with the report and a message). A sync call tells only the end and the
+  failure, to the Run of the Caller. They ring the doorbell of the live Run and of
+  the live restart Runs that act for it.
+- A creation that names a kept payload is refused with `payload_not_uploaded` or
+  `payload_uploader_mismatch`; a restart or a retry fetches the payload of its
+  origin.
+- The chart carries `savedState.maxBytes` (`JOBS_SAVED_STATE_MAX_BYTES`).
+
+### Changed
+
+- Only an active service account that holds `jobs:runner` reaches the runner
+  surface; a human, a super user included, reaches nothing of it.
+- `/graphql` no longer carries the implicit 2 MB body limit of the HTTP layer: a
+  large saved state, mail or payload is refused by its own limit.
+- The scope declaration labels are `jobs.service.label`,
+  `jobs.service.description`, `jobs.scope.runner.label` and
+  `jobs.scope.runner.description`.
+- `RUNNER_SURFACE` is built from `contract_jobs::graphql_roots`.
+
+- `job.create.v3`, `job.finish.v3`, `job.fail.v3`, `job.cancel.v3` consumers
+  (durables `svc_jobs_job_{create,cancel,finish,fail}_v3`).
+- Every job stores its Passport, Requester, payload and call. The first job of
+  a Tree is its own parent and Initial Job; a child takes its parent's Initial
+  Job and Passport.
+- `queued`, `creation_rejected`, `started`, `plan_declared`, `step_started`,
+  `completed`, `failed`, `cancelled` events in version 2 (parent, Initial Job,
+  Requester, plain-words `message`), published beside the version 1 events;
+  `command_rejected.v1` and `cancel_accepted.v1`.
+- The trigger and the claim reply in version 2, on `jobs.trigger.v2.{runner_type}`
+  and `jobs.claim.v2.{runner_type}`.
+- A Run that fails or is cancelled cancels the Jobs it requested.
+- Migration `0004`: `requester`, `passport`, `payload`, `call` on `jobs`.
+- Capacity enforcement: a Run is pushed or claimed only while its runner type
+  has free capacity (the declared capacity of its ready live instances minus
+  its Runs that have not ended); otherwise it waits, and the end of a Run wakes
+  it. Refusal `no_free_capacity`. Migration `0005`: `current_runs`.
+- The agent directory: `jobs.runner.register_agents.{runner_type}` and
+  `jobs.runner.list_agents.{runner_type}` answer runner requests on the core
+  bus (queue group `svc_jobs_runner_surface`), fail-closed with a typed reason.
+  A Run that ends with success makes its agents `FINISHED`; a Run that fails or
+  is cancelled, and the cancel of a Job, remove the agents of the Run and of its
+  descendant Runs for good. Migration `0006`: `directory_agents`,
+  `directory_removed_runs`, `jobs.parent_run_id`.
+- A BACKGROUND call is refused with `caller_address_not_held` or
+  `caller_address_not_of_run` unless the address is an inbox address of the
+  acting Run in the directory.
+
+- Before a runner-surface request is refused with `run_not_started`, Jobs
+  applies the start fact of that Run that the broker already acknowledged, so a
+  runner may ask at once after it published the start. Jobs sends no reply
+  when it fails on its own side.
+- Migration `0007`: `agent_id` of the directory is any UUID; the removed
+  addresses; the mails, their recipients and attachments; the inbox items
+  (mail, cc notice, notice); the kept payloads; the Results; the saved states
+  and the restart origins.
+
+- The GraphQL runner surface for holders of the scope `jobs:runner`:
+  `jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
+  `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
+  `jobsMail`, `jobsSaveState`, `jobsSavedState`. Admission has a third branch:
+  a request selecting runner fields only is admitted for an active principal
+  holding the scope; administrators read no mail, Result or payload.
+- The scope `jobs:runner` is declared to the identity service at boot
+  (`SCOPE_DECLARATION_ENABLED`, default on); readiness waits for acceptance.
+- `jobs.runner.mark_read.{runner_type}` marks items read for the Run that holds
+  them; the doorbell `run.item_arrived.v1` rings for an item that reaches a
+  live Run.
+- The Job detail carries `initialJobId`, `passport`, `requester`, `call` (mode
+  and caller address) and `payload` (the inline content, the form of a payload
+  kept by Jobs, or the form and the reference of a payload kept elsewhere), in
+  the query and in the subscription deltas.
+- `JOBS_SAVED_STATE_MAX_BYTES` (default 1 MiB).
+- Registration, listing and read-marking requests are bounded in flight by
+  `JOBS_CLAIM_MAX_HELD`; a request of another wire version is answered
+  `malformed`; the reason `run_ended` answers a request for a Run that ended.
+
+### Changed
+
+- Push dispatch selects the waiting Jobs within the free capacity of each
+  runner type, so a saturated type neither starves the others nor keeps the
+  dispatch loop spinning.
+- Finishing a Job or declaring it failed no longer withdraws its live Run and
+  changes nothing in the directory. A terminal fact for a live Run of a
+  terminal Job ends the Run for its Instance and for the directory and leaves
+  the Job as it is; the backstops also reclaim the Runs of terminal Jobs.
+- A manual retry waits for free capacity like any other Job.
+- The end of a Run that fails or is cancelled also cancels the non-terminal
+  descendants of the terminal Jobs it requested.
+- A change of the directory takes the lock of its Tree before the Job rows, on
+  the writer paths as well as on registration, so a registration cannot insert
+  agents of a Run that a concurrent writer removes; the capacity locks of one
+  commit are taken in runner-type order.
+- Removal marks only the Runs that have not ended as removed.
+- The caller-address rule is one domain decision fed with the addresses the
+  acting Run holds.
+- A creation of a job with no parent, by version 1 or 2, is refused with
+  `passport_required`.
+- A creation under an ended parent is refused with `parent_terminal` in the
+  version 2 rejection (version 1 keeps `parent_job_terminal`).
+- Rejections are published in both generations (`creation_rejected.v1` and `.v2`).
+
+### Fixed
+
+- A mail or a cc notice reaching an agent whose restart Run has started rings
+  that Run once; a restart Run that has not started is rung by nothing.
+- The reconciliation of the presence bucket reads the open sessions before the
+  announced instances, so a session opened during the listing is not reported
+  lost.
+- The backstop sweep is a fixed ordered list of independent steps; the due
+  restarts come last, after every safety backstop, and a failing step never
+  stops the others.
+- A root Job is no longer its own parent when the restart obstacle
+  "parent Job terminal" is read for the listing and for mail.
+- A Job that finished while its Run was still live: the Run is now reclaimed when
+  it overruns its maximum duration (also after the Job was deleted) and failed
+  with its instance when the runner is lost; its capacity slot and its directory
+  entries are released.
+- A payload cannot be uploaded for a Job that already carries an inline or a
+  reference payload (`payload_already_uploaded`), and a Run fetches a kept
+  payload only when its Job has the kept form (`no_kept_payload`).
+- Marking items read checks only the requested items.
+- Saving a state takes the Tree lock, so a save no longer leaves a state behind
+  a Run that was removed at the same time.
+- Two uploads of the same attachment id, or two mails of the same mail id, from
+  two Trees at once keep one content and one uploader; the other is refused with
+  `mail_id_reused`.
+- The caller address of a background call is checked again under the Tree lock
+  of the calling Run in the transaction that creates the Job.
+- The runner claim is read as `ClaimV2`; a Job whose Passport is missing is not sent
+  to a runner, neither pushed nor served by a claim: its Run fails permanently
+  with `passport_required`. This includes a Job stored before 0.6, which holds no
+  Passport.
+- The bus refusal of `mark_read` is a `MarkReadRefusal`, which cannot hold
+  `job_not_of_run`.
+- The runner calls reach the store through the `bc-jobs` ports; the GraphQL
+  resolvers of the runner surface no longer import the Postgres adapter, and the
+  mail result types are split from the content result types.
+- The restart of a finished agent is decided once: the listing, the delivery of
+  a mail and the wake read the same facts (including "a restart Job of this
+  agent is live") through `decide_restart_wake`. While a restart Job is live the
+  agent is not offered as restartable, a new mail is accepted and waits unread,
+  and no second restart is started. A wake for a retired runner type or a
+  terminal parent is no longer queued.
+- A restart wake that cannot be served no longer stops the backstop sweep: the
+  safety backstops (run duration, lost claims, stranded triggers, inactivity)
+  run first, the purge of expired Results and the restart wakes follow
+  independently, each failed wake stays queued and the next one is tried, and a
+  mail that is stored never fails because its restart could not start. Every
+  step of the sweep runs whatever an earlier one returned; the sweep reports the
+  first failure after all of them ran.
+- The saved state and the kept payload of a restart chain are found however
+  many restarts the chain holds; the 64-link ceiling is gone.
+- The presence reconciliation reads the open sessions before the presence keys,
+  so a session opened in between is not reported lost.
+- The answer of a synchronous call rides in the notice by the same measure as an
+  inline payload (`InlineAnswer`).
+- The runner scope is decided by `PrincipalFacts::guard_holds_runner_scope`; the
+  GraphQL edge only reads whether the scope is held.
+- The fake runners of the end-to-end suites keep refreshing their presence after
+  a failed refresh, and the contended scenarios run on a multi-thread runtime.
+- Migration `0009_result_expiry`: `job_results.expires_at` (backfilled from the
+  last read or the keeping, plus seven days) and its index; the purge is a
+  range delete on it.
+
+### Removed
+
+- The claim subject `jobs.claim.{runner_type}` and the trigger subject
+  `jobs.trigger.{runner_type}` are no longer served or published.
+
 ## 0.5.1 - 2026-10-29
 
 Background NATS consumers recover from a bus outage of any length, on their

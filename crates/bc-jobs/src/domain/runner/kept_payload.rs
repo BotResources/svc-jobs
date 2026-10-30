@@ -1,0 +1,259 @@
+use super::refusal::RunnerRefusal;
+use crate::domain::payload::{JobPayload, PayloadAttachment};
+use crate::domain::requester::Requester;
+use crate::error::JobsError;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptPayload {
+    pub message: String,
+    pub attachments: Vec<PayloadAttachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPayload {
+    pub uploader: Requester,
+    pub payload: KeptPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingJob {
+    pub requester: Requester,
+    pub payload: Option<JobPayload>,
+}
+
+impl ExistingJob {
+    fn holds_a_kept_payload(&self) -> bool {
+        self.payload.as_ref().is_some_and(JobPayload::is_kept)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadRefusal {
+    JobExistsNotYours,
+    PayloadAlreadyUploaded,
+}
+
+impl UploadRefusal {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::JobExistsNotYours => "job_exists_not_yours",
+            Self::PayloadAlreadyUploaded => "payload_already_uploaded",
+        }
+    }
+
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::JobExistsNotYours => {
+                "The Job exists and its Requester is not the one that uploads."
+            }
+            Self::PayloadAlreadyUploaded => {
+                "The Job id already has a payload, and the payload of a Job never changes."
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadAdmission {
+    Store,
+    Absorbed,
+}
+
+pub fn decide_upload(
+    uploader: &Requester,
+    incoming: &KeptPayload,
+    job: Option<&ExistingJob>,
+    stored: Option<&StoredPayload>,
+) -> Result<UploadAdmission, UploadRefusal> {
+    if let Some(job) = job {
+        if &job.requester != uploader {
+            return Err(UploadRefusal::JobExistsNotYours);
+        }
+        if !job.holds_a_kept_payload() {
+            return Err(UploadRefusal::PayloadAlreadyUploaded);
+        }
+    }
+    match stored {
+        None => Ok(UploadAdmission::Store),
+        Some(known) if &known.uploader == uploader && &known.payload == incoming => {
+            Ok(UploadAdmission::Absorbed)
+        }
+        Some(_) => Err(UploadRefusal::PayloadAlreadyUploaded),
+    }
+}
+
+pub fn guard_job_serves_kept_payload(payload: Option<&JobPayload>) -> Result<(), RunnerRefusal> {
+    match payload {
+        Some(payload) if payload.is_kept() => Ok(()),
+        _ => Err(RunnerRefusal::NoKeptPayload),
+    }
+}
+
+pub fn guard_kept_payload_uploaded(
+    creator: &Requester,
+    stored: Option<&StoredPayload>,
+) -> Result<(), JobsError> {
+    match stored {
+        None => Err(JobsError::PayloadNotUploaded),
+        Some(known) if &known.uploader == creator => Ok(()),
+        Some(_) => Err(JobsError::PayloadUploaderMismatch),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ownership::ActorRef;
+    use crate::fixtures::run_id;
+    use uuid::Uuid;
+
+    fn payload(message: &str) -> KeptPayload {
+        KeptPayload {
+            message: message.to_owned(),
+            attachments: vec![],
+        }
+    }
+
+    fn service() -> Requester {
+        Requester::Service(Some(ActorRef::new(Uuid::now_v7())))
+    }
+
+    #[test]
+    fn a_first_upload_for_a_job_id_that_does_not_exist_is_stored() {
+        assert_eq!(
+            decide_upload(&service(), &payload("m"), None, None),
+            Ok(UploadAdmission::Store)
+        );
+    }
+
+    #[test]
+    fn an_identical_repeated_upload_by_the_same_uploader_is_absorbed() {
+        let uploader = Requester::Run(run_id());
+        let stored = StoredPayload {
+            uploader,
+            payload: payload("m"),
+        };
+        assert_eq!(
+            decide_upload(&uploader, &payload("m"), None, Some(&stored)),
+            Ok(UploadAdmission::Absorbed)
+        );
+    }
+
+    #[test]
+    fn any_other_upload_for_a_job_id_that_has_a_payload_is_refused() {
+        let uploader = Requester::Run(run_id());
+        let stored = StoredPayload {
+            uploader,
+            payload: payload("m"),
+        };
+        assert_eq!(
+            decide_upload(&uploader, &payload("other"), None, Some(&stored)),
+            Err(UploadRefusal::PayloadAlreadyUploaded)
+        );
+        assert_eq!(
+            decide_upload(
+                &Requester::Run(run_id()),
+                &payload("m"),
+                None,
+                Some(&stored)
+            ),
+            Err(UploadRefusal::PayloadAlreadyUploaded)
+        );
+    }
+
+    #[test]
+    fn a_creation_naming_a_kept_payload_needs_it_uploaded_by_the_creator() {
+        let creator = Requester::Run(run_id());
+        let stored = StoredPayload {
+            uploader: creator,
+            payload: payload("m"),
+        };
+        assert_eq!(guard_kept_payload_uploaded(&creator, Some(&stored)), Ok(()));
+        assert_eq!(
+            guard_kept_payload_uploaded(&creator, None),
+            Err(JobsError::PayloadNotUploaded)
+        );
+        assert_eq!(
+            guard_kept_payload_uploaded(&Requester::Run(run_id()), Some(&stored)),
+            Err(JobsError::PayloadUploaderMismatch)
+        );
+        assert_eq!(
+            guard_kept_payload_uploaded(&service(), Some(&stored)),
+            Err(JobsError::PayloadUploaderMismatch)
+        );
+    }
+
+    fn job_of(requester: Requester, payload: Option<JobPayload>) -> ExistingJob {
+        ExistingJob { requester, payload }
+    }
+
+    fn inline() -> JobPayload {
+        JobPayload::Inline {
+            message: "m".to_owned(),
+            attachments: vec![],
+        }
+    }
+
+    fn reference() -> JobPayload {
+        JobPayload::Reference {
+            service: "docs".to_owned(),
+            document_id: "d".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_job_that_exists_takes_an_upload_only_from_its_requester() {
+        let requester = Requester::Run(run_id());
+        let kept = job_of(requester, Some(JobPayload::Kept));
+        assert_eq!(
+            decide_upload(&requester, &payload("m"), Some(&kept), None),
+            Ok(UploadAdmission::Store)
+        );
+        assert_eq!(
+            decide_upload(&service(), &payload("m"), Some(&kept), None),
+            Err(UploadRefusal::JobExistsNotYours)
+        );
+        let anonymous = job_of(Requester::Service(None), Some(JobPayload::Kept));
+        assert_eq!(
+            decide_upload(&service(), &payload("m"), Some(&anonymous), None),
+            Err(UploadRefusal::JobExistsNotYours)
+        );
+    }
+
+    #[test]
+    fn a_job_that_exists_without_a_kept_payload_takes_no_upload_from_its_requester() {
+        let requester = Requester::Run(run_id());
+        for form in [Some(inline()), Some(reference()), None] {
+            let job = job_of(requester, form.clone());
+            assert_eq!(
+                decide_upload(&requester, &payload("m"), Some(&job), None),
+                Err(UploadRefusal::PayloadAlreadyUploaded),
+                "{form:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_requester_check_comes_before_the_payload_form_check() {
+        let job = job_of(Requester::Run(run_id()), Some(inline()));
+        assert_eq!(
+            decide_upload(&service(), &payload("m"), Some(&job), None),
+            Err(UploadRefusal::JobExistsNotYours)
+        );
+    }
+
+    #[test]
+    fn only_a_job_of_the_kept_form_serves_a_kept_payload() {
+        assert_eq!(
+            guard_job_serves_kept_payload(Some(&JobPayload::Kept)),
+            Ok(())
+        );
+        for form in [Some(inline()), Some(reference()), None] {
+            assert_eq!(
+                guard_job_serves_kept_payload(form.as_ref()),
+                Err(RunnerRefusal::NoKeptPayload),
+                "{form:?}"
+            );
+        }
+    }
+}

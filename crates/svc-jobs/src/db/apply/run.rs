@@ -28,6 +28,16 @@ pub async fn dispatched(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    sqlx::query(
+        "INSERT INTO current_runs (run_id, job_id, runner_type_id) \
+         SELECT $1, j.id, j.runner_type_id FROM jobs j WHERE j.id = $2 \
+         ON CONFLICT (run_id) DO NOTHING",
+    )
+    .bind(fact.run_id.as_uuid())
+    .bind(fact.job_id.as_uuid())
+    .execute(&mut *tx)
+    .await
+    .map_err(unavailable)?;
     super::waiting::end_waiting(tx, fact.job_id.as_uuid()).await?;
     super::waiting::served(tx, fact.job_id.as_uuid(), at).await?;
     if fact.claimed_by.is_none() {
@@ -51,8 +61,6 @@ pub async fn dispatched(
     Ok(())
 }
 
-/// The Instance a claim reserves a Run to has a live presence, so its row
-/// exists: it is read, never created by the reservation.
 async fn existing_instance(
     tx: &mut PgConnection,
     runner_type: &bc_jobs::domain::keys::RunnerTypeKey,
@@ -158,7 +166,8 @@ pub async fn completed(
     fact: &RunCompleted,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "COMPLETED", at, None).await
+    terminal(tx, fact.run_id.as_uuid(), "COMPLETED", at, None).await?;
+    super::directory::run_finished(tx, fact.run_id.as_uuid(), at).await
 }
 
 pub async fn cancelled(
@@ -167,12 +176,10 @@ pub async fn cancelled(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     terminal(tx, fact.run_id.as_uuid(), "CANCELLED", at, None).await?;
+    super::directory::remove_run_subtree(tx, fact.run_id.as_uuid(), at).await?;
     let Some(reason) = &fact.withdrawn_for else {
         return Ok(());
     };
-    // A withdrawn Run does not count: its Job waits again exactly as before
-    // it — for its first attempt, or for the retry the Run was meant to be,
-    // whose due time has passed.
     sqlx::query("UPDATE runs SET withdrawn_reason = $2 WHERE id = $1")
         .bind(fact.run_id.as_uuid())
         .bind(reason.as_str())
@@ -195,7 +202,8 @@ pub async fn failed(
     fact: &RunFailed,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    terminal(tx, fact.run_id.as_uuid(), "FAILED", at, Some(&fact.report)).await
+    terminal(tx, fact.run_id.as_uuid(), "FAILED", at, Some(&fact.report)).await?;
+    super::directory::run_failed(tx, fact.run_id.as_uuid(), at).await
 }
 
 async fn terminal(
@@ -229,6 +237,11 @@ async fn terminal(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    sqlx::query("DELETE FROM current_runs WHERE run_id = $1")
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
     super::waiting::trigger_settled(tx, run_id).await?;
     settle_reservation(tx, run_id, at).await?;
     crate::db::impacts::record_terminal(tx, run_id, at).await

@@ -17,8 +17,6 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn platform_administrators_alone_can_observe_and_operate_jobs() {
-    // Given: one job in flight and one already failed, so each action is attacked where
-    // an administrator would be offered it
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
@@ -30,16 +28,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     instance.connect().await;
 
-    let source_entity = Uuid::now_v7();
-    let running = JobDeclaration::new(&runner_type).with_source("projects", source_entity);
-    let running_id = running.job_id;
-    producer.declare(&running).await;
-    events.expect_one(wire::FACT_QUEUED, running_id, LONG).await;
-    let trigger = instance.next_trigger(LONG).await;
-    let running_run = runner::run_id(&trigger);
-    instance.start_run(&trigger).await;
-    gql::wait_for_status(&client, admin, running_id, "IN_PROGRESS", LONG).await;
-
     let failed = JobDeclaration::new(&runner_type).with_max_attempts(1);
     let failed_id = failed.job_id;
     producer.declare(&failed).await;
@@ -49,6 +37,16 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         .fail_run(&failed_trigger, "PERMANENT", "provider_refused", None)
         .await;
     gql::wait_for_status(&client, admin, failed_id, "FAILED", LONG).await;
+
+    let source_entity = Uuid::now_v7();
+    let running = JobDeclaration::new(&runner_type).with_source("projects", source_entity);
+    let running_id = running.job_id;
+    producer.declare(&running).await;
+    events.expect_one(wire::FACT_QUEUED, running_id, LONG).await;
+    let trigger = instance.next_trigger(LONG).await;
+    let running_run = runner::run_id(&trigger);
+    instance.start_applied(&fixture, &trigger).await;
+    gql::wait_for_status(&client, admin, running_id, "IN_PROGRESS", LONG).await;
 
     let mut watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(running_id)).await;
@@ -63,7 +61,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
     stream::snapshot(&mut fleet_watch, FLEET_CHANGED, SHORT).await;
 
-    // Then: the administrator sees everything, with state-dependent affordances
     delta::assert_active_affordances(&gql::job_view(&client, admin, running_id).await);
     delta::assert_failed_affordances(&gql::job_view(&client, admin, failed_id).await);
     let listed = gql::list_jobs(&client, admin, json!({ "runnerTypes": [&runner_type] })).await;
@@ -101,7 +98,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     gql::assert_affordances_well_formed(&fleet[0], "the fleet read");
     let admin_snapshot = gql::job_view(&client, admin, running_id).await;
 
-    // When: an ordinary member reads anything at all
     let mut read_refusals = Vec::new();
     for (document, variables, what) in [
         (
@@ -178,7 +174,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         assert_no_jobs_state_leaked(&refused, running_id, "a non-administrator read");
     }
 
-    // When: an ordinary member tries to establish any of the administrator subscriptions
     for (what, document) in [
         ("the job stream", subs::job_changed(running_id)),
         ("the list stream", subs::jobs_changed(&runner_type)),
@@ -203,7 +198,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         assert_no_jobs_state_leaked(&body, running_id, what);
     }
 
-    // When: a caller presents no passport at all, or one the edge cannot decode
     let mut anonymous_refusals = Vec::new();
     for (forged, what) in [
         (None, "no passport at all"),
@@ -291,7 +285,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         );
     }
 
-    // When: an ordinary member attacks each mutation in the state that offers it
     let mut action_refusals = Vec::new();
     let cancel = gql::cancel_job(&client, member, Uuid::now_v7(), running_id).await;
     action_refusals.push(verdict::expect_code_shaped(
@@ -317,13 +310,11 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         "an ordinary member deleting a terminal deletable job",
     ));
 
-    // When: a bounded context that owns nothing here issues the deprecated v1 Owner-only commands
     let intruder = Producer::new(fixture.fabric(), "chat");
     intruder.finish(running_id).await;
     intruder.fail(running_id, None).await;
     intruder.cancel(running_id).await;
 
-    // Then: one authorization code, shared by every refusal and distinct from a state refusal
     let authorization_code = action_refusals[0].clone();
     for code in read_refusals.iter().chain(action_refusals.iter()) {
         assert_eq!(
@@ -342,7 +333,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
          unguarded mutation passes this scenario the day the state allows it",
     );
 
-    // Then: nothing moved on any channel, neither for the edge nor for the intruding context
     stream::expect_total_silence(
         &mut watch,
         "a refused caller reaches no job subscriber",
@@ -385,7 +375,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         "a refused attempt leaves the administrator's snapshot and affordances identical",
     );
 
-    // Then: the execution plane never noticed the user-facing boundary
     instance
         .log_line(&trigger, None, "INFO", "the plane keeps running")
         .await;
@@ -419,7 +408,6 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         .expect_one(wire::FACT_COMPLETED, running_id, LONG)
         .await;
 
-    // Then: an impersonated administrator is audited as the passport says, not as the operator
     let (impersonated, operator_id) = impersonating_admin();
     gql::expect_success(
         &gql::delete_job(&client, &impersonated, failed_id).await,

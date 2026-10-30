@@ -47,6 +47,7 @@ pub const VERB_FINISH: &str = "finish";
 pub const VERB_FAIL: &str = "fail";
 pub const CONTRACT_V1: u8 = 1;
 pub const CONTRACT_V2: u8 = 2;
+pub const CONTRACT_V3: u8 = 3;
 
 pub const ACTION_CANCEL: &str = "cancel";
 pub const ACTION_MANUAL_RETRY: &str = "manual_retry";
@@ -158,7 +159,7 @@ pub const FIELD_MY_MAX_PRIORITY: &str = "jobsMyMaxPriority";
 pub const FIELD_USER_MAX_PRIORITIES: &str = "jobsUserMaxPriorities";
 pub const FIELD_CLEAR_MAX_RUN_DURATION: &str = "jobsClearRunnerTypeMaxRunDuration";
 
-pub const CLAIM_PREFIX: &str = "jobs.claim.";
+pub const CLAIM_PREFIX: &str = "jobs.claim.v2.";
 
 pub fn claim_subject(runner_type: &str) -> String {
     format!("{CLAIM_PREFIX}{runner_type}")
@@ -176,7 +177,7 @@ pub fn runner_type_catalog_key(runner_type: &str) -> String {
 }
 
 pub fn trigger_subject(runner_type: &str) -> String {
-    format!("jobs.trigger.{runner_type}")
+    format!("jobs.trigger.v2.{runner_type}")
 }
 
 pub fn status_subject(runner_type: &str, fact: &str) -> String {
@@ -215,6 +216,26 @@ pub fn event_coords(fact: &str) -> EventCoords {
         fact: PastFact::new(fact).expect("the fact is a valid coordinate segment"),
         version: 1,
     }
+}
+
+pub fn event_coords_at(fact: &str, version: u8) -> EventCoords {
+    EventCoords {
+        version,
+        ..event_coords(fact)
+    }
+}
+
+pub const FACT_COMMAND_REJECTED: &str = "command_rejected";
+pub const FACT_CANCEL_ACCEPTED: &str = "cancel_accepted";
+
+pub fn all_event_v2_coords() -> Vec<EventCoords> {
+    let mut coords: Vec<EventCoords> = ALL_FACTS
+        .iter()
+        .map(|fact| event_coords_at(fact, 2))
+        .collect();
+    coords.push(event_coords_at(FACT_COMMAND_REJECTED, 1));
+    coords.push(event_coords_at(FACT_CANCEL_ACCEPTED, 1));
+    coords
 }
 
 pub fn all_event_coords() -> Vec<EventCoords> {

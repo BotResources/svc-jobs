@@ -5,6 +5,37 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.7.0 - 2026-10-30
+
+- `graphql_roots`: the eleven GraphQL roots of the runner surface as public constants
+  (`UPLOAD_PAYLOAD_ROOT`, `PAYLOAD_ROOT`, `UPLOAD_RESULT_ROOT`, `READ_RESULT_ROOT`,
+  `UPLOAD_ATTACHMENT_ROOT`, `ATTACHMENT_ROOT`, `SEND_MAIL_ROOT`, `UNREAD_ROOT`,
+  `MAIL_ROOT`, `SAVE_STATE_ROOT`, `SAVED_STATE_ROOT`) and `RUNNER_ROOTS`.
+- `command_v3`: `CreateJobV3`, `FinishJobV3`, `FailJobV3`, `CancelJobV3`,
+  `Payload`, `CallMode` and the `cmd_job_{create,cancel,fail,finish}_v3_coords()`.
+- `event_v2`: `JobQueuedV2`, `JobCreationRejectedV2`, `JobStartedV2`,
+  `JobPlanDeclaredV2`, `JobStepStartedV2`, `JobCompletedV2`, `JobFailedV2`,
+  `JobCancelledV2`, `JobCancelAccepted`, `JobCommandRejected`, `RunItemArrived`
+  and the matching `evt_*_coords()`.
+- `runner::TriggerV2`, `runner::ClaimReplyV2`, `runner_transport::trigger_v2_subject`
+  and `claim_v2_subject`.
+- `runner_surface`: the requests `jobs.runner.register_agents.{runner_type}`,
+  `jobs.runner.mark_read.{runner_type}` and `jobs.runner.list_agents.{runner_type}`
+  — `RegisterAgents`, `MarkRead`, `ListAgents`, their replies and the closed
+  `SurfaceReason` enum (`run_unknown`, `run_not_started`, `run_ended`,
+  `run_removed`, `instance_mismatch`, `agent_id_in_other_tree`,
+  `agent_id_not_finished`, `item_not_yours`, `malformed`: nine codes). Jobs sends no
+  reply when it fails on its own side, so no `unavailable` reason exists: a request
+  left unanswered is repeated.
+- `runner::ClaimV2`: the claim of version 2; a missing `version` reads as 2.
+  `Claim` (version 1) is unchanged.
+- `TriggerV2.passport` is required: a version 2 trigger, or a version 2 claim reply
+  serving a run, without it does not deserialize.
+- `reason::Reason<T>`: the `reason` of `ClaimReplyV2`, `SurfaceReply` and
+  `ListAgentsReply` is a known word or an unknown word that keeps its text and is
+  never read as another reason. `ClaimReply` (version 1) is unchanged.
+- No rustdoc or comment remains in the crate.
+
 ## 0.6.0 - 2026-10-26
 
 Additive: every 0.5 subject, payload and constant is unchanged.

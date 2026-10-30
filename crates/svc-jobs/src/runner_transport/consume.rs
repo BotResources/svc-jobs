@@ -15,7 +15,7 @@ use crate::config::ConsumerTuning;
 use crate::error::ServiceError;
 use crate::supervision::Established;
 
-const STATUS_DURABLE: &str = "svc_jobs_status";
+pub const STATUS_DURABLE: &str = "svc_jobs_status";
 const LOG_DURABLE: &str = "svc_jobs_logs";
 
 pub async fn consume_status(
@@ -60,9 +60,6 @@ pub async fn consume_logs(
     .await
 }
 
-/// Resolves what the frame is, then applies it. The resolved identity travels
-/// out with the outcome so a drop is counted as the very fact that was
-/// dispatched — reading the subject twice is how the two come to disagree.
 async fn handle_status(
     jobs: &Jobs,
     subject: &str,
@@ -85,9 +82,6 @@ async fn handle_status(
     )
 }
 
-/// The runner type and the fact a status subject names, read once. Extra
-/// segments beyond the fact are ignored — the durable's `jobs.status.>` filter
-/// accepts them, so what matters is that this reading is the only one.
 fn status_subject(subject: &str) -> Option<(&str, Option<RunnerStatusFact>)> {
     let mut segments = subject.split('.').skip(2);
     let runner_type = segments.next()?;
@@ -221,8 +215,6 @@ mod tests {
 
     #[test]
     fn a_status_subject_names_its_runner_type_and_its_fact() {
-        // Given: the subject a runner publishes a terminal fact on
-        // When/Then: both halves are read, and the fact is the typed one the metric will name
         assert_eq!(
             status_subject("jobs.status.analyst.failed"),
             Some(("analyst", Some(RunnerStatusFact::Failed))),
@@ -231,13 +223,8 @@ mod tests {
 
     #[test]
     fn a_subject_carrying_extra_segments_is_the_same_fact_to_the_dispatch_and_to_the_metric() {
-        // Given: a subject deeper than four segments — the durable filter `jobs.status.>` takes
-        // it, so a runner can publish one whether or not anyone planned for it
         let deep = "jobs.status.analyst.failed.v2";
-        // When: the subject is read
         let (runner_type, fact) = status_subject(deep).expect("the subject names a runner type");
-        // Then: it is handled as the terminal fact it is — and because this reading is the only
-        // one, the drop of such a frame is counted as `failed`, never off in another series
         assert_eq!(runner_type, "analyst");
         assert_eq!(fact, Some(RunnerStatusFact::Failed));
         assert_eq!(
@@ -248,9 +235,6 @@ mod tests {
 
     #[test]
     fn a_subject_that_names_no_fact_this_service_knows_is_read_as_none() {
-        // Given: a subject with an unknown fact segment, and one that stops short
-        // When/Then: the first names no fact, the second names no runner type either — both are
-        // acknowledged and left uncounted as a status fact
         assert_eq!(
             status_subject("jobs.status.analyst.invented"),
             Some(("analyst", None)),

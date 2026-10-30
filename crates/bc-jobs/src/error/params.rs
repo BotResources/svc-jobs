@@ -24,13 +24,32 @@ impl JobsError {
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
             | Self::NotOwner
+            | Self::NotRequester
+            | Self::RunnerNotWorkingTheJob
+            | Self::ActingRunMissing
+            | Self::ActingRunNotLive
+            | Self::PassportRequired
+            | Self::PassportUserMismatch
+            | Self::PassportMalformed
+            | Self::PassportParentMismatch
+            | Self::InitialJobMismatch
+            | Self::ParentNotOfRun
+            | Self::ModeRequired
+            | Self::CallerAddressNotHeld
+            | Self::CallerAddressNotOfRun
+            | Self::PayloadNotUploaded
+            | Self::PayloadUploaderMismatch
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman
+            | Self::NotRunnerService
             | Self::JobStillActive
             | Self::RetryNotScheduled
             | Self::EmptyPlan => json!({}),
             Self::RunnerTypeHasNoLiveInstances | Self::RunnerTypeAlreadyActive => json!({}),
+            Self::PayloadTooLarge { size, maximum } => {
+                json!({ "size": size, "maximum": maximum })
+            }
             Self::JobIdConflict { job_id } => json!({ "jobId": job_id }),
             Self::SourceAlreadyActive { active_job_id } => json!({ "activeJobId": active_job_id }),
             Self::ParentJobUnknown { parent_job_id }
@@ -64,7 +83,9 @@ impl JobsError {
             Self::RunnerTypeMismatch { expected, claimed } => {
                 json!({ "expected": expected, "claimed": claimed })
             }
-            Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
+            Self::RunnerTypeUnavailable { runner_type } | Self::NoFreeCapacity { runner_type } => {
+                json!({ "runnerType": runner_type })
+            }
             Self::RunnerTypeRetired { runner_type }
             | Self::NotClaimMode { runner_type }
             | Self::NotPushMode { runner_type }
