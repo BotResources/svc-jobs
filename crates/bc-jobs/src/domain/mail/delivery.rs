@@ -120,6 +120,7 @@ fn decide_one(
             });
             Ok(delivery(false, false, refused))
         }
+        RestartStanding::RestartInFlight => Ok(delivery(false, false, None)),
         RestartStanding::Allowed => Ok(delivery(false, true, None)),
     }
 }
@@ -165,6 +166,7 @@ mod tests {
     const CLEAR: RestartObstacles = RestartObstacles {
         runner_type_retired: false,
         parent_job_terminal: false,
+        restart_job_live: false,
     };
 
     fn to(kind: RecipientKind, standing: AddressStanding) -> Recipient {
@@ -236,6 +238,7 @@ mod tests {
         let both = RestartObstacles {
             runner_type_retired: true,
             parent_job_terminal: true,
+            ..CLEAR
         };
         let recipient = to(
             RecipientKind::Direct,
@@ -248,12 +251,29 @@ mod tests {
     }
 
     #[test]
+    fn a_live_restart_job_accepts_the_mail_without_starting_another_restart() {
+        let tree = job_id();
+        let in_flight = RestartObstacles {
+            restart_job_live: true,
+            ..CLEAR
+        };
+        let recipient = to(
+            RecipientKind::Direct,
+            held(tree, AgentState::Finished, true, in_flight),
+        );
+        let Deliveries(plan) = decide_deliveries(tree, &[recipient]).unwrap();
+        assert!(!plan[0].rings_live_run);
+        assert!(!plan[0].starts_restart);
+        assert_eq!(plan[0].refused_restart, None);
+    }
+
+    #[test]
     fn a_retired_type_delivers_the_mail_unread_and_names_the_refused_restart_for_a_direct_recipient()
      {
         let tree = job_id();
         let retired = RestartObstacles {
             runner_type_retired: true,
-            parent_job_terminal: false,
+            ..CLEAR
         };
         let direct = to(
             RecipientKind::Direct,

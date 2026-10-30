@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::domain::directory::listing::DirectoryEntry;
+use crate::domain::directory::listing::{DirectoryEntry, RestartObstacles};
 use crate::domain::directory::registration::{
     AgentDeclaration, HeldAgent, Registration, RegistrationRefusal, RunStanding,
 };
@@ -11,8 +11,7 @@ use crate::ports::PortError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedEntry {
     pub entry: DirectoryEntry,
-    pub runner_type_retired: bool,
-    pub parent_job_terminal: bool,
+    pub obstacles: RestartObstacles,
 }
 
 pub struct RunCaller<'a> {

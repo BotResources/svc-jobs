@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use bc_jobs::domain::directory::AgentState;
-use bc_jobs::domain::directory::listing::{DirectoryEntry, RestartObstacles};
-use bc_jobs::domain::ids::{AgentId, AttachmentId, JobId, MailId, RunId};
-use bc_jobs::domain::keys::RunnerTypeKey;
+use bc_jobs::domain::ids::{AgentId, AttachmentId, JobId, MailId};
 use bc_jobs::domain::mail::author::{MailAuthor, SourceConversation};
 use bc_jobs::domain::mail::content::{AttachmentRef, MailContent};
 use bc_jobs::domain::mail::delivery::{AddressStanding, HeldAddress};
@@ -12,7 +9,7 @@ use bc_jobs::ports::PortError;
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
-use crate::db::directory::PARENT_TERMINAL;
+use crate::db::directory_entry::{ENTRY_TABLES, entry_columns, entry_of};
 use crate::db::hydrate::unavailable;
 
 pub async fn load_mail(
@@ -85,22 +82,16 @@ pub async fn standing_of(
     tx: &mut PgConnection,
     addresses: &[Uuid],
 ) -> Result<HashMap<Uuid, AddressStanding>, PortError> {
-    let held = sqlx::query(
-&        "SELECT d.agent_id, d.run_id::uuid AS run_id, d.initial_job_id::uuid AS initial_job_id, d.state, d.has_inbox, d.declares_restart, \
-            EXISTS (SELECT 1 FROM saved_state_agents s WHERE s.agent_id = d.agent_id) AS saved, \
-            rt.type_key, \
-            coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
-            {PARENT_TERMINAL} AS parent_terminal \
-         FROM directory_agents d \
-         JOIN runs r ON r.id = d.run_id \
-         JOIN jobs j ON j.id = r.job_id \
-         JOIN runner_types rt ON rt.id = j.runner_type_id \
-         LEFT JOIN registered_runner_types reg ON reg.runner_type_id = rt.id \
-         WHERE d.agent_id = ANY($1)".replace("{PARENT_TERMINAL}", PARENT_TERMINAL))
-    .bind(addresses)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(unavailable)?;
+    let sql = format!(
+        "SELECT {}, d.initial_job_id::uuid AS initial_job_id {} WHERE d.agent_id = ANY($1)",
+        entry_columns(),
+        ENTRY_TABLES
+    );
+    let held = sqlx::query(&sql)
+        .bind(addresses)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)?;
     let removed: Vec<Uuid> = sqlx::query_scalar(
         "SELECT agent_id FROM directory_removed_addresses WHERE agent_id = ANY($1)",
     )
@@ -113,24 +104,13 @@ pub async fn standing_of(
         .map(|address| (address, AddressStanding::Removed))
         .collect();
     for row in &held {
-        let address: Uuid = row.get("agent_id");
+        let (entry, obstacles) = entry_of(row)?;
         standings.insert(
-            address,
+            entry.agent_id.as_uuid(),
             AddressStanding::Held(HeldAddress {
-                entry: DirectoryEntry {
-                    agent_id: AgentId::new(address),
-                    run_id: RunId::new(row.get("run_id"))?,
-                    runner_type: RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
-                    state: AgentState::from_db_str(&row.get::<String, _>("state"))?,
-                    has_inbox: row.get("has_inbox"),
-                    declares_restart: row.get("declares_restart"),
-                    holds_saved_state: row.get("saved"),
-                },
+                entry,
                 initial_job_id: JobId::new(row.get("initial_job_id"))?,
-                obstacles: RestartObstacles {
-                    runner_type_retired: row.get("retired"),
-                    parent_job_terminal: row.get("parent_terminal"),
-                },
+                obstacles,
             }),
         );
     }

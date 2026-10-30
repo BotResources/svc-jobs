@@ -12,7 +12,13 @@ use crate::error::ServiceError;
 
 pub async fn process_wakes(jobs: &Jobs) -> Result<(), ServiceError> {
     for origin_run in jobs.store.due_wakes().await? {
-        restart_run(jobs, origin_run).await?;
+        if let Err(error) = restart_run(jobs, origin_run).await {
+            tracing::warn!(
+                run_id = %origin_run,
+                error = %error,
+                "a restart wake could not be served; it stays queued and the other wakes go on"
+            );
+        }
     }
     Ok(())
 }

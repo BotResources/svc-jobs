@@ -1,6 +1,7 @@
 pub mod caller_address;
 pub mod listing;
 pub mod registration;
+pub mod restart;
 
 pub use crate::domain::ids::AgentId;
 use crate::error::JobsError;

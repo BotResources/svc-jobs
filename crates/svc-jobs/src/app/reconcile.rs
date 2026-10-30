@@ -8,8 +8,9 @@ use crate::error::ServiceError;
 
 pub async fn presence_sessions(jobs: &Jobs) -> Result<(), ServiceError> {
     let expired = ReasonCode::new(PRESENCE_EXPIRED)?;
+    let sessions = FleetReader::open_presence_sessions(&jobs.store).await?;
     let announced = jobs.transport.announced_instances().await?;
-    for session in FleetReader::open_presence_sessions(&jobs.store).await? {
+    for session in sessions {
         if announced.contains(&announced_form(&session)) {
             continue;
         }

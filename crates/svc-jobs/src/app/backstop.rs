@@ -6,7 +6,7 @@ use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::DueWorkReader;
 
 use super::write::JobChange;
-use super::{Jobs, reconcile, restart, service_metadata};
+use super::{Jobs, reconcile, service_metadata};
 use crate::error::ServiceError;
 
 const REPAIR_LOOKBACK: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
@@ -47,8 +47,15 @@ pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
              the backstops that need PostgreSQL alone, and the next sweep reconciles again"
         );
     }
-    jobs.store.purge_expired_results(jobs.clock.now()).await?;
-    restart::process_wakes(jobs).await?;
+    let safety = safety_backstops(jobs).await;
+    if let Err(error) = jobs.store.purge_expired_results(jobs.clock.now()).await {
+        tracing::warn!(error = %error, "purging the expired Results failed; the next sweep tries again");
+    }
+    jobs.start_due_restarts().await;
+    safety
+}
+
+async fn safety_backstops(jobs: &Jobs) -> Result<(), ServiceError> {
     reclaim_outrun_runs(jobs).await?;
     reclaim_lost_claims(jobs).await?;
     reclaim_stranded_triggers(jobs).await?;

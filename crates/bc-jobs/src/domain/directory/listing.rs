@@ -17,6 +17,7 @@ pub struct DirectoryEntry {
 pub struct RestartObstacles {
     pub runner_type_retired: bool,
     pub parent_job_terminal: bool,
+    pub restart_job_live: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub enum RestartStanding {
     Running,
     NoSavedState,
     ParentJobTerminal,
+    RestartInFlight,
     TypeRetired,
     Allowed,
 }
@@ -57,6 +59,7 @@ impl DirectoryEntry {
             AgentState::Finished if obstacles.parent_job_terminal => {
                 RestartStanding::ParentJobTerminal
             }
+            AgentState::Finished if obstacles.restart_job_live => RestartStanding::RestartInFlight,
             AgentState::Finished if obstacles.runner_type_retired => RestartStanding::TypeRetired,
             AgentState::Finished => RestartStanding::Allowed,
         }
@@ -91,6 +94,7 @@ mod tests {
     const CLEAR: RestartObstacles = RestartObstacles {
         runner_type_retired: false,
         parent_job_terminal: false,
+        restart_job_live: false,
     };
 
     #[test]
@@ -120,8 +124,36 @@ mod tests {
             Some(false)
         );
         assert_eq!(
+            finished.restartable_now(RestartObstacles {
+                restart_job_live: true,
+                ..CLEAR
+            }),
+            Some(false)
+        );
+        assert_eq!(
             entry(AgentState::Running, true, true).restartable_now(CLEAR),
             None
+        );
+    }
+
+    #[test]
+    fn a_live_restart_job_stands_before_a_retired_type_and_after_an_ended_parent() {
+        let finished = entry(AgentState::Finished, true, true);
+        let live_and_retired = RestartObstacles {
+            runner_type_retired: true,
+            restart_job_live: true,
+            ..CLEAR
+        };
+        assert_eq!(
+            finished.restart_standing(live_and_retired),
+            RestartStanding::RestartInFlight
+        );
+        assert_eq!(
+            finished.restart_standing(RestartObstacles {
+                parent_job_terminal: true,
+                ..live_and_retired
+            }),
+            RestartStanding::ParentJobTerminal
         );
     }
 

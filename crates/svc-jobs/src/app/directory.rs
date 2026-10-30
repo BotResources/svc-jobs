@@ -1,4 +1,3 @@
-use bc_jobs::domain::directory::listing::RestartObstacles;
 use bc_jobs::domain::directory::registration::{
     AgentDeclaration, RegistrationRefusal, decide_registration, require_live,
 };
@@ -173,10 +172,7 @@ fn mark_read_reason(refusal: &MarkReadRefusal) -> wire::SurfaceReason {
 }
 
 fn listed(row: ListedEntry) -> wire::ListedAgent {
-    let obstacles = RestartObstacles {
-        runner_type_retired: row.runner_type_retired,
-        parent_job_terminal: row.parent_job_terminal,
-    };
+    let obstacles = row.obstacles;
     let entry = row.entry;
     wire::ListedAgent {
         agent_id: entry.agent_id.as_uuid(),

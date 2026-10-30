@@ -3,7 +3,7 @@ mod support;
 use chrono::Utc;
 use sqlx::PgPool;
 use support::contention::Fixture;
-use svc_jobs::db::directory::PARENT_TERMINAL;
+use svc_jobs::db::directory_entry::PARENT_TERMINAL;
 use uuid::Uuid;
 
 async fn insert_job(

@@ -8,7 +8,7 @@ use bc_jobs::ports::mail::{
 use uuid::Uuid;
 
 use super::{Jobs, Outcome, WorkIds, started};
-use crate::app::{restart, service_metadata};
+use crate::app::service_metadata;
 
 pub struct SendMailInput {
     pub work: WorkIds,
@@ -70,7 +70,7 @@ pub async fn send_mail(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
     if let Ok(sent) = &sent
         && sent.wakes_restart
     {
-        restart::process_wakes(jobs).await?;
+        jobs.start_due_restarts().await;
     }
     Ok(sent)
 }

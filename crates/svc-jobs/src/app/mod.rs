@@ -120,10 +120,16 @@ impl Jobs {
         for run in &ended {
             Box::pin(run_end::cancel_jobs_requested_by(self, run, metadata)).await?;
         }
-        if may_wake_a_restart && let Err(error) = Box::pin(restart::process_wakes(self)).await {
-            tracing::warn!(error = %error, "starting the due restarts failed; the sweep retries");
+        if may_wake_a_restart {
+            Box::pin(self.start_due_restarts()).await;
         }
         Ok(())
+    }
+
+    pub async fn start_due_restarts(&self) {
+        if let Err(error) = restart::process_wakes(self).await {
+            tracing::warn!(error = %error, "starting the due restarts failed; the sweep retries");
+        }
     }
 
     async fn after_commit(&self, job_id: JobId, events: &[JobEvent]) -> Result<(), ServiceError> {
