@@ -11,13 +11,57 @@ form to decide whether a version ships.
 
 ## 0.6.0 - 2026-10-30
 
-Requester, Passport and lineage on every job, the runner surface and the agent
-directory. This release is a work in progress of the 0.6 line: the restart of
-finished agents, the acts-for rule, the cascade to successors, the expiry of
-Results, the notices to Callers and the storage of kept payloads are not in it
-yet.
+Requester, Passport and lineage on every job, the runner surface, the agent
+directory, the restart of finished agents, the acts-for rule, the cascade to
+successors, the expiry of Results, the notices to Callers and the storage of
+kept payloads.
 
 ### Added
+
+- Restart: a direct mail to a finished agent that holds a saved state starts a
+  restart Job (producer `jobs`) that keeps the parent, the Requester, the
+  Passport, the config, the payload, the mode and the caller address of its
+  origin and stays in the Tree of the origin, an Initial Job included. A cc
+  notice never starts a restart. A failure notice to a finished background
+  Caller, and the end of a successful Run that leaves mail unread, start it too.
+  The start is durable (`restart_wakes`), taken once under the Tree lock, and
+  processed after the commit and by the backstop sweep. A retired runner type
+  leaves the mail unread and the reply names the refusal; a terminal parent
+  refuses the mail. A failed restart Run puts the agents back to `FINISHED` in
+  the Run they came from. Migration `0008`: `directory_agents.restarted_from_run_id`,
+  `restart_wakes` and the index of the restart links.
+- The acts-for rule: a restart Run acts for the Runs it restarts, transitively,
+  for finish, fail and cancel of their Jobs, for the Results and for the unread
+  items addressed to them. A retry of the same Job does not.
+- A restart Run reads the saved state of the nearest Run of its chain; a
+  successful restart Run that saves its own state replaces the earlier states.
+- The cancel of a Job reaches its descendants, its restart Jobs, its
+  manual-retry successors and, for a restart Job, the Jobs created by the Runs
+  it acts for; a cancel of a terminal Job reaches the same non-terminal Jobs and
+  removes the same Runs from the directory.
+- A Result is kept for 7 days from its keeping, or from a read that asked to keep
+  it; the sweep erases the expired ones.
+- Notices to the Caller of a runner call: accepted, queue position (each time the
+  Job starts to wait), started, run completed (with the answer when it fits
+  `JOBS_PAYLOAD_INLINE_MAX_BYTES`, and a reference to the Result) and job failed
+  (with the report and a message). A sync call tells only the end and the
+  failure, to the Run of the Caller. They ring the doorbell of the live Run and of
+  the live restart Runs that act for it.
+- A creation that names a kept payload is refused with `payload_not_uploaded` or
+  `payload_uploader_mismatch`; a restart or a retry fetches the payload of its
+  origin.
+- The chart carries `savedState.maxBytes` (`JOBS_SAVED_STATE_MAX_BYTES`).
+
+### Changed
+
+- Only an active service account that holds `jobs:runner` reaches the runner
+  surface; a human, a super user included, reaches nothing of it.
+- `/graphql` no longer carries the implicit 2 MB body limit of the HTTP layer: a
+  large saved state, mail or payload is refused by its own limit.
+- The scope declaration labels are `jobs.service.label`,
+  `jobs.service.description`, `jobs.scope.runner.label` and
+  `jobs.scope.runner.description`.
+- `RUNNER_SURFACE` is built from `contract_jobs::graphql_roots`.
 
 - `job.create.v3`, `job.finish.v3`, `job.fail.v3`, `job.cancel.v3` consumers
   (durables `svc_jobs_job_{create,cancel,finish,fail}_v3`).

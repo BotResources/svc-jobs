@@ -96,6 +96,16 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   an attempt: the job waits to be claimed and the claimed run carries the same
   attempt number — and a job idle beyond the inactivity timeout fails with
   `INACTIVITY_TIMEOUT`.
+- **Restart and notices.** A direct mail to a finished agent that holds a saved
+  state starts a restart Job: the same parent, Requester and Passport as its
+  origin, the same agent ids, the saved state of the nearest Run of its chain.
+  A cc notice never starts one; a retired runner type leaves the mail unread
+  and the reply names the refused restart; a terminal parent refuses the mail.
+  The restart Run acts for the Runs it restarts, transitively, for the Results,
+  the unread items and the finish, fail and cancel of their Jobs. A cancel
+  reaches restart Jobs and manual-retry successors. The Caller of a runner call
+  is told by notice (accepted, queue position, started, run completed, job
+  failed). A Result is kept 7 days.
 
 ## NATS surface
 
@@ -294,7 +304,7 @@ admins of the platform org, which the Passport carries as the same privilege as
 platform administration. No org-scoped or per-project access exists in this
 version.
 
-A holder of the scope `jobs:runner` reaches the runner gestures alone
+An active service account that holds the scope `jobs:runner` reaches the runner gestures alone (a human, a super user included, reaches none of them)
 (`jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
 `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
 `jobsMail`, `jobsSaveState`, `jobsSavedState`), each for the Run the call
@@ -397,7 +407,7 @@ failing job by job.
 | `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost`; a pushed trigger left unstarted this long after its type switched to `CLAIM` is cancelled with `trigger_stranded` (both swept with the backstops). Must exceed `JOBS_CLAIM_MAX_WAIT_SECONDS`, or the service refuses to boot. |
 | `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered `busy` immediately. |
 | `JOBS_PAYLOAD_INLINE_MAX_BYTES` | `524288` | The largest inline payload a creation may carry (message, attachment names, types and contents together); above it the creation is rejected with `payload_too_large`. A larger payload is kept by Jobs or sent by reference. |
-| `JOBS_SAVED_STATE_MAX_BYTES` | `1048576` (1 MiB) | The largest saved state a Run may store for one agent. |
+| `JOBS_SAVED_STATE_MAX_BYTES` | `1048576` (1 MiB) | The largest saved state a Run may store for one agent; above it the save is refused with `state_too_large`. The chart value is `savedState.maxBytes`. `/graphql` has no body limit of its own, so this limit and the others of the gestures are what bound a request. |
 | `SCOPE_DECLARATION_ENABLED` | `true` | Declares the scope `jobs:runner` at boot and gates readiness on its acceptance. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |
