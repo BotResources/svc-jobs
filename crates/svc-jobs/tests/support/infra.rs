@@ -36,6 +36,24 @@ pub async fn evict_presence_entry_unnoticed(
     );
 }
 
+pub async fn status_frames_unacknowledged(nats: &TestNats) -> i64 {
+    let info = jetstream_api(
+        nats,
+        &format!(
+            "$JS.API.CONSUMER.INFO.{}.svc_jobs_status",
+            wire::STATUS_STREAM
+        ),
+        json!({}),
+    )
+    .await;
+    assert!(
+        info["error"].is_null(),
+        "the status consumer is readable: {info}"
+    );
+    info["num_ack_pending"].as_i64().unwrap_or_default()
+        + info["num_pending"].as_i64().unwrap_or_default()
+}
+
 async fn declare_expiring_presence_bucket(nats: &TestNats) {
     let stream = format!("KV_{}", wire::PRESENCE_BUCKET);
     jetstream_api(nats, &format!("$JS.API.STREAM.DELETE.{stream}"), json!({})).await;
