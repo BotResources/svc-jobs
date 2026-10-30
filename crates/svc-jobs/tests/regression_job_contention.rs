@@ -59,7 +59,7 @@ async fn two_instances_replaying_the_same_run_start_write_one_fact_and_publish_i
         "exactly one duplicate must be refused, got {outcomes:?}",
     );
     assert!(
-        matches!(refused[0], ServiceError::Contended(_)),
+        refused[0].is_write_race(),
         "the loser learns the state moved, not an infrastructure failure: {:?}",
         refused[0],
     );
@@ -128,7 +128,7 @@ async fn a_job_event_is_refused_when_the_run_lifecycle_moved_under_the_decision(
     )
     .await;
     assert!(
-        matches!(outcome, Err(ServiceError::Contended(_))),
+        outcome.as_ref().is_err_and(ServiceError::is_write_race),
         "a decision read on a run without a start may not land after that run started: {outcome:?}",
     );
     assert_eq!(

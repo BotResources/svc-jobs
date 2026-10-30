@@ -314,18 +314,26 @@ see the inline payload as the Job carries it. The service declares the scope
 `jobs:runner` to the identity service at boot and stays not ready until the
 declaration is accepted.
 
-A runner gesture that touches the directory or the inbox of a Tree waits at most
-5 s for the lock of that Tree. A wait that ends is not a typed refusal. On
-GraphQL the gesture answers a top-level error with `data: null` and
+A runner gesture takes the lock of a Tree when it registers agents
+(`register_agents`), saves a state (`jobsSaveState`), sends mail
+(`jobsSendMail`) or uploads an attachment (`jobsUploadAttachment`); so does a
+status fact that starts or ends a Run, and every cancel (it removes the
+directory). Such a lock wait lasts at most 5 s. `list_agents` and `mark_read`
+take no lock themselves; they can time out only through the catch-up of an
+acknowledged start that they run first. A wait that ends is not a typed refusal.
+On GraphQL the gesture answers a top-level error with `data: null` and
 `extensions {code: "CONFLICT", reason: "concurrent_modification"}`, where every
 typed refusal answers `{success, reason, message}`; the runner repeats the
 gesture. On the NATS request surface (`jobs.runner.register_agents.{runner_type}`,
 `jobs.runner.list_agents.{runner_type}`, `jobs.runner.mark_read.{runner_type}`)
 the request gets no reply, so the runner's own request times out and it repeats
 it. A runner status fact (`jobs.status.{runner_type}.*`) that cannot take the
-lock is redelivered until it can. Within one gesture or one delivery the service
-does not attempt a timed-out wait again, logs it at warn and counts it in
-`jobs_tree_lock_timeouts_total`.
+lock is redelivered until it can. One lock acquisition is not retried after its
+timeout; it is logged at warn and counted in `jobs_tree_lock_timeouts_total`. A
+cascade (the cancel of the call children of an ended Run, a backstop sweep)
+takes one lock per Tree it touches and may wait 5 s for each. The status
+consumer `ack_wait` is 30 s by default, so a long cascade can be redelivered;
+the redelivery is idempotent.
 
 A Job detail carries its Initial Job, Passport, Requester, call mode and
 payload as the Job holds them: the inline content, the form of a payload kept

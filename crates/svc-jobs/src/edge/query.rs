@@ -98,7 +98,7 @@ impl QueryRoot {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // one GraphQL argument per log filter
     async fn jobs_logs(
         &self,
         ctx: &Context<'_>,

@@ -237,7 +237,7 @@ async fn settle_one(
             tracing::info!(
                 job_id = %job.id().as_uuid(),
                 backstop,
-                "a backstop lost a write race on this job; the next sweep looks again"
+                "a backstop was contended on this job; the next sweep looks again"
             );
             Ok(())
         }

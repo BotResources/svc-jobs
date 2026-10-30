@@ -39,17 +39,20 @@ to `## Unreleased`).
   about 5 s (every typed refusal answers `{success, reason, message}`); a NATS
   surface request (`register_agents`, `list_agents`, `mark_read`) gets no
   reply, so the runner's own request times out; a runner status fact is
-  redelivered until the Tree is free. Within one gesture or one delivery a
-  timeout is not attempted again, so a gesture waits 5 s once, not once per
-  attempt. Each timeout
-  is logged at warn and counted in `jobs_tree_lock_timeouts_total`. An event
+  redelivered until the Tree is free. One lock acquisition waits at most 5 s
+  and is not retried. A cascade (the cancel of the call children of an ended
+  Run, a backstop sweep) may wait 5 s for each Tree it touches, and the status
+  consumer `ack_wait` is 30 s by default, so a long cascade can be redelivered
+  (idempotent). Each timeout is logged at warn and counted in
+  `jobs_tree_lock_timeouts_total`. An event
   that ends a Run or writes a call notice on a Job whose Tree is unknown is
   refused (`job_not_found`) instead of going unlocked.
 - A Run whose start fact was acknowledged but not yet applied is no longer
   answered `run_not_started` when the start waits for a held Tree: the gesture
   answers the conflict above, or goes on once the start is applied.
 - `jobsTreeAgents` answers `job_not_found` for an unknown Job from the
-  application, as every other gesture does, instead of from the resolver.
+  application instead of from the resolver
+  (`jobsJob` still decides `job_not_found` in its resolver).
 
 ### Added
 

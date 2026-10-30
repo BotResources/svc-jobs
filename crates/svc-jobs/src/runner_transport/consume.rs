@@ -194,7 +194,7 @@ fn settle(subject: &str, frame: Frame, outcome: Result<(), ServiceError>) -> Ack
             AckKind::Nak(None)
         }
         Err(ServiceError::Contended(_)) => {
-            tracing::debug!(subject = %subject, "a runner fact lost a write race, redelivered");
+            tracing::debug!(subject = %subject, "a runner fact was contended, redelivered");
             AckKind::Nak(None)
         }
         Err(permanent) => {

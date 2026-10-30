@@ -291,7 +291,7 @@ fn settle(outcome: Result<(), ServiceError>) -> MessageOutcome {
             MessageOutcome::Nak(None)
         }
         Err(ServiceError::Contended(_)) => {
-            tracing::debug!("an integration command lost a write race, redelivered");
+            tracing::debug!("an integration command was contended, redelivered");
             MessageOutcome::Nak(None)
         }
         Err(refused) => {

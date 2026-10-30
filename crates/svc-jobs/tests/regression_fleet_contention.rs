@@ -92,7 +92,7 @@ async fn two_instances_replaying_the_same_presence_change_write_one_fleet_fact()
         "a broadcast presence change must be recorded by one instance only, got {outcomes:?}",
     );
     assert!(
-        matches!(refused[0], ServiceError::Contended(_)),
+        refused[0].is_write_race(),
         "the loser learns the fleet moved under it: {:?}",
         refused[0],
     );
@@ -168,7 +168,7 @@ async fn only_one_instance_records_a_presence_loss_so_orphaned_runs_are_reclaime
         "a disconnection carries no unique key of its own, so only the guard can settle the \
          race: {outcomes:?}",
     );
-    assert!(matches!(refused[0], ServiceError::Contended(_)));
+    assert!(refused[0].is_write_race());
     assert_eq!(
         fixture
             .count(
