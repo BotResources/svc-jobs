@@ -174,6 +174,30 @@ kept payloads.
 - The runner calls reach the store through the `bc-jobs` ports; the GraphQL
   resolvers of the runner surface no longer import the Postgres adapter, and the
   mail result types are split from the content result types.
+- The restart of a finished agent is decided once: the listing, the delivery of
+  a mail and the wake read the same facts (including "a restart Job of this
+  agent is live") through `decide_restart_wake`. While a restart Job is live the
+  agent is not offered as restartable, a new mail is accepted and waits unread,
+  and no second restart is started. A wake for a retired runner type or a
+  terminal parent is no longer queued.
+- A restart wake that cannot be served no longer stops the backstop sweep: the
+  safety backstops (run duration, lost claims, stranded triggers, inactivity)
+  run first, the purge of expired Results and the restart wakes follow
+  independently, each failed wake stays queued and the next one is tried, and a
+  mail that is stored never fails because its restart could not start.
+- The saved state and the kept payload of a restart chain are found however
+  many restarts the chain holds; the 64-link ceiling is gone.
+- The presence reconciliation reads the open sessions before the presence keys,
+  so a session opened in between is not reported lost.
+- The answer of a synchronous call rides in the notice by the same measure as an
+  inline payload (`InlineAnswer`).
+- The runner scope is decided by `PrincipalFacts::guard_holds_runner_scope`; the
+  GraphQL edge only reads whether the scope is held.
+- The fake runners of the end-to-end suites keep refreshing their presence after
+  a failed refresh, and the contended scenarios run on a multi-thread runtime.
+- Migration `0009_result_expiry`: `job_results.expires_at` (backfilled from the
+  last read or the keeping, plus seven days) and its index; the purge is a
+  range delete on it.
 
 ### Removed
 

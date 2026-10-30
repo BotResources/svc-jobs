@@ -171,3 +171,29 @@ pub async fn register_same(fixture: &JobsFixture, pair: &Pair<'_>, run: Uuid, ag
     .await;
     assert_eq!(registered["accepted"], true, "{registered}");
 }
+
+pub async fn retry_manually(fixture: &JobsFixture, failed_job: Uuid) -> Uuid {
+    super::gql::wait_for_status(&fixture.gql(), fixture.admin(), failed_job, "FAILED", LONG).await;
+    let resolution = Uuid::parse_str(
+        super::gql::job_view(&fixture.gql(), fixture.admin(), failed_job).await["job"]["resolution"]
+            ["id"]
+            .as_str()
+            .expect("a failed job names its resolution"),
+    )
+    .expect("the resolution id is a uuid");
+    let successor = Uuid::now_v7();
+    let retried = super::gql::manual_retry_job(
+        &fixture.gql(),
+        fixture.admin(),
+        Uuid::now_v7(),
+        failed_job,
+        successor,
+        resolution,
+    )
+    .await;
+    assert!(
+        retried.get("errors").is_none_or(|errors| errors.is_null()),
+        "{retried}"
+    );
+    successor
+}

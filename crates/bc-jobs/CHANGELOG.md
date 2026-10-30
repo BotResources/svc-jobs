@@ -73,6 +73,16 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `AttachmentMeta`, `UnreadItem`, `UnreadMail`, `SavedStateView`, `StoredResult`
   and the request types `WorkNamed`, `SendMail`, `Sent`, `Minting`,
   `UploadAttachment`, `Uploader`; `RefusedRestart::code` and `message`.
+- `RestartObstacles::restart_job_live`, `RestartStanding::RestartInFlight` and
+  `domain::directory::restart::decide_restart_wake` (`RestartWake`): the one
+  decision shared by the listing, the delivery and the wake.
+- `ports::restart::RestartWakes`.
+- `domain::mail::attachment` holds the attachment admission decisions; the
+  fixtures are split in `fixtures/`.
+- `InlineAnswer::decide` and `JobPayload::inline_content_size`;
+  `guard_result_alive` takes the stored expiry.
+- `PrincipalFacts::guard_holds_runner_scope` and `JobsError::NotRunnerService`.
+- `domain::runner::saved_state::SavedState` owns the size guard of a saved state.
 
 ## 0.7.0 - 2026-10-29
 
