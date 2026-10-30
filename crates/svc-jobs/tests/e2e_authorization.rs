@@ -25,19 +25,8 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     let member = fixture.member();
     let runner_type = wire::unique_runner_type("authz");
     let producer = Producer::new(fixture.fabric(), "projects");
-    let mut instance =
-        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(4);
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     instance.connect().await;
-
-    let source_entity = Uuid::now_v7();
-    let running = JobDeclaration::new(&runner_type).with_source("projects", source_entity);
-    let running_id = running.job_id;
-    producer.declare(&running).await;
-    events.expect_one(wire::FACT_QUEUED, running_id, LONG).await;
-    let trigger = instance.next_trigger(LONG).await;
-    let running_run = runner::run_id(&trigger);
-    instance.start_run(&trigger).await;
-    gql::wait_for_status(&client, admin, running_id, "IN_PROGRESS", LONG).await;
 
     let failed = JobDeclaration::new(&runner_type).with_max_attempts(1);
     let failed_id = failed.job_id;
@@ -48,6 +37,16 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         .fail_run(&failed_trigger, "PERMANENT", "provider_refused", None)
         .await;
     gql::wait_for_status(&client, admin, failed_id, "FAILED", LONG).await;
+
+    let source_entity = Uuid::now_v7();
+    let running = JobDeclaration::new(&runner_type).with_source("projects", source_entity);
+    let running_id = running.job_id;
+    producer.declare(&running).await;
+    events.expect_one(wire::FACT_QUEUED, running_id, LONG).await;
+    let trigger = instance.next_trigger(LONG).await;
+    let running_run = runner::run_id(&trigger);
+    support::surface::start(&fixture, &instance, &trigger).await;
+    gql::wait_for_status(&client, admin, running_id, "IN_PROGRESS", LONG).await;
 
     let mut watch =
         SseSubscription::open(fixture.url(), admin, &subs::job_changed(running_id)).await;
