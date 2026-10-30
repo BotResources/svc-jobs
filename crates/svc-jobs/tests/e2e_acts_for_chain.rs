@@ -21,7 +21,8 @@ async fn read_all(fixture: &JobsFixture, runner: &FakeRunner<'_>, work: &Work, a
     .filter_map(|item| item["itemId"].as_str().and_then(|raw| raw.parse().ok()))
     .collect();
     if !items.is_empty() {
-        gesture::mark_read(fixture.nats(), runner, work.run_id, &items).await;
+        let marked = gesture::mark_read(fixture.nats(), runner, work.run_id, &items).await;
+        assert_eq!(marked["accepted"], true, "{marked}");
     }
 }
 

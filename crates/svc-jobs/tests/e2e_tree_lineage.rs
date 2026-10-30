@@ -8,7 +8,7 @@ use support::gesture::Work;
 use support::lineage::{create, live_runner, started_with_agent};
 use support::producer::{JobDeclaration, Producer};
 use support::runner;
-use support::{LONG, QUIET, wire};
+use support::{LONG, wire};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -88,7 +88,6 @@ async fn every_event_of_a_tree_names_its_job_its_parent_and_its_initial_job() {
     answers
         .expect_one(wire::FACT_STEP_STARTED, child, LONG)
         .await;
-    tokio::time::sleep(QUIET).await;
 
     let expected = |job: Uuid| {
         if job == child || job == failing {

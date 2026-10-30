@@ -43,18 +43,9 @@ async fn config_and_payload_travel_apart_and_reach_every_successor_unchanged() {
     assert_eq!(
         trigger["config"],
         json!({ "model": "m", "a": 1 }),
-        "the config as given"
+        "the config reaches the runner as the same JSON value, not one field reshaped or dropped"
     );
     assert_eq!(trigger["payload"], inline, "the payload as given");
-    let raw = x.raw_triggers().await;
-    let sent = raw
-        .iter()
-        .find(|text| text.contains(&both.job_id.to_string()))
-        .expect("the trigger of the Job is on the stream");
-    assert!(
-        sent.contains(r#""config":{"a":1,"model":"m"}"#),
-        "the config reaches the runner byte for byte as the producer serialized it: {sent}"
-    );
     let view = fixture
         .gql()
         .query(

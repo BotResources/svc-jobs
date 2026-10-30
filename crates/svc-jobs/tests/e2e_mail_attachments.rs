@@ -78,9 +78,13 @@ async fn a_cc_recipient_gets_a_notice_reads_the_mail_when_its_agent_next_starts_
         json!({ "work": scene.parent_work.wire() }),
     )
     .await;
+    let refusal = with_content["errors"][0]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the query is refused with an error: {with_content}"));
     assert!(
-        with_content["errors"].is_array(),
-        "the content of an attachment is in no mail and no notice: {with_content}"
+        refusal.contains("Unknown field \"content\"") && refusal.contains("JobsMailAttachment"),
+        "the content of an attachment is in no mail and no notice, so the schema has no such field \
+         on the mail attachment: {with_content}"
     );
     let fetched = fetch(&fixture, &scene.parent_work, mail.mail_id, first).await;
     let outcome = gesture::field(&fetched, "jobsAttachment");

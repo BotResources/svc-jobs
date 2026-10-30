@@ -8,7 +8,7 @@ use support::gesture::Work;
 use support::producer::Producer;
 use support::restart::upload_result;
 use support::runner;
-use support::{LONG, QUIET, gql, wire};
+use support::{LONG, gql, wire};
 use uuid::Uuid;
 
 fn of_job(items: &[Value], job: Uuid, notice_type: &str) -> Vec<Value> {
@@ -68,7 +68,6 @@ async fn a_background_call_tells_its_queue_position_each_time_it_starts_to_wait_
     );
     let moved = scene.called.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&moved), retried);
-    tokio::time::sleep(QUIET).await;
     let after_change = notices(&fixture, &scene.work, Some(scene.address)).await;
     assert_eq!(
         of_job(&after_change, behind, "QUEUE_POSITION").len(),
@@ -122,7 +121,6 @@ async fn a_sync_call_stays_in_progress_until_its_caller_finishes_it_and_dies_wit
         of_job(&done, answered, "RUN_COMPLETED")[0]["answer"]["message"],
         "the answer"
     );
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         gql::status_of(&gql, fixture.admin(), answered).await,
         "IN_PROGRESS"

@@ -38,6 +38,18 @@ pub async fn evict_presence_entry_unnoticed(
 }
 
 pub async fn status_frames_unacknowledged(nats: &TestNats) -> i64 {
+    let info = status_consumer_info(nats).await;
+    info["num_ack_pending"].as_i64().unwrap_or_default()
+        + info["num_pending"].as_i64().unwrap_or_default()
+}
+
+pub async fn status_frames_redelivered(nats: &TestNats) -> i64 {
+    status_consumer_info(nats).await["num_redelivered"]
+        .as_i64()
+        .unwrap_or_default()
+}
+
+async fn status_consumer_info(nats: &TestNats) -> Value {
     let info = jetstream_api(
         nats,
         &format!(
@@ -51,8 +63,7 @@ pub async fn status_frames_unacknowledged(nats: &TestNats) -> i64 {
         info["error"].is_null(),
         "the status consumer is readable: {info}"
     );
-    info["num_ack_pending"].as_i64().unwrap_or_default()
-        + info["num_pending"].as_i64().unwrap_or_default()
+    info
 }
 
 async fn declare_expiring_presence_bucket(nats: &TestNats, presence_ttl: Duration) {

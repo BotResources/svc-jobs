@@ -14,9 +14,9 @@ use br_test_harness::wait_until;
 use tokio::process::{Child, Command};
 use uuid::Uuid;
 
-use super::fixture::free_port;
-
 const LOOPBACK: &str = "127.0.0.1";
+const LISTENING: &str = "Listening for client connections on ";
+const ANY_FREE_PORT: &str = "-1";
 
 pub struct RestartableNats {
     child: Option<Child>,
@@ -28,8 +28,7 @@ impl RestartableNats {
     pub async fn start() -> Self {
         let store = std::env::temp_dir().join(format!("svc-jobs-outage-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&store).expect("create the broker's JetStream store dir");
-        let port = free_port();
-        let child = spawn(port, &store).await;
+        let (child, port) = spawn(ANY_FREE_PORT, &store).await;
         Self {
             child: Some(child),
             port,
@@ -54,35 +53,57 @@ impl RestartableNats {
     /// durables it held when it stopped.
     pub async fn resume(&mut self) {
         assert!(self.child.is_none(), "the broker is already running");
-        self.child = Some(spawn(self.port, &self.store).await);
+        let (child, port) = spawn(&self.port.to_string(), &self.store).await;
+        assert_eq!(port, self.port, "the broker resumes on its own endpoint");
+        self.child = Some(child);
     }
 
     pub async fn shutdown(mut self) {
         self.stop().await;
+        let _ = std::fs::remove_file(log_of(&self.store));
         let _ = std::fs::remove_dir_all(&self.store);
     }
 }
 
-async fn spawn(port: u16, store: &Path) -> Child {
-    let child = Command::new("nats-server")
+fn log_of(store: &Path) -> PathBuf {
+    store.with_extension("log")
+}
+
+fn announced_port(log: &Path) -> Option<u16> {
+    let text = std::fs::read_to_string(log).ok()?;
+    let line = text.lines().find(|line| line.contains(LISTENING))?;
+    line.rsplit(':').next()?.trim().parse().ok()
+}
+
+async fn spawn(port: &str, store: &Path) -> (Child, u16) {
+    let log = log_of(store);
+    let _ = std::fs::remove_file(&log);
+    let mut child = Command::new("nats-server")
         .arg("-js")
         .arg("-a")
         .arg(LOOPBACK)
         .arg("-p")
-        .arg(port.to_string())
+        .arg(port)
         .arg("-sd")
         .arg(store)
+        .arg("-l")
+        .arg(&log)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .spawn()
         .expect("spawn nats-server (brew install nats-server, or scripts/provision-e2e-infra.sh)");
-    let address = format!("{LOOPBACK}:{port}");
     let listening = wait_until(Duration::from_secs(10), || {
-        let address = address.clone();
-        async move { tokio::net::TcpStream::connect(&address).await.is_ok() }
+        let exited = child.try_wait().ok().flatten().is_some();
+        let announced = announced_port(&log);
+        async move { exited || announced.is_some() }
     })
     .await;
-    assert!(listening, "nats-server never listened on {address}");
-    child
+    let announced = announced_port(&log);
+    assert!(
+        listening && announced.is_some(),
+        "nats-server never announced a listening port (asked for {port}): {}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    (child, announced.expect("the port was announced"))
 }

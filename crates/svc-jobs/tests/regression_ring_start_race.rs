@@ -7,24 +7,44 @@ use support::LONG;
 use support::db::Durable;
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail, Work};
+use support::infra;
+use support::lineage::live_runner;
+use support::producer::{JobDeclaration, Producer};
 use support::restart::running_child;
 use support::runner;
 use uuid::Uuid;
 
 const STARTS_OF_RUN: &str = "SELECT count(*) FROM run_starts WHERE run_id = $1";
 const WAITING_ITEM_INSERTS: &str = "SELECT count(*) FROM pg_stat_activity \
-     WHERE wait_event_type = 'Lock' AND query LIKE 'INSERT INTO inbox_items%'";
-const START_GRACE: Duration = Duration::from_secs(3);
+     WHERE datname = current_database() AND wait_event_type = 'Lock' \
+       AND query LIKE 'INSERT INTO inbox_items%'";
 
-async fn started_within(durable: &Durable, run: Uuid, grace: Duration) -> bool {
+enum StartOutcome {
+    Landed,
+    TimedOutOnTheTreeLock,
+}
+
+async fn settled_start(
+    fixture: &JobsFixture,
+    durable: &Durable,
+    run: Uuid,
+    redelivered_before: i64,
+) -> StartOutcome {
     let waited = tokio::time::Instant::now();
-    while waited.elapsed() < grace {
+    loop {
         if durable.count(STARTS_OF_RUN, run).await == 1 {
-            return true;
+            return StartOutcome::Landed;
         }
+        if infra::status_frames_redelivered(fixture.nats()).await > redelivered_before {
+            return StartOutcome::TimedOutOnTheTreeLock;
+        }
+        assert!(
+            waited.elapsed() < LONG,
+            "the start frame neither landed nor was refused for redelivery while a mail held the \
+             Tree: the interleaving this scenario needs never happened and it would prove nothing"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    false
 }
 
 async fn await_blocked_mail(durable: &Durable) {
@@ -43,6 +63,23 @@ async fn await_blocked_mail(durable: &Durable) {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+async fn await_unrelated_start_applied(fixture: &JobsFixture, durable: &Durable) {
+    let mut other = live_runner(fixture, "other-tree").await;
+    Producer::new(fixture.fabric(), "projects")
+        .declare_v2(&JobDeclaration::new(&other.runner_type))
+        .await;
+    let trigger = other.next_trigger(LONG).await;
+    other.start_run(&trigger).await;
+    durable
+        .await_count(
+            STARTS_OF_RUN,
+            runner::run_id(&trigger),
+            1,
+            "a start of another Tree is applied while the first start waits for its Tree",
+        )
+        .await;
 }
 
 fn mail_ids(items: &[serde_json::Value]) -> Vec<String> {
@@ -90,9 +127,11 @@ async fn a_mail_racing_the_start_of_a_restart_run_is_rung_or_listed_by_its_first
     });
     await_blocked_mail(&durable).await;
 
+    let redelivered_before = infra::status_frames_redelivered(fixture.nats()).await;
     scene.pair.child.start_run(&trigger).await;
-    let early_read = if started_within(&durable, restart_run, START_GRACE).await {
-        Some(gesture::items(
+    let early_read = match settled_start(&fixture, &durable, restart_run, redelivered_before).await
+    {
+        StartOutcome::Landed => Some(gesture::items(
             &gesture::unread(
                 &fixture.gql(),
                 &runner_access(),
@@ -100,9 +139,16 @@ async fn a_mail_racing_the_start_of_a_restart_run_is_rung_or_listed_by_its_first
                 Some(racing_to),
             )
             .await,
-        ))
-    } else {
-        None
+        )),
+        StartOutcome::TimedOutOnTheTreeLock => {
+            assert_eq!(
+                durable.count(STARTS_OF_RUN, restart_run).await,
+                0,
+                "a start refused on the Tree lock has not been applied"
+            );
+            await_unrelated_start_applied(&fixture, &durable).await;
+            None
+        }
     };
 
     held.rollback().await.expect("the holder lets the mail go");

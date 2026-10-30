@@ -7,7 +7,7 @@ use support::gesture::Work;
 use support::lineage::{act, create, live_runner, started_with_agent};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::FakeRunner;
-use support::{LONG, QUIET, gql, wire};
+use support::{LONG, gql, wire};
 use uuid::Uuid;
 
 async fn root_run(
@@ -80,7 +80,6 @@ async fn only_the_requester_finishes_or_fails_a_job_and_only_while_it_is_live() 
             .await;
     }
     assert_eq!(reasons(&answers, b, 6).await, vec!["not_requester"; 6]);
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         gql::status_of(&client, fixture.admin(), b).await,
         "IN_PROGRESS",

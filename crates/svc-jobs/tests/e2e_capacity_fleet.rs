@@ -10,7 +10,7 @@ use support::fixture::{JobsFixture, Knobs};
 use support::infra;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
-use support::{LONG, QUIET, dispatch, gql, wire};
+use support::{LONG, QUIET, dispatch, gql, metrics, wire};
 
 const CLAIM_WAIT: Duration = Duration::from_secs(6);
 const TOTAL_CAPACITY: &str = "query($runnerType: String) { jobsFleet(runnerType: $runnerType) { runnerType { totalCapacity } } }";
@@ -70,7 +70,7 @@ async fn a_capacity_lowered_by_a_heartbeat_holds_the_claim_until_a_live_run_ends
     instance.start_run(&first).await;
 
     let (unserved, ()) = tokio::join!(claim::claim(fixture.nats(), &instance, CLAIM_WAIT), async {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        metrics::await_claims_held(&client, &runner_type, 1.0).await;
         instance.announce_capacity(1).await;
         await_total_capacity(&client, admin, &runner_type, 1).await;
         producer
@@ -89,7 +89,7 @@ async fn a_capacity_lowered_by_a_heartbeat_holds_the_claim_until_a_live_run_ends
     );
 
     let (served, ()) = tokio::join!(claim::claim(fixture.nats(), &instance, CLAIM_WAIT), async {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        metrics::await_claims_held(&client, &runner_type, 1.0).await;
         instance.complete_run(&first).await;
     });
     let second =

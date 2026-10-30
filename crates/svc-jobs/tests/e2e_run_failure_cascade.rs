@@ -131,12 +131,13 @@ async fn a_failed_run_cancels_what_it_created_and_what_answers_to_it_but_not_wha
     )
     .await;
     y.next_trigger(LONG).await;
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         gql::status_of(&client, admin, own).await,
         "IN_PROGRESS",
         "a retry of A creates its own children"
     );
+    act(&fixture, wire::VERB_CANCEL, own, &Work::of(&x, &retry)).await;
+    answers.expect_one(wire::FACT_CANCELLED, own, LONG).await;
     for cancelled in [executing, waiting] {
         assert_eq!(
             answers.count_of(wire::FACT_CANCELLED, cancelled),

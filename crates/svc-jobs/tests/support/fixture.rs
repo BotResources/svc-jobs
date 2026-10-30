@@ -1,10 +1,10 @@
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use br_core_auth::Passport;
 use br_test_harness::{
-    E2eDatabase, FabricTestNats, GraphqlClient, PassportBuilder, SpawnedProcess, TestNats,
+    BootOutcome, E2eDatabase, FabricTestNats, GraphqlClient, PassportBuilder, SpawnedProcess,
+    TestNats,
 };
 use uuid::Uuid;
 
@@ -303,21 +303,32 @@ pub fn machine_caller() -> Passport {
         .build_service()
 }
 
+const BIND_ATTEMPTS: u32 = 3;
+
 pub async fn spawn_instance(
     db: &E2eDatabase,
     nats_url: &str,
     knobs: &Knobs,
 ) -> (SpawnedProcess, String) {
-    let (mut service, base_url) = spawn_process(db, nats_url, knobs);
-    let outcome = service
-        .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
-        .await;
-    assert!(
-        outcome.is_ready(),
-        "svc-jobs never reported ready within {BOOT_TIMEOUT:?} ({outcome:?})\nlogs:\n{}",
-        service.logs(),
-    );
-    (service, base_url)
+    let mut attempt = 1;
+    loop {
+        let (mut service, base_url) = spawn_process(db, nats_url, knobs);
+        let outcome = service
+            .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
+            .await;
+        if outcome.is_ready() {
+            return (service, base_url);
+        }
+        let lost_the_port = matches!(outcome, BootOutcome::Exited(_))
+            && service.logs().contains("Address already in use");
+        assert!(
+            lost_the_port && attempt < BIND_ATTEMPTS,
+            "svc-jobs never reported ready within {BOOT_TIMEOUT:?} ({outcome:?})\nlogs:\n{}",
+            service.logs(),
+        );
+        service.shutdown().await;
+        attempt += 1;
+    }
 }
 
 fn spawn_process(db: &E2eDatabase, nats_url: &str, knobs: &Knobs) -> (SpawnedProcess, String) {
@@ -409,26 +420,8 @@ pub fn require_provisioned_infrastructure() {
 }
 
 pub fn free_port() -> u16 {
-    const RANGE_START: u16 = 20_000;
-    const RANGE_END: u16 = 32_000;
-    const MAX_PROBES: u16 = 64;
-
-    static NEXT: AtomicU16 = AtomicU16::new(0);
-
-    let span = RANGE_END - RANGE_START;
-    if NEXT.load(Ordering::Relaxed) == 0 {
-        let seed = (std::process::id() as u16) % span;
-        NEXT.store(seed.max(1), Ordering::Relaxed);
-    }
-
-    for _ in 0..MAX_PROBES {
-        let port = RANGE_START + (NEXT.fetch_add(1, Ordering::Relaxed) % span);
-        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return port;
-        }
-    }
-    panic!(
-        "no free port in {RANGE_START}..{RANGE_END} after {MAX_PROBES} probes — a previous \
-         scenario almost certainly leaked a child process holding them"
-    );
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .expect("the operating system hands out a free local port")
 }

@@ -7,7 +7,7 @@ use support::gesture::Work;
 use support::lineage::{act, create, live_runner, started_with_agent};
 use support::producer::{JobDeclaration, Producer};
 use support::runner;
-use support::{LONG, QUIET, gql, wire};
+use support::{LONG, gql, wire};
 
 #[tokio::test]
 async fn cancel_comes_from_the_requester_or_the_working_runner_and_reaches_every_job_below() {
@@ -73,7 +73,6 @@ async fn cancel_comes_from_the_requester_or_the_working_runner_and_reaches_every
     act(&fixture, wire::VERB_CANCEL, g, &g_work).await;
     gql::wait_for_status(&client, admin, g, "CANCELLED", LONG).await;
     z.await_cancel_entry(g_work.run_id, LONG).await;
-    tokio::time::sleep(QUIET).await;
     for live in [r.job_id, c, d] {
         assert_eq!(
             gql::status_of(&client, admin, live).await,
@@ -100,7 +99,6 @@ async fn cancel_comes_from_the_requester_or_the_working_runner_and_reaches_every
     act(&fixture, wire::VERB_CANCEL, c, &c_work).await;
     gql::wait_for_status(&client, admin, c, "CANCELLED", LONG).await;
     y.await_cancel_entry(c_work.run_id, LONG).await;
-    tokio::time::sleep(QUIET).await;
     assert_eq!(
         gql::status_of(&client, admin, r.job_id).await,
         "IN_PROGRESS",
@@ -133,7 +131,10 @@ async fn cancel_comes_from_the_requester_or_the_working_runner_and_reaches_every
         "the queued trigger is withdrawn: {withdrawn}"
     );
 
-    tokio::time::sleep(QUIET).await;
+    producer.cancel_v2(stranger_root.job_id).await;
+    answers
+        .expect_one(wire::FACT_CANCELLED, stranger_root.job_id, LONG)
+        .await;
     for cancelled in [g, c, d, queued] {
         assert_eq!(
             answers.count_of(wire::FACT_CANCELLED, cancelled),
