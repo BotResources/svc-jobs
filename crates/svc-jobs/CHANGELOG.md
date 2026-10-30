@@ -184,7 +184,9 @@ kept payloads.
   safety backstops (run duration, lost claims, stranded triggers, inactivity)
   run first, the purge of expired Results and the restart wakes follow
   independently, each failed wake stays queued and the next one is tried, and a
-  mail that is stored never fails because its restart could not start.
+  mail that is stored never fails because its restart could not start. Every
+  step of the sweep runs whatever an earlier one returned; the sweep reports the
+  first failure after all of them ran.
 - The saved state and the kept payload of a restart chain are found however
   many restarts the chain holds; the 64-link ceiling is gone.
 - The presence reconciliation reads the open sessions before the presence keys,

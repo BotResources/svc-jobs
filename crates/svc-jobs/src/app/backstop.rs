@@ -39,7 +39,11 @@ async fn repair_recent_access_paths(jobs: &Jobs) -> Result<(), ServiceError> {
 }
 
 pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
-    repair_recent_access_paths(jobs).await?;
+    let mut steps = Steps::default();
+    steps.record(
+        "repairing the access paths",
+        repair_recent_access_paths(jobs).await,
+    );
     if let Err(error) = reconcile::presence_sessions(jobs).await {
         tracing::warn!(
             error = %error,
@@ -47,19 +51,47 @@ pub async fn sweep(jobs: &Jobs) -> Result<(), ServiceError> {
              the backstops that need PostgreSQL alone, and the next sweep reconciles again"
         );
     }
-    let safety = safety_backstops(jobs).await;
-    if let Err(error) = jobs.store.purge_expired_results(jobs.clock.now()).await {
-        tracing::warn!(error = %error, "purging the expired Results failed; the next sweep tries again");
-    }
+    steps.record(
+        "reclaiming the runs past their maximum duration",
+        reclaim_outrun_runs(jobs).await,
+    );
+    steps.record(
+        "reclaiming the lost claims",
+        reclaim_lost_claims(jobs).await,
+    );
+    steps.record(
+        "withdrawing the stranded triggers",
+        reclaim_stranded_triggers(jobs).await,
+    );
+    steps.record("failing the inactive jobs", fail_inactive_jobs(jobs).await);
+    steps.record(
+        "purging the expired Results",
+        jobs.store
+            .purge_expired_results(jobs.clock.now())
+            .await
+            .map(drop)
+            .map_err(ServiceError::from),
+    );
     jobs.start_due_restarts().await;
-    safety
+    steps.outcome()
 }
 
-async fn safety_backstops(jobs: &Jobs) -> Result<(), ServiceError> {
-    reclaim_outrun_runs(jobs).await?;
-    reclaim_lost_claims(jobs).await?;
-    reclaim_stranded_triggers(jobs).await?;
-    fail_inactive_jobs(jobs).await
+#[derive(Default)]
+struct Steps {
+    first_failure: Option<ServiceError>,
+}
+
+impl Steps {
+    fn record(&mut self, step: &str, result: Result<(), ServiceError>) {
+        if let Err(error) = result {
+            tracing::warn!(step, error = %error, "a backstop step failed; the others still run and the next sweep tries again");
+            self.first_failure.get_or_insert(error);
+        }
+    }
+
+    fn outcome(self) -> Result<(), ServiceError> {
+        self.first_failure.map_or(Ok(()), Err)
+    }
 }
 
 async fn reclaim_outrun_runs(jobs: &Jobs) -> Result<(), ServiceError> {

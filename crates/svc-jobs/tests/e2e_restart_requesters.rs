@@ -50,34 +50,48 @@ async fn a_background_call_keeps_no_result() {
 }
 
 #[tokio::test]
-async fn a_manual_retry_of_a_sync_call_does_not_read_the_result_addressed_to_the_caller() {
+async fn a_manual_retry_of_the_caller_does_not_read_the_result_addressed_to_the_run_it_retries() {
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut pair = pair(&fixture, "retry-result").await;
     let producer = Producer::new(fixture.fabric(), "projects");
     let root = JobDeclaration::new(&pair.parent.runner_type).with_max_attempts(1);
     producer.declare_v2(&root).await;
-    let parent = pair.parent.next_trigger(LONG).await;
-    pair.parent.start_applied(&fixture, &parent).await;
-    let first = call_child(&fixture, &mut pair, root.job_id, runner::run_id(&parent)).await;
-    pair.child.start_applied(&fixture, &first).await;
-    let first_work = Work::of(&pair.child, &first);
-    upload_result(&fixture, &first_work, "answer").await;
-    let result = result_for(&durable, first_work.job_id).await;
-    pair.child
-        .fail_run(&first, "PERMANENT", "boom_after_the_answer", None)
+    let caller_trigger = pair.parent.next_trigger(LONG).await;
+    pair.parent.start_applied(&fixture, &caller_trigger).await;
+    let call = call_child(
+        &fixture,
+        &mut pair,
+        root.job_id,
+        runner::run_id(&caller_trigger),
+    )
+    .await;
+    pair.child.start_applied(&fixture, &call).await;
+    let call_work = Work::of(&pair.child, &call);
+    upload_result(&fixture, &call_work, "answer").await;
+    let result = result_for(&durable, call_work.job_id).await;
+    pair.parent
+        .fail_run(&caller_trigger, "PERMANENT", "boom_after_the_answer", None)
+        .await;
+    durable
+        .assert_count(
+            "SELECT count(*) FROM job_results WHERE result_id = $1",
+            result,
+            1,
+            "the answer outlives the failure of the Run it is addressed to",
+        )
         .await;
 
-    let successor = retry_manually(&fixture, first_work.job_id).await;
-    let retry = pair.child.next_trigger(LONG).await;
+    let successor = retry_manually(&fixture, root.job_id).await;
+    let retry = pair.parent.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&retry), successor);
-    pair.child.start_applied(&fixture, &retry).await;
-    let read = read_result(&fixture, &Work::of(&pair.child, &retry), result).await;
+    pair.parent.start_applied(&fixture, &retry).await;
+    let read = read_result(&fixture, &Work::of(&pair.parent, &retry), result).await;
 
     assert_eq!(
         gesture::refusal(&read, "jobsReadResult"),
         "not_addressed_to_you",
-        "a retry is not the Run the answer was addressed to, and acts for no Run"
+        "a retry of the Caller does not read what was addressed to the Run it retries"
     );
     durable.close().await;
     fixture.shutdown().await;
@@ -159,7 +173,7 @@ async fn the_manual_retry_of_a_restart_job_is_still_a_restart_that_acts_for_the_
 #[tokio::test]
 async fn a_service_requester_learns_of_the_restart_job_from_its_events() {
     let fixture = JobsFixture::start().await;
-    let events = EventLog::open(fixture.fabric()).await;
+    let events = EventLog::open_v2(fixture.fabric()).await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut pair = pair(&fixture, "restart-service").await;
     let producer = Producer::new(fixture.fabric(), "projects");
@@ -214,9 +228,15 @@ async fn a_service_requester_learns_of_the_restart_job_from_its_events() {
         has_service_requester,
         "the restart answers to the service that asked for the Job it restarts"
     );
-    events
+    let queued = events
         .expect_one(wire::FACT_QUEUED, restart_job, LONG)
         .await;
+    assert_eq!(
+        queued.payload()["restart_of_job_id"],
+        json!(root.job_id.to_string()),
+        "the event names the Job the restart stems from, so the service can link it"
+    );
+    assert_eq!(queued.payload()["requester"]["kind"], "SERVICE");
     pair.parent.start_applied(&fixture, &second).await;
     events
         .expect_one(wire::FACT_STARTED, restart_job, LONG)
