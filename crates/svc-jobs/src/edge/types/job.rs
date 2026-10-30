@@ -9,6 +9,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::enums::{GqlJobFailureCause, GqlJobResolutionKind, GqlJobStatus};
+use super::origin::{self, GqlJobCall, GqlJobPassport, GqlJobPayload, GqlJobRequester};
 use super::run::{GqlRun, GqlRunProgression, run_of};
 use crate::edge::project;
 use crate::edge::state::principal;
@@ -120,6 +121,26 @@ impl GqlJobDetail {
 
     async fn parent_job_id(&self) -> Option<Uuid> {
         self.job.parent_job_id().map(|id| id.as_uuid())
+    }
+
+    async fn initial_job_id(&self) -> Uuid {
+        self.job.initial_job_id().as_uuid()
+    }
+
+    async fn passport(&self) -> Option<GqlJobPassport> {
+        origin::passport_of(&self.job)
+    }
+
+    async fn requester(&self) -> GqlJobRequester {
+        origin::requester_of(&self.job)
+    }
+
+    async fn call(&self) -> Option<GqlJobCall> {
+        origin::call_of(&self.job)
+    }
+
+    async fn payload(&self) -> Option<GqlJobPayload> {
+        origin::payload_of(&self.job)
     }
 
     async fn triggered_by(&self) -> Option<GqlKnownUser> {

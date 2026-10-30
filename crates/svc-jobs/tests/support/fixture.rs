@@ -155,6 +155,23 @@ impl JobsFixture {
             .expect("runner transport is live until shutdown")
     }
 
+    pub fn spawn_declaring(&self) -> DeclaringInstance {
+        let db = self
+            .db
+            .as_ref()
+            .expect("the database is live until shutdown");
+        let fabric = self
+            .fabric
+            .as_ref()
+            .expect("the fabric is live until shutdown");
+        let knobs = Knobs {
+            scope_declaration: true,
+            ..Knobs::default()
+        };
+        let (process, url) = spawn_process(db, &fabric.url(), &knobs);
+        DeclaringInstance { process, url }
+    }
+
     pub fn logs(&self) -> String {
         self.instances
             .iter()
@@ -194,6 +211,29 @@ impl JobsFixture {
         if let Some(db) = self.db.take() {
             db.cleanup().await;
         }
+    }
+}
+
+pub struct DeclaringInstance {
+    process: SpawnedProcess,
+    pub url: String,
+}
+
+impl DeclaringInstance {
+    pub async fn readyz(&self) -> u16 {
+        GraphqlClient::new(&self.url)
+            .get_raw("/readyz")
+            .await
+            .0
+            .as_u16()
+    }
+
+    pub fn logs(&self) -> String {
+        self.process.logs()
+    }
+
+    pub async fn shutdown(self) {
+        self.process.shutdown().await;
     }
 }
 
@@ -264,6 +304,19 @@ async fn spawn_instance(
     nats_url: &str,
     knobs: &Knobs,
 ) -> (SpawnedProcess, String) {
+    let (mut service, base_url) = spawn_process(db, nats_url, knobs);
+    let outcome = service
+        .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
+        .await;
+    assert!(
+        outcome.is_ready(),
+        "svc-jobs never reported ready within {BOOT_TIMEOUT:?} ({outcome:?})\nlogs:\n{}",
+        service.logs(),
+    );
+    (service, base_url)
+}
+
+fn spawn_process(db: &E2eDatabase, nats_url: &str, knobs: &Knobs) -> (SpawnedProcess, String) {
     let owner_url = db.owner_migration_url();
     let app_url = db.app_url();
     let port = free_port();
@@ -316,16 +369,7 @@ async fn spawn_instance(
         env.push(("JOBS_CLAIM_MAX_HELD", held));
     }
 
-    let mut service = SpawnedProcess::spawn(BIN, &[], &env);
-    let outcome = service
-        .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
-        .await;
-    assert!(
-        outcome.is_ready(),
-        "svc-jobs never reported ready within {BOOT_TIMEOUT:?} ({outcome:?})\nlogs:\n{}",
-        service.logs(),
-    );
-
+    let service = SpawnedProcess::spawn(BIN, &[], &env);
     (service, base_url)
 }
 

@@ -304,6 +304,10 @@ see the inline payload as the Job carries it. The service declares the scope
 `jobs:runner` to the identity service at boot and stays not ready until the
 declaration is accepted.
 
+A Job detail carries its Initial Job, Passport, Requester, call mode and
+payload as the Job holds them: the inline content, the form of a payload kept
+by Jobs, or the form and the reference of a payload kept elsewhere.
+
 `X-Passport` is a trusted header: the service decodes it, it does not
 authenticate its origin. Deploy svc-jobs only behind a gateway that strips
 client-forged copies and re-injects the resolved passport, on a network

@@ -142,3 +142,47 @@ fn dedup(mut ids: Vec<Uuid>) -> Vec<Uuid> {
     ids.dedup();
     ids
 }
+
+pub struct DoorbellLog {
+    capture: EventCapture,
+}
+
+impl DoorbellLog {
+    pub async fn open(fabric: &FabricTestNats) -> Self {
+        let coords =
+            contract_jobs::evt_run_item_arrived_v1_coords().expect("the doorbell coordinates");
+        Self {
+            capture: fabric.capture_events(&[&coords]).await,
+        }
+    }
+
+    pub fn rings_for(&self, run_id: Uuid) -> Vec<Value> {
+        let wanted = run_id.to_string();
+        let mut rings = Vec::new();
+        for correlation in dedup(self.capture.correlation_ids()) {
+            for message in self.capture.for_correlation(correlation) {
+                let envelope: Value = serde_json::from_slice(&message.payload)
+                    .unwrap_or_else(|e| panic!("an integration event must be JSON: {e}"));
+                if envelope["payload"]["run_id"] == wanted.as_str() {
+                    rings.push(envelope["payload"].clone());
+                }
+            }
+        }
+        rings
+    }
+
+    pub async fn expect_rings(&self, run_id: Uuid, count: usize, timeout: Duration) -> Vec<Value> {
+        let log = self;
+        let reached = wait_until(timeout, || async { log.rings_for(run_id).len() >= count }).await;
+        assert!(
+            reached,
+            "the doorbell rang {} time(s) for run {run_id}, expected {count}",
+            self.rings_for(run_id).len()
+        );
+        self.rings_for(run_id)
+    }
+
+    pub async fn stop(self) {
+        self.capture.stop().await;
+    }
+}

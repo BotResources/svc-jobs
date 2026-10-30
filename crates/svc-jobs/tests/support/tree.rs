@@ -2,8 +2,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::fixture::JobsFixture;
-use super::producer::Producer;
+use super::gesture::Work;
+use super::producer::{JobDeclaration, Producer};
 use super::runner::{self, FakeRunner};
+use super::surface::{self, Agent};
 use super::{LONG, dispatch, wire};
 
 pub struct Pair<'a> {
@@ -58,4 +60,63 @@ pub async fn call_child(
     let trigger = pair.child.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&trigger), job_id);
     trigger
+}
+
+pub struct Correspondents<'a> {
+    pub pair: Pair<'a>,
+    pub root: Uuid,
+    pub parent_trigger: serde_json::Value,
+    pub child_trigger: serde_json::Value,
+    pub parent_work: Work,
+    pub child_work: Work,
+    pub sender: Uuid,
+    pub receiver: Uuid,
+    pub bystander: Uuid,
+}
+
+pub async fn correspondents<'a>(fixture: &'a JobsFixture, label: &str) -> Correspondents<'a> {
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut pair = pair(fixture, label).await;
+    let nats = fixture.nats();
+    let root = JobDeclaration::new(&pair.parent.runner_type).with_max_attempts(1);
+    producer.declare_v2(&root).await;
+    let parent_trigger = pair.parent.next_trigger(LONG).await;
+    pair.parent.start_applied(fixture, &parent_trigger).await;
+    let sender = Agent::with_inbox();
+    let sender_id = sender.agent_id;
+    surface::register(
+        nats,
+        &pair.parent,
+        runner::run_id(&parent_trigger),
+        &[sender],
+    )
+    .await;
+    let child_trigger = call_child(
+        fixture,
+        &mut pair,
+        root.job_id,
+        runner::run_id(&parent_trigger),
+    )
+    .await;
+    pair.child.start_applied(fixture, &child_trigger).await;
+    let (receiver, bystander) = (Agent::with_inbox(), Agent::with_inbox());
+    let (receiver_id, bystander_id) = (receiver.agent_id, bystander.agent_id);
+    surface::register(
+        nats,
+        &pair.child,
+        runner::run_id(&child_trigger),
+        &[receiver, bystander],
+    )
+    .await;
+    Correspondents {
+        parent_work: Work::of(&pair.parent, &parent_trigger),
+        child_work: Work::of(&pair.child, &child_trigger),
+        pair,
+        root: root.job_id,
+        parent_trigger,
+        child_trigger,
+        sender: sender_id,
+        receiver: receiver_id,
+        bystander: bystander_id,
+    }
 }

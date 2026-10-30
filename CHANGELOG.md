@@ -67,6 +67,10 @@ yet.
 - `jobs.runner.mark_read.{runner_type}` marks items read for the Run that holds
   them; the doorbell `run.item_arrived.v1` rings for an item that reaches a
   live Run.
+- The Job detail carries `initialJobId`, `passport`, `requester`, `call` (mode
+  and caller address) and `payload` (the inline content, the form of a payload
+  kept by Jobs, or the form and the reference of a payload kept elsewhere), in
+  the query and in the subscription deltas.
 - `JOBS_SAVED_STATE_MAX_BYTES` (default 1 MiB).
 - Registration, listing and read-marking requests are bounded in flight by
   `JOBS_CLAIM_MAX_HELD`; a request of another wire version is answered
