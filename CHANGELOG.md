@@ -9,6 +9,40 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-30
+
+Requester, Passport and lineage on every job. This release is a work in
+progress of the 0.6 line: the runner surface (agent directory, mail, results,
+saved state and restart, GraphQL `jobs:runner`) and capacity enforcement are
+not in it yet.
+
+### Added
+
+- `job.create.v3`, `job.finish.v3`, `job.fail.v3`, `job.cancel.v3` consumers
+  (durables `svc_jobs_job_{create,cancel,finish,fail}_v3`).
+- Every job stores its Passport, Requester, payload and call. The first job of
+  a Tree is its own parent and Initial Job; a child takes its parent's Initial
+  Job and Passport.
+- `queued`, `creation_rejected`, `started`, `plan_declared`, `step_started`,
+  `completed`, `failed`, `cancelled` events in version 2 (parent, Initial Job,
+  Requester, plain-words `message`), published beside the version 1 events;
+  `command_rejected.v1` and `cancel_accepted.v1`.
+- The trigger and the claim reply in version 2, on `jobs.trigger.v2.{runner_type}`
+  and `jobs.claim.v2.{runner_type}`.
+- A Run that fails or is cancelled cancels the Jobs it requested.
+- Migration `0004`: `requester`, `passport`, `payload`, `call` on `jobs`.
+
+### Changed
+
+- A creation of a job with no parent, by version 1 or 2, is refused with
+  `passport_required`.
+- Rejections are published in both generations (`creation_rejected.v1` and `.v2`).
+
+### Removed
+
+- The claim subject `jobs.claim.{runner_type}` and the trigger subject
+  `jobs.trigger.{runner_type}` are no longer served or published.
+
 ## 0.5.0 - 2026-10-29
 
 Administrators read users' maximum priorities. Additive: every 0.4 behaviour

@@ -5,6 +5,17 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.7.0 - 2026-10-30
+
+- `command_v3`: `CreateJobV3`, `FinishJobV3`, `FailJobV3`, `CancelJobV3`,
+  `Payload`, `CallMode` and the `cmd_job_{create,cancel,fail,finish}_v3_coords()`.
+- `event_v2`: `JobQueuedV2`, `JobCreationRejectedV2`, `JobStartedV2`,
+  `JobPlanDeclaredV2`, `JobStepStartedV2`, `JobCompletedV2`, `JobFailedV2`,
+  `JobCancelledV2`, `JobCancelAccepted`, `JobCommandRejected`, `RunItemArrived`
+  and the matching `evt_*_coords()`.
+- `runner::TriggerV2`, `runner::ClaimReplyV2`, `runner_transport::trigger_v2_subject`
+  and `claim_v2_subject`.
+
 ## 0.6.0 - 2026-10-26
 
 Additive: every 0.5 subject, payload and constant is unchanged.

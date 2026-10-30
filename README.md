@@ -108,23 +108,31 @@ own durable consumers.
 
 Commands consumed on the `INTEGRATION_CMD` stream. Version 1 keeps the durables
 `svc_jobs_job_{create,cancel,finish,fail}`; version 2 uses
-`svc_jobs_job_{create,cancel,finish,fail}_v2`:
+`svc_jobs_job_{create,cancel,finish,fail}_v2`; version 3 uses
+`svc_jobs_job_{create,cancel,finish,fail}_v3`:
 
 | Subject | Meaning |
 |---|---|
 | `integration.cmd.jobs.job.create.v1` | Create a job addressed to a runner type; the producer mints the UUIDv7 id and names its own bounded context in `producer` (required). The job requests priority 3. |
 | `integration.cmd.jobs.job.create.v2` | Supersedes v1: the same fields plus an optional `priority` (1–5, 3 when absent, ignored for a child job). A level outside 1–5 is answered by `creation_rejected` with reason `invalid_priority`. |
+| `integration.cmd.jobs.job.create.v3` | Supersedes v2: the Passport of the sender (whole, stored unchanged), an optional payload (`INLINE`, `KEPT` or `REFERENCE`), the Initial Job, and for a call from a runner the call `mode`, the `caller_address` and the Run it speaks for (`acting_run_id` + `acting_instance_key`). A job with no parent must carry a Passport (`passport_required`); a child takes the Passport of its parent and a different one is refused (`passport_parent_mismatch`); `triggered_by` must be the user of the Passport (`passport_user_mismatch`). The Requester is the creating actor, or the named Run when it is STARTED on the named Instance. |
 | `integration.cmd.jobs.job.cancel.v1` | Cancel a job; cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v1` | The owner declares the job succeeded — the only path to `COMPLETED`. |
 | `integration.cmd.jobs.job.fail.v1` | The owner declares the job failed (`DECLARED_BY_OWNER`). |
 | `integration.cmd.jobs.job.cancel.v2` | An admitted declarant cancels a job; Jobs validates lifecycle only and cancellation propagates down the tree. |
 | `integration.cmd.jobs.job.finish.v2` | An admitted declarant declares success; Jobs validates lifecycle only and records the actor as attribution. |
 | `integration.cmd.jobs.job.fail.v2` | An admitted declarant declares failure; Jobs validates lifecycle only and records the actor as attribution. |
+| `integration.cmd.jobs.job.finish.v3`, `fail.v3`, `cancel.v3` | Only the Requester of the job (or the Run it names in `acting_run_id` + `acting_instance_key`) finishes or fails it; the runner working a job may also cancel it. A refusal is answered by `command_rejected.v1` (`not_requester`, `runner_not_working_the_job`, `acting_run_missing`, `acting_run_not_live`, `job_unknown`, `job_terminal`); an accepted cancel by `cancel_accepted.v1`. A cancel of an already ended job changes nothing and is accepted. |
 
 The version 1 resolution subjects are retained for compatibility and enforce
 their legacy envelope-actor/owner coherence rule. On version 2, admission is a
 fabric concern: actor metadata is attribution, not an ownership authorization
-input to Jobs. The command payload shapes are unchanged between the versions.
+input to Jobs, except that a job requested by a Run answers only to its Run. The
+command payload shapes are unchanged between versions 1 and 2. Jobs never builds
+a Passport: a version 1 or 2 creation of a job with no parent is refused with
+`passport_required`; below a parent it takes the parent's Passport. Every answer
+to a version 3 command copies the correlation id of the command and sets its
+causation id to the id of the command.
 
 Events published on the `INTEGRATION_EVT` stream through the transactional
 outbox: `integration.evt.jobs.job.{queued, creation_rejected, started,
@@ -182,8 +190,8 @@ design.
 
 | Channel | Name / subject | Direction | Contract |
 |---|---|---|---|
-| Claim subject | `jobs.claim.{runner_type}` (core NATS request/reply, queue group `svc_jobs_claims`) | runners → jobs, answered | `CLAIM` types only. Request `{instance_key, claim_id, wait_ms}`; reply `{run?, reason?}`, `run` being a trigger. At most once: an instance repeats an unanswered claim under the same `claim_id` and is handed the run already reserved to it. Refusals form a closed set of seven (`contract_jobs::runner::ClaimRefusal`): `instance_unknown` (announce presence, claim later), `not_claim_mode` (consume the trigger stream instead), `instance_draining` (stop claiming until `READY`), `runner_type_retired` (stop claiming), `claim_spent` (mint a new `claim_id`), `malformed_claim` (fix the claim; a nil `claim_id` is malformed), `busy` (the pod could not hold the claim or its store failed; wait `retry_after_ms`, then repeat the SAME claim). |
-| Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.{runner_type}` | jobs → runners | `PUSH` types only. Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. Switching a type to `CLAIM` does not withdraw triggers already published. |
+| Claim subject | `jobs.claim.v2.{runner_type}` (core NATS request/reply, queue group `svc_jobs_claims`) | runners → jobs, answered | `CLAIM` types only. Request `{version: 2, instance_key, claim_id, wait_ms}`; reply `{version: 2, run?, reason?}`, `run` being a version 2 trigger; a request of another version is `malformed_claim`. At most once: an instance repeats an unanswered claim under the same `claim_id` and is handed the run already reserved to it. Refusals form a closed set of seven (`contract_jobs::runner::ClaimRefusal`): `instance_unknown` (announce presence, claim later), `not_claim_mode` (consume the trigger stream instead), `instance_draining` (stop claiming until `READY`), `runner_type_retired` (stop claiming), `claim_spent` (mint a new `claim_id`), `malformed_claim` (fix the claim; a nil `claim_id` is malformed), `busy` (the pod could not hold the claim or its store failed; wait `retry_after_ms`, then repeat the SAME claim). |
+| Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.v2.{runner_type}` | jobs → runners | `PUSH` types only. The version 2 trigger carries the run, the job, the attempt, the parent and the Initial Job, the Passport as stored, the user, the configuration, the payload (`INLINE`, `KEPT` or `REFERENCE`), the call mode and the caller address. Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. Switching a type to `CLAIM` does not withdraw triggers already published. |
 | Status stream | `JOBS_STATUS` / `jobs.status.{runner_type}.{started,plan_declared,step_started,completed,failed}` | runners → jobs | Persistent, acknowledged, at-least-once; carries start, plan, step and terminal run facts. |
 | Log stream | `JOBS_LOG` / `jobs.log.{runner_type}` | runners → jobs | Size-bounded, discard-old; a lost log line is tolerated, a lost lifecycle fact is not — which is why logs never share the status stream. |
 | Cancel bucket | `JOBS_CANCEL` KV, key `{run_id}` | jobs → runners | One desired-state entry per cancelled run, replayed on watch (re)connection; removed after the terminal fact, bucket TTL is the cleanup backstop. |
@@ -372,6 +380,7 @@ failing job by job.
 | `JOBS_CLAIM_MAX_WAIT_SECONDS` | `30` | The longest a claim is held open, whatever `wait_ms` it asks for. |
 | `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost`; a pushed trigger left unstarted this long after its type switched to `CLAIM` is cancelled with `trigger_stranded` (both swept with the backstops). Must exceed `JOBS_CLAIM_MAX_WAIT_SECONDS`, or the service refuses to boot. |
 | `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered `busy` immediately. |
+| `JOBS_PAYLOAD_INLINE_MAX_BYTES` | `524288` | The largest inline payload a creation may carry (message, attachment names, types and contents together); above it the creation is rejected with `payload_too_large`. A larger payload is kept by Jobs or sent by reference. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |

@@ -13,6 +13,7 @@ const DEFAULT_INACTIVITY_TIMEOUT_SECONDS: i64 = 86_400;
 const DEFAULT_RUN_MAX_DURATION_SECONDS: i64 = 259_200;
 const DEFAULT_RETRY_BASE_DELAY_SECONDS: i64 = 10;
 const DEFAULT_MAX_ATTEMPTS_CEILING: u32 = 10;
+const DEFAULT_PAYLOAD_INLINE_MAX_BYTES: usize = 524_288;
 const DEFAULT_BACKSTOP_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_DISPATCH_MINIMUM_WAKE_MILLISECONDS: u64 = 250;
 const DEFAULT_MAX_ATTEMPTS: u32 = 3;
@@ -128,6 +129,10 @@ impl Settings {
         )?;
         let max_attempts_ceiling: u32 =
             read("JOBS_MAX_ATTEMPTS_CEILING", DEFAULT_MAX_ATTEMPTS_CEILING)?;
+        let payload_inline_max_bytes: usize = read(
+            "JOBS_PAYLOAD_INLINE_MAX_BYTES",
+            DEFAULT_PAYLOAD_INLINE_MAX_BYTES,
+        )?;
         let backstop_interval_seconds: u64 = read(
             "JOBS_BACKSTOP_INTERVAL_SECONDS",
             DEFAULT_BACKSTOP_INTERVAL_SECONDS,
@@ -174,7 +179,8 @@ impl Settings {
             TimeDelta::seconds(inactivity_timeout_seconds),
             TimeDelta::seconds(retirement_quiet_period_seconds),
         )?
-        .with_default_max_priority(Priority::new(default_max_priority)?);
+        .with_default_max_priority(Priority::new(default_max_priority)?)
+        .with_inline_payload_max_bytes(payload_inline_max_bytes);
         bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_seconds(
             run_max_duration_seconds,
         )?;

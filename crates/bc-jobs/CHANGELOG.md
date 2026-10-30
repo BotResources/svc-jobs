@@ -8,6 +8,22 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.8.0 - 2026-10-30
+
+- `Job` carries its Initial Job, `Requester` (a service actor or a Run),
+  `JobPassport`, `JobPayload` and `JobCall`; `CreateJob` and `JobQueued` carry
+  them; a root job without a Passport is refused (`PassportRequired`).
+- `Requester::guard_resolves` / `guard_cancels` decide who finishes, fails and
+  cancels; `ResolutionRequester::Caller` and `CancelRequester::Caller`; a cancel
+  of an ended job by its Requester changes nothing
+  (`CommandWarning::CancelledJobAlreadyTerminal`).
+- New refusals: `NotRequester`, `RunnerNotWorkingTheJob`, `ActingRunMissing`,
+  `ActingRunNotLive`, `PassportRequired`, `PassportMalformed`,
+  `PassportUserMismatch`, `PassportParentMismatch`, `InitialJobMismatch`,
+  `ParentNotOfRun`, `ModeRequired`, `CallerAddressNotHeld`, `PayloadTooLarge`.
+- `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
+  the Passport, the payload and the call.
+
 ## 0.7.0 - 2026-10-29
 
 - `PrincipalFacts::new` takes a `PlatformRole` (`Member` < `SuperUser`)
