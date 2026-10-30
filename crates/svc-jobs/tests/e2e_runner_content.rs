@@ -156,7 +156,7 @@ async fn a_mail_body_above_one_megabyte_is_delivered_whole() {
 }
 
 #[tokio::test]
-async fn an_agent_that_finished_and_holds_a_saved_state_is_listed_as_restartable() {
+async fn an_agent_that_finished_after_a_save_is_listed_as_restartable() {
     let fixture = JobsFixture::start().await;
     let producer = Producer::new(fixture.fabric(), "projects");
     let durable = Durable::open(&fixture.app_url()).await;
@@ -174,6 +174,39 @@ async fn an_agent_that_finished_and_holds_a_saved_state_is_listed_as_restartable
     tree.child.start_applied(&fixture, &called).await;
     let child_run = runner::run_id(&called);
 
+    let saved = fixture
+        .gql()
+        .query(
+            &runner_access(),
+            gesture::SAVE_STATE,
+            json!({ "input": {
+                "work": Work::of(&tree.parent, &parent_trigger).wire(),
+                "state": { "turn": 3 },
+            } }),
+        )
+        .await;
+    gesture::accepted(&saved, "jobsSaveState");
+    durable
+        .assert_count(
+            "SELECT count(*) FROM saved_state_agents WHERE run_id = $1",
+            parent_run,
+            1,
+            "a save keeps the agents the Run holds in the directory",
+        )
+        .await;
+    let before = surface::list(nats, &tree.child, child_run).await;
+    let live = before["agents"]
+        .as_array()
+        .and_then(|agents| {
+            agents
+                .iter()
+                .find(|a| a["agent_id"] == agent_id.to_string())
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("the running agent is listed: {before}"));
+    assert_eq!(live["state"], "RUNNING");
+    assert!(live["restartable_now"].is_null());
+
     tree.parent.complete_run(&parent_trigger).await;
     durable
         .await_count(
@@ -183,28 +216,6 @@ async fn an_agent_that_finished_and_holds_a_saved_state_is_listed_as_restartable
             "the agent of the ended run finishes",
         )
         .await;
-    let before = surface::list(nats, &tree.child, child_run).await;
-    assert!(
-        !surface::agent_ids(&before).contains(&agent_id.to_string()),
-        "a finished agent that holds no saved state cannot restart and is not listed: {before}"
-    );
-
-    sqlx::query(
-        "INSERT INTO saved_states (run_id, state, saved_at) VALUES ($1, '{}'::jsonb, now())",
-    )
-    .bind(parent_run)
-    .execute(durable.pool())
-    .await
-    .expect("the saved state is seeded");
-    sqlx::query(
-        "INSERT INTO saved_state_agents (run_id, agent_id, has_inbox) VALUES ($1, $2, true)",
-    )
-    .bind(parent_run)
-    .bind(agent_id)
-    .execute(durable.pool())
-    .await
-    .expect("the saved agent is seeded");
-
     let after = surface::list(nats, &tree.child, child_run).await;
     let listed = after["agents"]
         .as_array()

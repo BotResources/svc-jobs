@@ -22,10 +22,10 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `PassportUserMismatch`, `PassportParentMismatch`, `InitialJobMismatch`,
   `ParentNotOfRun`, `ModeRequired`, `CallerAddressNotHeld`, `PayloadTooLarge`.
 - `domain::directory`: `AgentId`, `AgentState`, `decide_registration`
-  (refusals `run_unknown`, `run_not_started`, `run_ended`, `instance_mismatch`,
-  `agent_id_in_other_tree`, `agent_id_not_finished`, `agent_named_twice`,
-  `malformed`) and
-  `DirectoryEntry` with `restartable_now`.
+  (refusals `RegistrationRefusal::{RunUnknown, RunNotStarted, RunEnded,
+  RunRemoved, InstanceMismatch, AgentIdInOtherTree, AgentIdNotFinished,
+  AgentNamedTwice, Malformed}`; `AgentNamedTwice` and `Malformed` both travel
+  on the wire as `malformed`) and `DirectoryEntry` with `restartable_now`.
 - `JobsError::CallerAddressNotOfRun`, `AgentId`, and the `run_removed` refusal
   of a registration. An `AgentId` is any UUID: the runner makes it.
 - `RunnerTransport::acknowledged_start`: the start fact of a Run that the

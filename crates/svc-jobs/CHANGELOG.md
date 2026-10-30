@@ -96,19 +96,16 @@ yet.
 - Removal marks only the Runs that have not ended as removed.
 - The caller-address rule is one domain decision fed with the addresses the
   acting Run holds.
-
-### Fixed
-
-- A root Job is no longer its own parent when the restart obstacle
-  "parent Job terminal" is read for the listing and for mail.
-
-### Changed (earlier in the line)
-
 - A creation of a job with no parent, by version 1 or 2, is refused with
   `passport_required`.
 - A creation under an ended parent is refused with `parent_terminal` in the
   version 2 rejection (version 1 keeps `parent_job_terminal`).
 - Rejections are published in both generations (`creation_rejected.v1` and `.v2`).
+
+### Fixed
+
+- A root Job is no longer its own parent when the restart obstacle
+  "parent Job terminal" is read for the listing and for mail.
 
 ### Removed
 
