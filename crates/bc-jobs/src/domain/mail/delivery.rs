@@ -120,7 +120,7 @@ fn decide_one(
             });
             Ok(delivery(false, false, refused))
         }
-        RestartStanding::RestartInFlight => Ok(delivery(false, false, None)),
+        RestartStanding::RestartInFlight => Ok(delivery(true, false, None)),
         RestartStanding::Allowed => Ok(delivery(false, true, None)),
     }
 }

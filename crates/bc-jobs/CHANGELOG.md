@@ -82,7 +82,11 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `InlineAnswer::decide` and `JobPayload::inline_content_size`;
   `guard_result_alive` takes the stored expiry.
 - `PrincipalFacts::guard_holds_runner_scope` and `JobsError::NotRunnerService`.
-- `domain::runner::saved_state::SavedState` owns the size guard of a saved state.
+- `domain::runner::saved_state::SavedState::new(value, maximum_bytes)` owns the
+  size guard of a saved state and returns `SavedStateRefusal`; the port
+  `SavedStates::save_state` takes the checked `SavedState` and no maximum.
+- A mail or notice reaching an agent whose restart Job is live rings the live
+  Run of that restart Job (`Delivery::rings_live_run` for `RestartInFlight`).
 
 ## 0.7.0 - 2026-10-29
 

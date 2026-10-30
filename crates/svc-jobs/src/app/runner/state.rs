@@ -5,14 +5,13 @@ use bc_jobs::ports::saved_state::SavedStates;
 
 pub async fn save_state(jobs: &Jobs, work: &WorkIds, state: serde_json::Value) -> Outcome<()> {
     started(jobs, work).await?;
+    let state = match SavedState::new(state, jobs.limits.saved_state_max_bytes()) {
+        Ok(state) => state,
+        Err(refusal) => return Ok(Err(refusal.into())),
+    };
     Ok(jobs
         .store
-        .save_state(
-            work.named(),
-            &SavedState::new(state),
-            jobs.limits.saved_state_max_bytes(),
-            jobs.clock.now(),
-        )
+        .save_state(work.named(), &state, jobs.clock.now())
         .await?)
 }
 

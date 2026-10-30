@@ -2,11 +2,20 @@ mod support;
 
 use serde_json::Value;
 use support::db::Durable;
-use support::fixture::JobsFixture;
+use support::fixture::{JobsFixture, runner_access};
+use support::gesture;
 use support::restart::{RESTARTS_OF_RUN, Scene, UNREAD_AT, running_child};
+use support::runner;
 use support::surface;
 use support::{LONG, QUIET};
 use uuid::Uuid;
+
+const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \
+     WHERE payload::text LIKE '%item_arrived%' AND payload::text LIKE $1";
+
+async fn rings_for(durable: &Durable, run: Uuid) -> i64 {
+    durable.count_like(RINGS_FOR_RUN, &format!("%{run}%")).await
+}
 
 const WAKES_OF_RUN: &str = "SELECT count(*) FROM restart_wakes WHERE run_id = $1";
 
@@ -37,7 +46,7 @@ async fn while_a_restart_job_is_live_the_listing_the_mail_and_the_wake_agree_the
     );
 
     scene.mail_receiver(&fixture, scene.sender).await;
-    let _trigger = scene.pair.child.next_trigger(LONG).await;
+    let trigger = scene.pair.child.next_trigger(LONG).await;
     durable
         .assert_count(RESTARTS_OF_RUN, scene.child_run(), 1, "one restart Job")
         .await;
@@ -72,6 +81,70 @@ async fn while_a_restart_job_is_live_the_listing_the_mail_and_the_wake_agree_the
             2,
             "both mails wait unread for the restart Run",
         )
+        .await;
+    assert_eq!(
+        rings_for(&durable, runner::run_id(&trigger)).await,
+        0,
+        "a restart Run that has not started is rung by nothing"
+    );
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_mail_reaching_an_agent_whose_restart_run_is_started_rings_that_run_once() {
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let mut scene = running_child(&fixture, "restart-ring-mail").await;
+    scene.finish_child(&durable).await;
+    scene.mail_receiver(&fixture, scene.sender).await;
+    let trigger = scene.pair.child.next_trigger(LONG).await;
+    scene.pair.child.start_applied(&fixture, &trigger).await;
+    let restart_run = runner::run_id(&trigger);
+    assert_eq!(rings_for(&durable, restart_run).await, 0);
+
+    scene.mail_receiver(&fixture, scene.peer).await;
+
+    assert_eq!(
+        rings_for(&durable, restart_run).await,
+        1,
+        "the second mail rings the live restart Run, before its agents are registered"
+    );
+    durable
+        .assert_count(RESTARTS_OF_RUN, scene.child_run(), 1, "no second restart")
+        .await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cc_notice_reaching_an_agent_whose_restart_run_is_started_rings_that_run_once() {
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let mut scene = running_child(&fixture, "restart-ring-cc").await;
+    scene.finish_child(&durable).await;
+    scene.mail_receiver(&fixture, scene.sender).await;
+    let trigger = scene.pair.child.next_trigger(LONG).await;
+    scene.pair.child.start_applied(&fixture, &trigger).await;
+    let restart_run = runner::run_id(&trigger);
+
+    let notice = gesture::Mail::new(scene.sender, &[scene.peer]).cc(&[scene.receiver]);
+    let sent = gesture::send_mail(
+        &fixture.gql(),
+        &runner_access(),
+        &scene.parent_work,
+        &notice,
+    )
+    .await;
+    gesture::accepted(&sent, "jobsSendMail");
+
+    assert_eq!(
+        rings_for(&durable, restart_run).await,
+        1,
+        "the cc notice rings the live restart Run"
+    );
+    durable
+        .assert_count(RESTARTS_OF_RUN, scene.child_run(), 1, "no second restart")
         .await;
     durable.close().await;
     fixture.shutdown().await;

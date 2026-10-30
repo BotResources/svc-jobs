@@ -147,6 +147,14 @@ kept payloads.
 
 ### Fixed
 
+- A mail or a cc notice reaching an agent whose restart Run has started rings
+  that Run once; a restart Run that has not started is rung by nothing.
+- The reconciliation of the presence bucket reads the open sessions before the
+  announced instances, so a session opened during the listing is not reported
+  lost.
+- The backstop sweep is a fixed ordered list of independent steps; the due
+  restarts come last, after every safety backstop, and a failing step never
+  stops the others.
 - A root Job is no longer its own parent when the restart obstacle
   "parent Job terminal" is read for the listing and for mail.
 - A Job that finished while its Run was still live: the Run is now reclaimed when

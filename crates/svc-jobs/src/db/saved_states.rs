@@ -42,7 +42,6 @@ impl SavedStates for PgStore {
         &self,
         work: WorkNamed<'_>,
         state: &SavedState,
-        maximum_bytes: usize,
         at: DateTime<Utc>,
     ) -> Result<Result<(), RunnerRefusal>, PortError> {
         let mut tx = self.begin().await?;
@@ -50,9 +49,6 @@ impl SavedStates for PgStore {
             Ok(context) => context,
             Err(refusal) => return Ok(Err(refusal.into())),
         };
-        if let Err(refusal) = state.guard_within(maximum_bytes) {
-            return Ok(Err(refusal.into()));
-        }
         sqlx::query(
             "INSERT INTO saved_states (run_id, state, saved_at) VALUES ($1, $2, $3) \
              ON CONFLICT (run_id) DO UPDATE SET state = EXCLUDED.state, saved_at = EXCLUDED.saved_at",

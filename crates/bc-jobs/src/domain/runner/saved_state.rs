@@ -24,21 +24,17 @@ impl SavedStateRefusal {
 pub struct SavedState(serde_json::Value);
 
 impl SavedState {
-    pub fn new(value: serde_json::Value) -> Self {
-        Self(value)
+    pub fn new(value: serde_json::Value, maximum_bytes: usize) -> Result<Self, SavedStateRefusal> {
+        let size = serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len());
+        if size > maximum_bytes {
+            Err(SavedStateRefusal::StateTooLarge)
+        } else {
+            Ok(Self(value))
+        }
     }
 
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
-    }
-
-    pub fn guard_within(&self, maximum: usize) -> Result<(), SavedStateRefusal> {
-        let size = serde_json::to_vec(&self.0).map_or(usize::MAX, |bytes| bytes.len());
-        if size > maximum {
-            Err(SavedStateRefusal::StateTooLarge)
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -48,8 +44,11 @@ mod tests {
 
     #[test]
     fn a_state_up_to_the_setting_is_kept_and_a_larger_one_is_refused() {
-        let state = SavedState::new(serde_json::json!("12345678"));
-        assert_eq!(state.guard_within(10), Ok(()));
-        assert_eq!(state.guard_within(9), Err(SavedStateRefusal::StateTooLarge));
+        let state = serde_json::json!("12345678");
+        assert!(SavedState::new(state.clone(), 10).is_ok());
+        assert_eq!(
+            SavedState::new(state, 9),
+            Err(SavedStateRefusal::StateTooLarge)
+        );
     }
 }

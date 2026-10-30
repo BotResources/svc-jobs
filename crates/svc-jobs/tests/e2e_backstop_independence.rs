@@ -7,6 +7,7 @@ use support::db::Durable;
 use support::dispatch;
 use support::fixture::{JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
+use support::restart::{RESTARTS_OF_RUN, running_child};
 use support::runner::{self, FakeRunner};
 use support::{LONG, wire};
 
@@ -79,6 +80,59 @@ async fn a_restart_wake_that_cannot_be_read_does_not_stop_the_safety_backstops_o
         .assert_count(
             WAKES_OF_RUN,
             unreadable_run,
+            1,
+            "the wake that failed stays queued for a later sweep",
+        )
+        .await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_restart_wake_that_cannot_be_read_does_not_stop_the_mail_that_wakes_a_valid_restart() {
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let mut scene = running_child(&fixture, "poison-wake").await;
+    scene.finish_child(&durable).await;
+
+    let poison_type = wire::unique_runner_type("poison-wake");
+    let mut poisoned = FakeRunner::new(fixture.nats(), &poison_type, "instance-poison");
+    poisoned.connect().await;
+    dispatch::await_live_instances(&client, admin, &poison_type, 1, LONG).await;
+    let poison = JobDeclaration::new(&poison_type).with_max_attempts(1);
+    producer.declare_v2(&poison).await;
+    let poison_run = runner::run_id(&poisoned.next_trigger(LONG).await);
+    sqlx::query(r#"UPDATE jobs SET requester = '{"bogus": 1}'::jsonb WHERE id = $1"#)
+        .bind(poison.job_id)
+        .execute(durable.pool())
+        .await
+        .expect("the Job is made unreadable");
+    sqlx::query(
+        "INSERT INTO restart_wakes (run_id, requested_at) VALUES ($1, '2000-01-01T00:00:00Z')",
+    )
+    .bind(poison_run)
+    .execute(durable.pool())
+    .await
+    .expect("the unreadable wake is queued before every other wake");
+
+    scene.mail_receiver(&fixture, scene.sender).await;
+
+    scene.pair.child.next_trigger(LONG).await;
+    durable
+        .assert_count(
+            RESTARTS_OF_RUN,
+            scene.child_run(),
+            1,
+            "the valid restart starts although a wake before it cannot be read",
+        )
+        .await;
+    durable
+        .assert_count(
+            WAKES_OF_RUN,
+            poison_run,
             1,
             "the wake that failed stays queued for a later sweep",
         )

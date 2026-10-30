@@ -12,7 +12,6 @@ pub trait SavedStates: Send + Sync {
         &self,
         work: WorkNamed<'_>,
         state: &SavedState,
-        maximum_bytes: usize,
         at: DateTime<Utc>,
     ) -> Stored<()>;
 
