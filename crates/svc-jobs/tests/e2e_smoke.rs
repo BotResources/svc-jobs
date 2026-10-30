@@ -21,7 +21,7 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 12] = [
+const DECLARED_QUERIES: [&str; 13] = [
     "jobs",
     roots::ATTACHMENT_ROOT,
     "jobsFleet",
@@ -32,6 +32,7 @@ const DECLARED_QUERIES: [&str; 12] = [
     "jobsMyMaxPriority",
     roots::PAYLOAD_ROOT,
     roots::SAVED_STATE_ROOT,
+    "jobsTreeAgents",
     roots::UNREAD_ROOT,
     "jobsUserMaxPriorities",
 ];

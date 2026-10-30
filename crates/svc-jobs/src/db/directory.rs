@@ -111,7 +111,7 @@ impl AgentDirectory for PgStore {
             Ok(initial_job_id) => initial_job_id,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        super::directory_entries_of_tree::entries_in(&mut tx, initial_job_id)
+        super::directory_tree::entries_in(&mut tx, initial_job_id)
             .await
             .map(Ok)
     }

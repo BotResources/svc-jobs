@@ -13,6 +13,10 @@ form to decide whether a version ships.
 
 ### Fixed
 
+- Administrators could not see the agent directory of a Tree, which the
+  sealed 0.6 gives them: `jobsTreeAgents(jobId)` reads it for the Tree of a
+  Job, as the runner listing shows it (the running agents and the finished
+  agents that can restart). It is a snapshot; no live delta carries it.
 - A Run start and every write that can put an item in an inbox (a mail, a cc
   notice, a call notice) take the Tree lock, so an item that reaches an agent
   whose restart Run starts at the same moment is either rung to that Run or
@@ -73,7 +77,8 @@ sealed 0.6 tests that it proved only in part:
 - A sync runner call ends with the answer or the failure in the Caller's Run,
   stays in progress until the Caller finishes it, and is cancelled with it.
 - Acts-for is transitive across two restarts; a plain retry gets none of it.
-- Administrators do not read mail, Results or kept payloads.
+- Administrators do not read mail, Results or kept payloads, and see the agent
+  directory of the Tree.
 - Agent registration is answered and fail-closed: a refused registration
   registers nothing; an ended Run registers no agent.
 - An item is announced to the Run and nothing is lost on reconnection: cc

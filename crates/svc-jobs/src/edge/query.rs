@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use super::error::edge_error;
 use super::project;
-use super::state::{EdgeState, administrator, own_user, principal};
+use super::state::{EdgeState, administrator, own_user, principal, tree_directory_reader};
+use super::types::directory::GqlDirectoryAgent;
 use super::types::fleet::GqlRunnerTypeView;
 use super::types::input::GqlJobFilterInput;
 use super::types::job::{GqlJobSummaryView, GqlJobView};
@@ -60,6 +61,23 @@ impl QueryRoot {
                 async_graphql::Error::from(EdgeError::not_found().with_reason("job_not_found"))
             })?;
         project::view_of_job(&state.store, job).await
+    }
+
+    async fn jobs_tree_agents(
+        &self,
+        ctx: &Context<'_>,
+        job_id: Uuid,
+    ) -> Result<Vec<GqlDirectoryAgent>> {
+        tree_directory_reader(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let job_id = JobId::new(job_id).map_err(edge_error)?;
+        crate::app::tree_directory::listed_agents_of_tree(&state.jobs, job_id)
+            .await
+            .map_err(edge_error)?
+            .map(|agents| agents.into_iter().map(GqlDirectoryAgent::from).collect())
+            .ok_or_else(|| {
+                async_graphql::Error::from(EdgeError::not_found().with_reason("job_not_found"))
+            })
     }
 
     async fn jobs_job_by_source(
