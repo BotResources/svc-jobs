@@ -101,7 +101,7 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
                 continue;
             }
             Ok(Reservation::NothingWaiting) => {}
-            Err(ServiceError::Contended(_)) => {
+            Err(error) if error.is_write_race() => {
                 jobs.waiters.wake_one(&key);
                 continue;
             }

@@ -19,6 +19,11 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   or end a Run, write a call notice); `serializes_with_the_tree_directory` says
   whether its write takes the Tree lock, and `CallNotices::plan` derives the
   notices from it. A new `JobEvent` does not compile until it is classified.
+- `event::queued::QueuedTree` and `JobQueued::tree`: which Tree a queued Job
+  belongs to (named by the event, below its parent, or its own), and
+  `JobEvent::queued`: the queued fact of an event, by an exhaustive match.
+- `ports::PortError::TreeLockTimeout`: the Tree lock stayed held past the
+  bounded wait; an adapter reports it apart from `ConcurrentModification`.
 - Refactor, same decisions: `decide_deliveries` handles `RestartInFlight` in the
   arm of `Running`. A restart Run that has not started is rung by nothing; the
   0.8.0 note on `Delivery::rings_live_run` means a started Run.

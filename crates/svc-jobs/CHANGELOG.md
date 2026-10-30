@@ -39,8 +39,9 @@ to `## Unreleased`).
   about 5 s (every typed refusal answers `{success, reason, message}`); a NATS
   surface request (`register_agents`, `list_agents`, `mark_read`) gets no
   reply, so the runner's own request times out; a runner status fact is
-  redelivered until the Tree is free. A timeout is not attempted again inside
-  the service, so a gesture waits 5 s once, not once per attempt. Each timeout
+  redelivered until the Tree is free. Within one gesture or one delivery a
+  timeout is not attempted again, so a gesture waits 5 s once, not once per
+  attempt. Each timeout
   is logged at warn and counted in `jobs_tree_lock_timeouts_total`. An event
   that ends a Run or writes a call notice on a Job whose Tree is unknown is
   refused (`job_not_found`) instead of going unlocked.

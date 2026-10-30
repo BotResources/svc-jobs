@@ -323,8 +323,9 @@ gesture. On the NATS request surface (`jobs.runner.register_agents.{runner_type}
 `jobs.runner.list_agents.{runner_type}`, `jobs.runner.mark_read.{runner_type}`)
 the request gets no reply, so the runner's own request times out and it repeats
 it. A runner status fact (`jobs.status.{runner_type}.*`) that cannot take the
-lock is redelivered until it can. The service does not attempt a timeout again
-by itself, logs it at warn and counts it in `jobs_tree_lock_timeouts_total`.
+lock is redelivered until it can. Within one gesture or one delivery the service
+does not attempt a timed-out wait again, logs it at warn and counts it in
+`jobs_tree_lock_timeouts_total`.
 
 A Job detail carries its Initial Job, Passport, Requester, call mode and
 payload as the Job holds them: the inline content, the form of a payload kept
