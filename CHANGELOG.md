@@ -9,6 +9,25 @@ form to decide whether a version ships.
 
 ## Unreleased
 
+### Fixed
+
+- A Run start and every write that can put an item in an inbox (a mail, a cc
+  notice, a call notice) take the Tree lock, so an item that reaches an agent
+  whose restart Run starts at the same moment is either rung to that Run or
+  listed by the first read the Run makes after its start; before, it could be
+  neither (`regression_ring_start_race`).
+- `jobsSaveState` refuses a state above the setting (`state_too_large`) before
+  it checks the work under the Tree lock.
+
+### Tests
+
+- The end-to-end suite proves every clause of the sealed 0.6 tests that it only
+  partly proved: see the test files named in the pull request.
+- The doorbell rings are counted by the JSON path of their payload
+  (`event_type`, `run_id`, `item_id`), no longer by a text pattern.
+- The tests of the backstop sweep live in `app/backstop/tests.rs` and record a
+  step when its future runs.
+
 ## 0.6.0 - 2026-10-30
 
 Requester, Passport and lineage on every job, the runner surface, the agent

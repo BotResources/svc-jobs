@@ -13,6 +13,18 @@ pub enum NoticePlan {
     JobFailed,
 }
 
+pub fn may_notify_a_caller(event: &JobEvent) -> bool {
+    matches!(
+        event,
+        JobEvent::JobQueued(_)
+            | JobEvent::RetryScheduled(_)
+            | JobEvent::RunCancelled(_)
+            | JobEvent::RunStarted(_)
+            | JobEvent::RunCompleted(_)
+            | JobEvent::JobFailed(_)
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallNotices {
     pub caller_run: RunId,
@@ -33,6 +45,9 @@ impl CallNotices {
     }
 
     pub fn plan(&self, event: &JobEvent) -> Vec<NoticePlan> {
+        if !may_notify_a_caller(event) {
+            return vec![];
+        }
         let background = self.mode == CallMode::Background;
         match event {
             JobEvent::JobQueued(_) if background => {
@@ -101,6 +116,21 @@ mod tests {
             caused_by_run_id: None,
             report: None,
         })
+    }
+
+    #[test]
+    fn every_event_that_tells_a_caller_is_one_that_may_notify_a_caller() {
+        for event in [started(), completed(), failed()] {
+            for notices in [background(), sync()] {
+                if !notices.plan(&event).is_empty() {
+                    assert!(
+                        may_notify_a_caller(&event),
+                        "{} tells a caller, so its write serializes with the inbox",
+                        event.event_type()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

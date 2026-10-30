@@ -4,6 +4,7 @@ use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::references::SourceReference;
+use bc_jobs::domain::runner::call_notices::may_notify_a_caller;
 use bc_jobs::event::job::JobEvent;
 
 use super::job_changes::JobChange;
@@ -99,11 +100,41 @@ pub(super) async fn guard_free_capacity_of_every_type(
     Ok(())
 }
 
-fn ends_a_run(event: &JobEvent) -> bool {
-    matches!(
-        event,
-        JobEvent::RunCompleted(_) | JobEvent::RunFailed(_) | JobEvent::RunCancelled(_)
-    )
+fn moves_the_inbox_of_a_run(event: &JobEvent) -> bool {
+    may_notify_a_caller(event)
+        || matches!(
+            event,
+            JobEvent::RunStarted(_)
+                | JobEvent::RunCompleted(_)
+                | JobEvent::RunFailed(_)
+                | JobEvent::RunCancelled(_)
+        )
+}
+
+async fn tree_of_change(
+    tx: &mut sqlx::PgConnection,
+    change: &JobChange,
+) -> Result<Option<JobId>, ServiceError> {
+    if let Some(job) = &change.before {
+        return Ok(Some(job.initial_job_id()));
+    }
+    if let Some(tree) = PgStore::initial_job_of(tx, change.job_id).await? {
+        return Ok(Some(tree));
+    }
+    let queued = change.events.iter().find_map(|event| match event {
+        JobEvent::JobQueued(fact) => Some(fact),
+        _ => None,
+    });
+    let Some(queued) = queued else {
+        return Ok(None);
+    };
+    if let Some(tree) = queued.initial_job_id {
+        return Ok(Some(tree));
+    }
+    match queued.parent_job_id {
+        Some(parent) => Ok(PgStore::initial_job_of(tx, parent).await?),
+        None => Ok(None),
+    }
 }
 
 pub(super) async fn lock_directory_trees(
@@ -118,14 +149,10 @@ pub(super) async fn lock_directory_trees(
         if let Some(premise) = &change.caller_address {
             trees.extend(crate::db::directory::tree_of_run(tx, premise.caller).await?);
         }
-        if !change.removes_directory && !change.events.iter().any(ends_a_run) {
+        if !change.removes_directory && !change.events.iter().any(moves_the_inbox_of_a_run) {
             continue;
         }
-        let tree = match &change.before {
-            Some(job) => Some(job.initial_job_id()),
-            None => PgStore::initial_job_of(tx, change.job_id).await?,
-        };
-        trees.extend(tree);
+        trees.extend(tree_of_change(tx, change).await?);
     }
     trees.sort_by_key(|tree| tree.as_uuid());
     trees.dedup();

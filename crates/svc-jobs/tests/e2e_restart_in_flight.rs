@@ -1,12 +1,10 @@
 mod support;
 
-use serde_json::Value;
 use support::db::Durable;
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture;
-use support::restart::{RESTARTS_OF_RUN, Scene, UNREAD_AT, running_child};
+use support::restart::{RESTARTS_OF_RUN, UNREAD_AT, running_child};
 use support::runner;
-use support::surface;
 use support::{LONG, QUIET};
 use uuid::Uuid;
 
@@ -16,19 +14,6 @@ async fn rings_for(durable: &Durable, run: Uuid) -> i64 {
 
 const WAKES_OF_RUN: &str = "SELECT count(*) FROM restart_wakes WHERE run_id = $1";
 
-async fn restartable_now(fixture: &JobsFixture, scene: &Scene<'_>, agent: Uuid) -> Value {
-    let listing = surface::list(fixture.nats(), &scene.pair.parent, scene.parent_run()).await;
-    listing["agents"]
-        .as_array()
-        .and_then(|agents| {
-            agents
-                .iter()
-                .find(|listed| listed["agent_id"] == agent.to_string())
-        })
-        .map(|listed| listed["restartable_now"].clone())
-        .unwrap_or_else(|| panic!("the agent is listed: {listing}"))
-}
-
 #[tokio::test]
 async fn while_a_restart_job_is_live_the_listing_the_mail_and_the_wake_agree_there_is_nothing_more_to_start()
  {
@@ -37,7 +22,7 @@ async fn while_a_restart_job_is_live_the_listing_the_mail_and_the_wake_agree_the
     let mut scene = running_child(&fixture, "restart-in-flight").await;
     scene.finish_child(&durable).await;
     assert_eq!(
-        restartable_now(&fixture, &scene, scene.receiver).await,
+        scene.restartable_now(&fixture, scene.receiver).await,
         true,
         "before any mail the finished agent is restartable"
     );
@@ -48,7 +33,7 @@ async fn while_a_restart_job_is_live_the_listing_the_mail_and_the_wake_agree_the
         .assert_count(RESTARTS_OF_RUN, scene.child_run(), 1, "one restart Job")
         .await;
     assert_eq!(
-        restartable_now(&fixture, &scene, scene.receiver).await,
+        scene.restartable_now(&fixture, scene.receiver).await,
         false,
         "the restart Job is live: the listing no longer offers a restart"
     );

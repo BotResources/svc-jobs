@@ -12,9 +12,8 @@ use support::clock;
 use support::contention::{
     Fixture, a_job_with_one_dispatched_run, a_registered_instance, commit, ids, metadata,
 };
+use support::db::RINGS_OF_ITEM;
 
-const RINGS_OF_ITEM: &str = "SELECT count(*) FROM integration_outbox \
-     WHERE payload->>'event_type' = 'run.item_arrived' AND payload #>> '{payload,item_id}' = $1";
 const NOTICES_OF_RUN: &str =
     "SELECT count(*) FROM inbox_items WHERE kind = 'NOTICE' AND run_id::text = $1";
 

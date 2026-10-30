@@ -8,6 +8,14 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## Unreleased
+
+- `domain::runner::call_notices::may_notify_a_caller`: the events after which
+  a Caller can receive a notice; `CallNotices::plan` plans nothing for any
+  other event.
+- `decide_deliveries` treats `RestartInFlight` in the arm of `Running`: the
+  restart Run is rung once it has started.
+
 ## 0.8.0 - 2026-10-30
 
 - `commands::job::restart::restart_job` and `RestartJob`: the restart Job of a

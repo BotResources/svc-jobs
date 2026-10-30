@@ -74,6 +74,16 @@ impl Durable {
             .unwrap_or_else(|error| panic!("counting the doorbell rings of {run_id}: {error}"))
     }
 
+    pub async fn rings_of_item(&self, item_id: Uuid) -> i64 {
+        sqlx::query_scalar(RINGS_OF_ITEM)
+            .bind(item_id.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("counting the doorbell rings of item {item_id}: {error}")
+            })
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -110,3 +120,5 @@ pub const CURRENT_RUNS_OF_RUN: &str = "SELECT count(*) FROM current_runs WHERE r
 pub const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \
      WHERE payload->>'event_type' = $1 AND payload #>> '{payload,run_id}' = $2 \
      AND ($3::text IS NULL OR payload #>> '{payload,item_kind}' = $3)";
+pub const RINGS_OF_ITEM: &str = "SELECT count(*) FROM integration_outbox \
+     WHERE payload->>'event_type' = 'run.item_arrived' AND payload #>> '{payload,item_id}' = $1";
