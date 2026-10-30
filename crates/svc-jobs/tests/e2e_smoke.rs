@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use async_graphql::parser::parse_schema;
 use async_graphql::parser::types::{ServiceDocument, TypeKind, TypeSystemDefinition};
 use br_test_harness::{E2eDatabase, GraphqlClient, SpawnedProcess, SseSubscription};
+use contract_jobs::graphql_roots as roots;
 use reqwest::StatusCode;
 use serde_json::json;
 use support::fixture::{
@@ -22,16 +23,16 @@ const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
 const DECLARED_QUERIES: [&str; 12] = [
     "jobs",
-    "jobsAttachment",
+    roots::ATTACHMENT_ROOT,
     "jobsFleet",
     "jobsJob",
     "jobsJobBySource",
     "jobsLogs",
-    "jobsMail",
+    roots::MAIL_ROOT,
     "jobsMyMaxPriority",
-    "jobsPayload",
-    "jobsSavedState",
-    "jobsUnread",
+    roots::PAYLOAD_ROOT,
+    roots::SAVED_STATE_ROOT,
+    roots::UNREAD_ROOT,
     "jobsUserMaxPriorities",
 ];
 
@@ -44,16 +45,16 @@ const DECLARED_MUTATIONS: [&str; 18] = [
     "jobsForceJobPriority",
     "jobsManualRetryJob",
     "jobsReactivateRunnerType",
-    "jobsReadResult",
+    roots::READ_RESULT_ROOT,
     "jobsRetireRunnerType",
-    "jobsSaveState",
-    "jobsSendMail",
+    roots::SAVE_STATE_ROOT,
+    roots::SEND_MAIL_ROOT,
     "jobsSetRunnerTypeDispatchMode",
     "jobsSetRunnerTypeMaxRunDuration",
     "jobsSetUserMaxPriority",
-    "jobsUploadAttachment",
-    "jobsUploadPayload",
-    "jobsUploadResult",
+    roots::UPLOAD_ATTACHMENT_ROOT,
+    roots::UPLOAD_PAYLOAD_ROOT,
+    roots::UPLOAD_RESULT_ROOT,
 ];
 
 const DECLARED_SUBSCRIPTIONS: [&str; 6] = [
@@ -120,9 +121,6 @@ async fn operational_probes_and_the_published_schema() {
 
 #[tokio::test]
 async fn a_pod_that_reports_ready_delivers_a_first_presence_signal_promptly() {
-    // Given: a pod subscribed to at the very first moment it answers /readyz 200, with no settling
-    // wait — a pod that were still binding its fan-out or its presence watch would have to make up
-    // the delay somewhere inside the bound asserted below
     let fixture = JobsFixture::start().await;
     assert!(
         gql::ready(fixture.url()).await,
@@ -137,15 +135,10 @@ async fn a_pod_that_reports_ready_delivers_a_first_presence_signal_promptly() {
         SseSubscription::open(fixture.url(), admin, &subs::fleet_changed(&runner_type)).await;
     stream::snapshot(&mut watch, FLEET_CHANGED, SHORT).await;
 
-    // When: an instance of a never-seen type announces presence on the cold pod
     let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     let announced_at = Instant::now();
     instance.connect().await;
 
-    // Then: the registration delta travels presence KV → durable fan-out → subscriber inside a
-    // tight bound. The presence watch replays history, so a late-bound watch would still deliver
-    // eventually — what a generous budget could never distinguish from a healthy pod. The bound is
-    // the assertion: a pod that reports ready before its fan-out is bound cannot meet it
     let registered = stream::await_fleet_event(&mut watch, wire::KIND_TYPE_REGISTERED, SHORT).await;
     let elapsed = announced_at.elapsed();
     assert!(
@@ -167,7 +160,6 @@ async fn a_pod_that_reports_ready_delivers_a_first_presence_signal_promptly() {
 
 #[tokio::test]
 async fn a_silence_proof_fails_rather_than_passes_when_the_socket_dies() {
-    // Given: a subscriber holding an open fleet stream
     let fixture = JobsFixture::start().await;
     let runner_type = wire::unique_runner_type("dead-stream");
     let mut watch = SseSubscription::open(
@@ -178,8 +170,6 @@ async fn a_silence_proof_fails_rather_than_passes_when_the_socket_dies() {
     .await;
     stream::snapshot(&mut watch, FLEET_CHANGED, SHORT).await;
 
-    // When: the service goes away under it, and absence is proved on that stream alone — nothing
-    // else runs inside this boundary, so a set-up failure can never be mistaken for the detector
     fixture.shutdown().await;
     let outcome = tokio::spawn(async move {
         stream::expect_total_silence(&mut watch, "a stream the service no longer serves", QUIET)
@@ -187,9 +177,6 @@ async fn a_silence_proof_fails_rather_than_passes_when_the_socket_dies() {
     })
     .await;
 
-    // Then: proving absence on a dead stream must fail loudly. Every `expect no delta` in this
-    // suite rests on this: a dead stream delivers nothing, so it satisfies any silence check by
-    // construction and turns every absence proof built on it into a vacuous pass
     assert!(
         outcome.is_err(),
         "expect_total_silence accepted a stream the service had stopped serving, so every absence \
@@ -222,20 +209,15 @@ fn panic_message(failure: tokio::task::JoinError) -> String {
 
 #[test]
 fn a_stream_that_ends_with_budget_left_is_a_closed_stream_not_a_timeout() {
-    // Given: a four-second wait, whose end-of-stream margin is the 500ms ceiling
     let budget = Duration::from_secs(4);
     let margin = Duration::from_millis(500);
 
-    // Then: an end arriving while a real slice of the budget is unspent is the service closing the
-    // stream. This is the branch that guards every silence proof, and the one a killed socket never
-    // reaches, because the transport errors before the stream can end cleanly
     assert!(stream::is_stream_end(budget, Duration::from_secs(2)));
     assert!(stream::is_stream_end(
         budget,
         margin + Duration::from_millis(1)
     ));
 
-    // Then: an end arriving with the budget spent is an ordinary timeout, and the silence is real
     assert!(!stream::is_stream_end(budget, margin));
     assert!(!stream::is_stream_end(budget, Duration::from_millis(100)));
     assert!(!stream::is_stream_end(budget, Duration::ZERO));
@@ -243,7 +225,6 @@ fn a_stream_that_ends_with_budget_left_is_a_closed_stream_not_a_timeout() {
 
 #[test]
 fn the_stream_end_margin_scales_with_the_budget_up_to_a_ceiling() {
-    // Then: short windows get a proportional margin, so the detector never goes inert on them
     assert_eq!(
         stream::margin_for(Duration::from_millis(400)),
         Duration::from_millis(100),
@@ -253,8 +234,6 @@ fn the_stream_end_margin_scales_with_the_budget_up_to_a_ceiling() {
         Duration::from_millis(10),
     );
 
-    // Then: long windows are capped, so a generous budget does not blind the detector to a stream
-    // that ends half a second before the deadline
     assert_eq!(
         stream::margin_for(Duration::from_secs(4)),
         Duration::from_millis(500),
@@ -267,7 +246,6 @@ fn the_stream_end_margin_scales_with_the_budget_up_to_a_ceiling() {
 
 #[tokio::test]
 async fn readiness_stays_down_while_a_declared_dependency_is_unbound() {
-    // Given: a real database, and a NATS endpoint that takes the connection and never answers
     require_provisioned_infrastructure();
     let db = E2eDatabase::create(true, &[])
         .await
@@ -285,7 +263,6 @@ async fn readiness_stays_down_while_a_declared_dependency_is_unbound() {
     let port = free_port().to_string();
     let base_url = format!("http://127.0.0.1:{port}");
 
-    // When: the binary boots against it and is probed from the moment it binds its port
     let service = SpawnedProcess::spawn(
         BIN,
         &[],
@@ -300,7 +277,6 @@ async fn readiness_stays_down_while_a_declared_dependency_is_unbound() {
         ],
     );
 
-    // Then: every answer it gives is 503 with a reason, and it never once reports ready
     let deadline = Instant::now() + DOWN_PHASE_WINDOW;
     let mut answers = 0_usize;
     while Instant::now() < deadline {

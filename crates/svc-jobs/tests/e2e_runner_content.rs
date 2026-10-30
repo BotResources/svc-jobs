@@ -252,6 +252,12 @@ async fn any_run_saves_a_state_within_the_limit_and_only_the_run_of_a_restart_jo
         gesture::refusal(&oversized, "jobsSaveState"),
         "state_too_large"
     );
+    let beyond_the_default_body_limit = save(json!({ "log": "x".repeat(3_000_000) })).await;
+    assert_eq!(
+        gesture::refusal(&beyond_the_default_body_limit, "jobsSaveState"),
+        "state_too_large",
+        "a body above 2 MB reaches the gesture and is refused by its own limit"
+    );
 
     let read = gql
         .query(

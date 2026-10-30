@@ -6,6 +6,7 @@ use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use svc_jobs::app::write::JobChange;
+use svc_jobs::db::call_notices::{Delivering, NoticeFor, insert_notice};
 
 use support::clock;
 use support::contention::{
@@ -28,6 +29,34 @@ fn notice(job_id: JobId) -> Notice {
     }
 }
 
+async fn deliver(
+    fixture: &Fixture,
+    run_id: bc_jobs::domain::ids::RunId,
+    job_id: JobId,
+) -> bc_jobs::domain::ids::ItemId {
+    let mut tx = fixture.store.begin().await.expect("a transaction opens");
+    let ids = ids();
+    let metadata = metadata();
+    let item = insert_notice(
+        &mut tx,
+        NoticeFor {
+            run_id,
+            address: None,
+        },
+        &notice(job_id),
+        Delivering {
+            ids: &ids,
+            metadata: &metadata,
+            at: clock::now(),
+        },
+    )
+    .await
+    .expect("the notice is kept")
+    .expect("the run is not removed");
+    tx.commit().await.expect("the notice commits");
+    item
+}
+
 #[tokio::test]
 async fn a_notice_is_always_kept_and_rings_the_doorbell_only_for_a_live_run() {
     let fixture = Fixture::start().await;
@@ -36,18 +65,7 @@ async fn a_notice_is_always_kept_and_rings_the_doorbell_only_for_a_live_run() {
     let (job, run_id) = a_job_with_one_dispatched_run(&fixture, runner_type).await;
     let run_text = run_id.as_uuid().to_string();
 
-    let quiet = fixture
-        .store
-        .deliver_notice(
-            run_id,
-            None,
-            &notice(job.id()),
-            &ids(),
-            &metadata(),
-            clock::now(),
-        )
-        .await
-        .expect("the notice is kept for a run that has not started");
+    let quiet = deliver(&fixture, run_id, job.id()).await;
     assert_eq!(fixture.count(NOTICES_OF_RUN, &run_text).await, 1);
     assert_eq!(
         fixture
@@ -73,18 +91,7 @@ async fn a_notice_is_always_kept_and_rings_the_doorbell_only_for_a_live_run() {
     .await
     .expect("the run starts");
 
-    let item = fixture
-        .store
-        .deliver_notice(
-            run_id,
-            None,
-            &notice(job.id()),
-            &ids(),
-            &metadata(),
-            clock::now(),
-        )
-        .await
-        .expect("the notice is kept for a live run");
+    let item = deliver(&fixture, run_id, job.id()).await;
     assert_eq!(fixture.count(NOTICES_OF_RUN, &run_text).await, 2);
     assert_eq!(
         fixture

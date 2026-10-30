@@ -49,6 +49,11 @@ async fn the_runner_surface_admits_the_holders_of_the_runner_scope_alone() {
         .user_id(Uuid::now_v7())
         .claim("scopes", vec!["jobs:runner"])
         .build();
+    let super_user_with_scope = PassportBuilder::new()
+        .user_id(Uuid::now_v7())
+        .super_admin(true)
+        .claim("scopes", vec!["jobs:runner"])
+        .build();
     let other_scope = PassportBuilder::new()
         .user_id(Uuid::now_v7())
         .claim("scopes", vec!["threads:runner"])
@@ -59,6 +64,8 @@ async fn the_runner_surface_admits_the_holders_of_the_runner_scope_alone() {
         (machine_caller(), "a service without the scope"),
         (other_scope, "a service holding another scope"),
         (inactive, "an inactive holder of the scope"),
+        (human_with_scope, "a human holding the scope"),
+        (super_user_with_scope, "a super user holding the scope"),
     ] {
         let refused = gesture::call(
             &client,
@@ -71,12 +78,6 @@ async fn the_runner_surface_admits_the_holders_of_the_runner_scope_alone() {
         verdict::expect_code_shaped(&refused, what);
     }
 
-    let admitted = gesture::unread(&client, &human_with_scope, &work, None).await;
-    assert_eq!(
-        gesture::refusal(&admitted, "jobsUnread"),
-        "run_unknown",
-        "the scope is what admits; the Run is then judged on its own"
-    );
     let holder = gesture::unread(&client, &runner_access(), &work, None).await;
     assert_eq!(gesture::refusal(&holder, "jobsUnread"), "run_unknown");
     fixture.shutdown().await;
