@@ -404,7 +404,6 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: the parent's runner fans out children requesting 1, by v2 and by v1, each accepted before the next, so creation order is defined
     let lowest = JobDeclaration::new(&child_type)
         .with_parent(parent_id)
         .triggered_by_user(owner.actor_id())

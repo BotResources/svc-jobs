@@ -18,7 +18,6 @@ fn bare_root(runner_type: &str, producer: &str) -> (Uuid, Value) {
 
 #[tokio::test]
 async fn a_root_creation_without_a_passport_is_refused_in_every_contract_version() {
-    // Given: a producing service and a listener on both generations of creation answers
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let answers = EventLog::open_v2(fixture.fabric()).await;
@@ -26,14 +25,11 @@ async fn a_root_creation_without_a_passport_is_refused_in_every_contract_version
     let producer = Producer::new(fixture.fabric(), "projects");
     let runner_type = wire::unique_runner_type("passportless");
 
-    // When: a root Job is created with no Passport, by the v3 wire and by the v1 wire
     let (by_v3, payload_v3) = bare_root(&runner_type, "projects");
     let command = producer.send_v3(wire::VERB_CREATE, payload_v3).await;
     let (by_v1, payload_v1) = bare_root(&runner_type, "projects");
     producer.send_v1(wire::VERB_CREATE, payload_v1).await;
 
-    // Then: each is answered by a rejection naming passport_required, with the Job as its own
-    // parent and Initial Job, and the answer echoes the correlation and names the command
     let rejected = answers
         .expect_one(wire::FACT_CREATION_REJECTED, by_v3, LONG)
         .await;
@@ -73,7 +69,6 @@ async fn a_root_creation_without_a_passport_is_refused_in_every_contract_version
 
 #[tokio::test]
 async fn a_root_with_its_passport_is_queued_as_its_own_parent_and_initial_job() {
-    // Given: a producing service
     let fixture = JobsFixture::start().await;
     let answers = EventLog::open_v2(fixture.fabric()).await;
     let events = EventLog::open(fixture.fabric()).await;
@@ -81,13 +76,10 @@ async fn a_root_with_its_passport_is_queued_as_its_own_parent_and_initial_job() 
     let producer = Producer::new(fixture.fabric(), "projects");
     let runner_type = wire::unique_runner_type("rooted");
 
-    // When: it creates a root Job, with its Passport
     let declaration = JobDeclaration::new(&runner_type);
     let job_id = declaration.job_id;
     let command = producer.declare(&declaration).await;
 
-    // Then: queued.v2 names the Job as its own parent and Initial Job, and its Requester as the
-    // service; queued.v1 is still published; the Passport is stored with the Job
     let queued = answers.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
     let payload = queued.payload();
     assert_eq!(payload["parent_job_id"], job_id.to_string());
@@ -115,7 +107,6 @@ async fn a_root_with_its_passport_is_queued_as_its_own_parent_and_initial_job() 
 
 #[tokio::test]
 async fn a_child_takes_the_passport_of_its_parent_and_a_different_one_is_refused() {
-    // Given: a root Job with its Passport
     let fixture = JobsFixture::start().await;
     let answers = EventLog::open_v2(fixture.fabric()).await;
     let producer = Producer::new(fixture.fabric(), "projects");
@@ -126,7 +117,6 @@ async fn a_child_takes_the_passport_of_its_parent_and_a_different_one_is_refused
         .expect_one(wire::FACT_QUEUED, root.job_id, LONG)
         .await;
 
-    // When: a child is created with no Passport, and another with a foreign Passport
     let child = JobDeclaration::new(&runner_type).with_parent(root.job_id);
     producer.declare(&child).await;
     let mut foreign = child_payload(&runner_type, root.job_id);
@@ -140,7 +130,6 @@ async fn a_child_takes_the_passport_of_its_parent_and_a_different_one_is_refused
         .clone();
     producer.send_v3(wire::VERB_CREATE, foreign).await;
 
-    // Then: the first is queued below its parent in the same tree; the second is refused
     let queued = answers
         .expect_one(wire::FACT_QUEUED, child.job_id, LONG)
         .await;
@@ -168,7 +157,6 @@ fn child_payload(runner_type: &str, parent: Uuid) -> Value {
 
 #[tokio::test]
 async fn only_the_requester_finishes_fails_or_cancels_and_a_refusal_names_its_reason() {
-    // Given: a Job requested by one service, and another service
     let fixture = JobsFixture::start().await;
     let answers = EventLog::open_v2(fixture.fabric()).await;
     let requester = Producer::new(fixture.fabric(), "projects");
@@ -179,13 +167,11 @@ async fn only_the_requester_finishes_fails_or_cancels_and_a_refusal_names_its_re
     requester.declare(&declaration).await;
     answers.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
 
-    // When: the stranger tries to finish, fail and cancel it
     let body = json!({ "job_id": job_id.to_string() });
     let finish = stranger.send_v3(wire::VERB_FINISH, body.clone()).await;
     stranger.send_v3(wire::VERB_FAIL, body.clone()).await;
     stranger.send_v3(wire::VERB_CANCEL, body.clone()).await;
 
-    // Then: each is refused with not_requester, naming the command and echoing the correlation
     let refusals = answers
         .expect_exactly(wire::FACT_COMMAND_REJECTED, job_id, 3, LONG)
         .await;
@@ -217,10 +203,8 @@ async fn only_the_requester_finishes_fails_or_cancels_and_a_refusal_names_its_re
         .expect_none(wire::FACT_CANCELLED, job_id, QUIET)
         .await;
 
-    // When: the requester finishes it
     requester.send_v3(wire::VERB_FINISH, body.clone()).await;
 
-    // Then: completed.v2 names the lineage, and a later finish is refused as terminal
     let completed = answers.expect_one(wire::FACT_COMPLETED, job_id, LONG).await;
     assert_eq!(completed.payload()["initial_job_id"], job_id.to_string());
     requester.send_v3(wire::VERB_FINISH, body).await;
@@ -239,7 +223,6 @@ async fn only_the_requester_finishes_fails_or_cancels_and_a_refusal_names_its_re
 
 #[tokio::test]
 async fn the_requester_cancels_a_job_and_is_told_it_was_accepted_even_when_it_is_already_over() {
-    // Given: a Job requested by a service
     let fixture = JobsFixture::start().await;
     let answers = EventLog::open_v2(fixture.fabric()).await;
     let requester = Producer::new(fixture.fabric(), "projects");
@@ -250,12 +233,10 @@ async fn the_requester_cancels_a_job_and_is_told_it_was_accepted_even_when_it_is
     answers.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
     let body = json!({ "job_id": job_id.to_string() });
 
-    // When: the requester cancels it, then cancels it again
     let first = requester.send_v3(wire::VERB_CANCEL, body.clone()).await;
     answers.expect_one(wire::FACT_CANCELLED, job_id, LONG).await;
     requester.send_v3(wire::VERB_CANCEL, body).await;
 
-    // Then: the first is accepted with one cancelled.v2; the second is accepted and changes nothing
     let accepted = answers
         .expect_exactly(wire::FACT_CANCEL_ACCEPTED, job_id, 2, LONG)
         .await;

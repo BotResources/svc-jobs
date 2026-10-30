@@ -356,20 +356,17 @@ mod tests {
 
     #[test]
     fn a_service_that_requested_the_job_may_cancel_it_and_a_terminal_job_cancels_as_a_no_op() {
-        // Given: a job requested by a service, already completed
         let actor = ActorRef::new(Uuid::from_u128(7));
         let job = JobBuilder::new()
             .with_requester(Requester::Service(Some(actor)))
             .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
             .build();
-        // When: the requester cancels it
         let result = job
             .cancel(CancelJob {
                 resolution_id: resolution_id(),
                 requester: service_caller(actor),
             })
             .unwrap();
-        // Then: nothing changes and the caller is told, so the cascade can still run
         assert!(result.events.is_empty());
         assert_eq!(
             result.warnings,
@@ -379,22 +376,18 @@ mod tests {
 
     #[test]
     fn a_service_that_did_not_request_the_job_cannot_cancel_it() {
-        // Given: a job requested by one service
         let job = JobBuilder::new()
             .with_requester(Requester::Service(Some(ActorRef::new(Uuid::from_u128(7)))))
             .build();
-        // When: another service cancels it
         let result = job.cancel(CancelJob {
             resolution_id: resolution_id(),
             requester: service_caller(ActorRef::new(Uuid::from_u128(8))),
         });
-        // Then: it is refused as not the requester
         assert_eq!(result, Err(JobsError::NotRequester));
     }
 
     #[test]
     fn a_run_working_the_job_may_cancel_it_but_another_run_may_not() {
-        // Given: a job requested by a Run
         let requesting_run = RunId::new(Uuid::now_v7()).unwrap();
         let job = JobBuilder::new()
             .with_requester(Requester::Run(requesting_run))
@@ -406,7 +399,6 @@ mod tests {
             },
             acts_for: ActsFor::default(),
         };
-        // When / Then: the working Run cancels, a stranger Run is refused
         assert!(
             job.cancel(CancelJob {
                 resolution_id: resolution_id(),
