@@ -56,10 +56,6 @@ impl PrincipalFacts {
         }
     }
 
-    pub fn guard_reads_tree_directory(&self) -> Result<(), JobsError> {
-        self.guard_platform_administrator()
-    }
-
     pub fn guard_reads_own_max_priority(&self) -> Result<(), JobsError> {
         if self.is_active_human_holding(PlatformRole::Member) {
             Ok(())
@@ -119,17 +115,6 @@ mod tests {
             assert_eq!(
                 caller.guard_reads_own_max_priority(),
                 Err(JobsError::NotActiveHuman)
-            );
-        }
-    }
-
-    #[test]
-    fn only_an_active_administrator_human_reads_the_directory_of_a_tree() {
-        assert_eq!(human(true, true).guard_reads_tree_directory(), Ok(()));
-        for caller in [human(true, false), human(false, true), service(true)] {
-            assert_eq!(
-                caller.guard_reads_tree_directory(),
-                Err(JobsError::NotPlatformAdministrator)
             );
         }
     }

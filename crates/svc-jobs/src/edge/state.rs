@@ -34,12 +34,6 @@ pub fn administrator(ctx: &Context<'_>) -> Result<KnownUser> {
     known_administrator(passport_of(ctx)?)
 }
 
-pub fn tree_directory_reader(ctx: &Context<'_>) -> Result<()> {
-    principal(ctx)?
-        .guard_reads_tree_directory()
-        .map_err(|refusal| async_graphql::Error::from(of_domain(&refusal)))
-}
-
 pub fn actor(ctx: &Context<'_>) -> Result<KnownUser> {
     known_user(passport_of(ctx)?)
 }
