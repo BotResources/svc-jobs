@@ -32,30 +32,21 @@ pub struct HeldAgent {
 pub enum RegistrationRefusal {
     RunUnknown,
     RunNotStarted,
+    RunEnded,
     RunRemoved,
     InstanceMismatch,
     AgentIdInOtherTree { agent_id: AgentId },
     AgentIdNotFinished { agent_id: AgentId },
+    AgentNamedTwice,
     Malformed,
 }
 
 impl RegistrationRefusal {
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::RunUnknown => "run_unknown",
-            Self::RunNotStarted => "run_not_started",
-            Self::RunRemoved => "run_removed",
-            Self::InstanceMismatch => "instance_mismatch",
-            Self::AgentIdInOtherTree { .. } => "agent_id_in_other_tree",
-            Self::AgentIdNotFinished { .. } => "agent_id_not_finished",
-            Self::Malformed => "malformed",
-        }
-    }
-
     pub fn message(&self) -> &'static str {
         match self {
             Self::RunUnknown => "Jobs holds no such run.",
             Self::RunNotStarted => "The run is not started, so it cannot register agents.",
+            Self::RunEnded => "The run has ended, so it cannot register agents.",
             Self::RunRemoved => "The run was removed from the agent directory.",
             Self::InstanceMismatch => "The run is not held by the instance that sent the request.",
             Self::AgentIdInOtherTree { .. } => {
@@ -64,7 +55,8 @@ impl RegistrationRefusal {
             Self::AgentIdNotFinished { .. } => {
                 "An agent id of the request belongs to an agent of another run that has not finished."
             }
-            Self::Malformed => "The request names the same agent twice.",
+            Self::AgentNamedTwice => "The request names the same agent twice.",
+            Self::Malformed => "Jobs cannot read the request.",
         }
     }
 }
@@ -92,7 +84,8 @@ pub struct Registration {
 pub fn require_live(standing: RunStanding) -> Result<JobId, RegistrationRefusal> {
     match standing {
         RunStanding::Unknown => Err(RegistrationRefusal::RunUnknown),
-        RunStanding::NotStarted | RunStanding::Ended => Err(RegistrationRefusal::RunNotStarted),
+        RunStanding::NotStarted => Err(RegistrationRefusal::RunNotStarted),
+        RunStanding::Ended => Err(RegistrationRefusal::RunEnded),
         RunStanding::Removed => Err(RegistrationRefusal::RunRemoved),
         RunStanding::StartedOnAnotherInstance => Err(RegistrationRefusal::InstanceMismatch),
         RunStanding::Started { initial_job_id } => Ok(initial_job_id),
@@ -111,7 +104,7 @@ pub fn decide_registration(
         .iter()
         .all(|declaration| seen.insert(declaration.agent_id))
     {
-        return Err(RegistrationRefusal::Malformed);
+        return Err(RegistrationRefusal::AgentNamedTwice);
     }
     let mut agents = Vec::with_capacity(declarations.len());
     for declaration in declarations {
@@ -179,6 +172,7 @@ mod tests {
         for (standing, refusal) in [
             (RunStanding::Unknown, RegistrationRefusal::RunUnknown),
             (RunStanding::NotStarted, RegistrationRefusal::RunNotStarted),
+            (RunStanding::Ended, RegistrationRefusal::RunEnded),
             (RunStanding::Removed, RegistrationRefusal::RunRemoved),
             (
                 RunStanding::StartedOnAnotherInstance,
@@ -275,7 +269,7 @@ mod tests {
         );
         assert_eq!(
             decide_registration(run, started(tree), &[declaring(good), declaring(good)], &[]),
-            Err(RegistrationRefusal::Malformed)
+            Err(RegistrationRefusal::AgentNamedTwice)
         );
     }
 }

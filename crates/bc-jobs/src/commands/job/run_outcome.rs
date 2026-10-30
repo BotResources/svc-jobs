@@ -42,14 +42,13 @@ impl Job {
         &self,
         fact: RunCompletedFact,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunCompleted") {
-            return Ok(discarded);
-        }
         let run = self.find_run(fact.run_id)?;
         if let Some(discarded) = self.discard_settled("RunCompleted", run) {
             return Ok(discarded);
         }
-        guard_started(run)?;
+        if !self.is_terminal() {
+            guard_started(run)?;
+        }
         Ok(CommandResult::from_event(JobEvent::RunCompleted(
             RunCompleted {
                 job_id: self.id(),
@@ -65,14 +64,13 @@ impl Job {
         policy: &RetryPolicy,
         limits: &ServiceLimits,
     ) -> Result<JobCommandResult, JobsError> {
-        if let Some(discarded) = self.discard_on_terminal_job("RunFailed") {
-            return Ok(discarded);
-        }
         let run = self.find_run(fact.run_id)?;
         if let Some(discarded) = self.discard_settled("RunFailed", run) {
             return Ok(discarded);
         }
-        guard_started(run)?;
+        if !self.is_terminal() {
+            guard_started(run)?;
+        }
         Ok(CommandResult::new(
             self.run_failure_events(run, &fact, policy, limits)?,
         ))
@@ -92,6 +90,9 @@ impl Job {
             attempt_number: failed_attempt,
             report: fact.report.clone(),
         })];
+        if self.is_terminal() {
+            return Ok(events);
+        }
         let next_attempt_number = AttemptNumber::new(failed_attempt.get().saturating_add(1))?;
         let retryable =
             fact.report.kind().is_retryable() && self.budget(limits)?.allows(next_attempt_number);

@@ -121,9 +121,6 @@ impl Job {
         }
         let mut runs = state.runs;
         runs.sort_by_key(|run| (run.attempt_number(), run.dispatched_at(), run.id()));
-        // The Runs that count number the attempts 1, 2, …; a withdrawn Run
-        // carries the number of the attempt it was meant to be, which a later
-        // Run takes again.
         let mut counted: u32 = 0;
         for run in &runs {
             if run.counts_as_attempt() {
@@ -137,9 +134,6 @@ impl Job {
         }
         if runs.iter().filter(|run| !run.is_terminal()).count() > 1 {
             return Err(corrupt("several_non_terminal_runs"));
-        }
-        if state.resolution.is_some() && runs.iter().any(|run| !run.is_terminal()) {
-            return Err(corrupt("terminal_job_with_a_live_run"));
         }
         if let Some(resolution) = &state.resolution
             && let Some(caused_by) = resolution.caused_by_run_id()

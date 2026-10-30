@@ -4,6 +4,7 @@ pub mod claim;
 pub mod directory;
 pub mod dispatch_order;
 pub mod doorbell;
+pub mod due_work;
 pub mod fleet;
 pub mod hydrate;
 pub mod impacts;

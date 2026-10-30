@@ -15,15 +15,12 @@ fn failure(run_id: RunId, kind: RunFailureKind) -> RunFailureFact {
 
 #[test]
 fn a_successful_run_does_not_complete_its_job() {
-    // Given: a job whose only attempt is running
     let run = RunBuilder::new(1).started(ts(5)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: the runner reports success
     let result = job
         .record_run_completed(RunCompletedFact { run_id })
         .unwrap();
-    // Then: only the run completes — the owner alone finishes the job
     assert_eq!(result.events.len(), 1);
     assert!(matches!(
         result.events.first(),
@@ -33,11 +30,9 @@ fn a_successful_run_does_not_complete_its_job() {
 
 #[test]
 fn a_transient_failure_with_budget_left_schedules_another_attempt() {
-    // Given: a running first attempt on a job allowed three attempts
     let run = RunBuilder::new(1).started(ts(5)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: it fails transiently
     let result = job
         .record_run_failed(
             failure(run_id, RunFailureKind::Transient),
@@ -45,7 +40,6 @@ fn a_transient_failure_with_budget_left_schedules_another_attempt() {
             &ServiceLimits::default(),
         )
         .unwrap();
-    // Then: the failure is recorded and the next attempt gets a stored due time
     match result.events.as_slice() {
         [
             JobEvent::RunFailed(failed),
@@ -62,11 +56,9 @@ fn a_transient_failure_with_budget_left_schedules_another_attempt() {
 
 #[test]
 fn a_permanent_failure_ends_automatic_retry_immediately() {
-    // Given: a running first attempt with budget to spare
     let run = RunBuilder::new(1).started(ts(5)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: it fails permanently
     let result = job
         .record_run_failed(
             failure(run_id, RunFailureKind::Permanent),
@@ -74,7 +66,6 @@ fn a_permanent_failure_ends_automatic_retry_immediately() {
             &ServiceLimits::default(),
         )
         .unwrap();
-    // Then: the job fails at once, carrying the report to its owner
     match result.events.as_slice() {
         [JobEvent::RunFailed(_), JobEvent::JobFailed(job_failed)] => {
             assert_eq!(
@@ -90,11 +81,9 @@ fn a_permanent_failure_ends_automatic_retry_immediately() {
 
 #[test]
 fn a_transient_failure_on_the_last_attempt_fails_the_job() {
-    // Given: a job allowed one attempt, currently running it
     let run = RunBuilder::new(1).started(ts(5)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_max_attempts(1).with_run(run).build();
-    // When: the attempt fails transiently
     let result = job
         .record_run_failed(
             failure(run_id, RunFailureKind::Transient),
@@ -102,13 +91,11 @@ fn a_transient_failure_on_the_last_attempt_fails_the_job() {
             &ServiceLimits::default(),
         )
         .unwrap();
-    // Then: the budget is spent, so the failure becomes terminal
     assert!(matches!(result.events.last(), Some(JobEvent::JobFailed(_))));
 }
 
 #[test]
 fn a_runner_retry_hint_lengthens_the_recorded_due_time() {
-    // Given: a run failing transiently with a five minute hint
     let run = RunBuilder::new(1).started(ts(5)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
@@ -123,11 +110,9 @@ fn a_runner_retry_hint_lengthens_the_recorded_due_time() {
         .unwrap(),
         ..failure(run_id, RunFailureKind::Transient)
     };
-    // When: the failure is recorded
     let result = job
         .record_run_failed(hinted, &RetryPolicy::default(), &ServiceLimits::default())
         .unwrap();
-    // Then: the hint wins over the shorter platform backoff
     match result.events.last() {
         Some(JobEvent::RetryScheduled(scheduled)) => {
             assert_eq!(scheduled.due_at, ts(20) + chrono::TimeDelta::minutes(5));
@@ -138,11 +123,9 @@ fn a_runner_retry_hint_lengthens_the_recorded_due_time() {
 
 #[test]
 fn a_redelivered_terminal_fact_changes_no_history() {
-    // Given: a run that already completed
     let run = RunBuilder::new(1).started(ts(5)).completed(ts(20)).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: a contradicting failure arrives for the same run
     let result = job
         .record_run_failed(
             failure(run_id, RunFailureKind::Transient),
@@ -150,19 +133,15 @@ fn a_redelivered_terminal_fact_changes_no_history() {
             &ServiceLimits::default(),
         )
         .unwrap();
-    // Then: the run never reopens — the fact is acknowledged and discarded
     assert!(result.is_empty());
 }
 
 #[test]
 fn a_completion_for_a_run_that_never_started_is_refused() {
-    // Given: a dispatched run whose start fact has not been processed yet
     let run = RunBuilder::new(1).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: the completion arrives first, the status subjects being distinct and at-least-once
     let result = job.record_run_completed(RunCompletedFact { run_id });
-    // Then: the fact is refused for redelivery rather than settling a run with no instance
     assert_eq!(
         result,
         Err(JobsError::RunNotStarted {
@@ -173,21 +152,59 @@ fn a_completion_for_a_run_that_never_started_is_refused() {
 
 #[test]
 fn a_failure_for_a_run_that_never_started_is_refused() {
-    // Given: a dispatched run whose start fact has not been processed yet
     let run = RunBuilder::new(1).build();
     let run_id = run.id();
     let job = JobBuilder::new().with_run(run).build();
-    // When: a failure arrives before the start
     let result = job.record_run_failed(
         failure(run_id, RunFailureKind::Transient),
         &RetryPolicy::default(),
         &ServiceLimits::default(),
     );
-    // Then: no attempt is burned and no retry is scheduled on a run nobody ever claimed
     assert_eq!(
         result,
         Err(JobsError::RunNotStarted {
             run_id: run_id.as_uuid()
         })
     );
+}
+
+#[test]
+fn a_success_for_a_live_run_of_a_terminal_job_ends_the_run_and_leaves_the_job() {
+    let run = RunBuilder::new(1).started(ts(5)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new()
+        .with_run(run)
+        .with_resolution(crate::domain::job::resolution::JobResolution::completed(
+            resolution_id(),
+            ts(10),
+        ))
+        .build();
+    let result = job
+        .record_run_completed(RunCompletedFact { run_id })
+        .unwrap();
+    assert!(matches!(
+        result.events.as_slice(),
+        [JobEvent::RunCompleted(_)]
+    ));
+}
+
+#[test]
+fn a_permanent_failure_for_a_live_run_of_a_terminal_job_ends_the_run_and_leaves_the_job() {
+    let run = RunBuilder::new(1).started(ts(5)).build();
+    let run_id = run.id();
+    let job = JobBuilder::new()
+        .with_run(run)
+        .with_resolution(crate::domain::job::resolution::JobResolution::completed(
+            resolution_id(),
+            ts(10),
+        ))
+        .build();
+    let result = job
+        .record_run_failed(
+            failure(run_id, RunFailureKind::Transient),
+            &RetryPolicy::default(),
+            &ServiceLimits::default(),
+        )
+        .unwrap();
+    assert!(matches!(result.events.as_slice(), [JobEvent::RunFailed(_)]));
 }

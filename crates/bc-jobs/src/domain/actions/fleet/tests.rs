@@ -247,7 +247,7 @@ fn the_settings_affordances_are_open_whatever_the_lifecycle() {
 }
 
 #[test]
-fn the_successor_of_a_claim_type_waits_to_be_claimed_and_any_other_is_pushed() {
+fn the_successor_waits_for_a_claim_or_for_free_capacity_and_is_otherwise_pushed() {
     let run = crate::fixtures::run_id();
     let pushed = RunnerType::hydrate(RunnerTypeState {
         id: RunnerTypeId::new(Uuid::now_v7()).unwrap(),
@@ -258,26 +258,35 @@ fn the_successor_of_a_claim_type_waits_to_be_claimed_and_any_other_is_pushed() {
             max_run_duration: Some(MaxRunDuration::from_seconds(96 * 3600).unwrap()),
             ..RunnerTypeSettings::default()
         },
-        instances: vec![],
+        instances: vec![declaring("pod-1", ReportedStatus::Ready, 2)],
     })
     .unwrap();
     assert_eq!(
-        successor_dispatch(Some(&claimed(vec![])), run, MaxRunDuration::SERVICE_DEFAULT),
-        SuccessorDispatch::AwaitClaim
+        successor_dispatch(
+            Some(&claimed(vec![])),
+            run,
+            MaxRunDuration::SERVICE_DEFAULT,
+            0
+        ),
+        SuccessorDispatch::Wait
     );
     assert_eq!(
-        successor_dispatch(Some(&pushed), run, MaxRunDuration::SERVICE_DEFAULT),
+        successor_dispatch(Some(&pushed), run, MaxRunDuration::SERVICE_DEFAULT, 0),
         SuccessorDispatch::Push {
             first_run_id: run,
             max_run_duration: MaxRunDuration::from_seconds(96 * 3600).unwrap(),
         }
     );
     assert_eq!(
-        successor_dispatch(None, run, MaxRunDuration::SERVICE_DEFAULT),
+        successor_dispatch(None, run, MaxRunDuration::SERVICE_DEFAULT, 0),
         SuccessorDispatch::Push {
             first_run_id: run,
             max_run_duration: MaxRunDuration::SERVICE_DEFAULT,
         }
+    );
+    assert_eq!(
+        successor_dispatch(Some(&pushed), run, MaxRunDuration::SERVICE_DEFAULT, 2),
+        SuccessorDispatch::Wait
     );
 }
 

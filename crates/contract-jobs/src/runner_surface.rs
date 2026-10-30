@@ -17,14 +17,20 @@ pub const REGISTER_AGENTS_PREFIX: &str = "jobs.runner.register_agents.";
 pub const MARK_READ_PREFIX: &str = "jobs.runner.mark_read.";
 pub const LIST_AGENTS_PREFIX: &str = "jobs.runner.list_agents.";
 
-pub const REASON_RUN_UNKNOWN: &str = "run_unknown";
-pub const REASON_RUN_NOT_STARTED: &str = "run_not_started";
-pub const REASON_RUN_REMOVED: &str = "run_removed";
-pub const REASON_INSTANCE_MISMATCH: &str = "instance_mismatch";
-pub const REASON_AGENT_ID_IN_OTHER_TREE: &str = "agent_id_in_other_tree";
-pub const REASON_AGENT_ID_NOT_FINISHED: &str = "agent_id_not_finished";
-pub const REASON_MALFORMED: &str = "malformed";
-pub const REASON_ITEM_NOT_YOURS: &str = "item_not_yours";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceReason {
+    RunUnknown,
+    RunNotStarted,
+    RunEnded,
+    RunRemoved,
+    InstanceMismatch,
+    AgentIdInOtherTree,
+    AgentIdNotFinished,
+    ItemNotYours,
+    JobNotOfRun,
+    Malformed,
+}
 
 fn wire_version() -> u8 {
     SURFACE_WIRE_VERSION
@@ -85,7 +91,7 @@ pub struct SurfaceReply {
     pub version: u8,
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    pub reason: Option<SurfaceReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -100,11 +106,11 @@ impl SurfaceReply {
         }
     }
 
-    pub fn refused(reason: &str, message: &str) -> Self {
+    pub fn refused(reason: SurfaceReason, message: &str) -> Self {
         Self {
             version: SURFACE_WIRE_VERSION,
             accepted: false,
-            reason: Some(reason.to_owned()),
+            reason: Some(reason),
             message: Some(message.to_owned()),
         }
     }
@@ -137,7 +143,7 @@ pub struct ListAgentsReply {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<ListedAgent>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    pub reason: Option<SurfaceReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -153,12 +159,12 @@ impl ListAgentsReply {
         }
     }
 
-    pub fn refused(reason: &str, message: &str) -> Self {
+    pub fn refused(reason: SurfaceReason, message: &str) -> Self {
         Self {
             version: SURFACE_WIRE_VERSION,
             accepted: false,
             agents: None,
-            reason: Some(reason.to_owned()),
+            reason: Some(reason),
             message: Some(message.to_owned()),
         }
     }
@@ -200,11 +206,34 @@ mod tests {
             serde_json::json!({ "version": 1, "accepted": true })
         );
         let refused = serde_json::to_value(SurfaceReply::refused(
-            REASON_RUN_NOT_STARTED,
+            SurfaceReason::RunNotStarted,
             "The run has not started.",
         ))
         .unwrap();
         assert_eq!(refused["reason"], "run_not_started");
         assert_eq!(refused["accepted"], false);
+    }
+
+    #[test]
+    fn every_reason_travels_as_its_snake_case_code() {
+        let codes = [
+            (SurfaceReason::RunUnknown, "run_unknown"),
+            (SurfaceReason::RunNotStarted, "run_not_started"),
+            (SurfaceReason::RunEnded, "run_ended"),
+            (SurfaceReason::RunRemoved, "run_removed"),
+            (SurfaceReason::InstanceMismatch, "instance_mismatch"),
+            (SurfaceReason::AgentIdInOtherTree, "agent_id_in_other_tree"),
+            (SurfaceReason::AgentIdNotFinished, "agent_id_not_finished"),
+            (SurfaceReason::ItemNotYours, "item_not_yours"),
+            (SurfaceReason::JobNotOfRun, "job_not_of_run"),
+            (SurfaceReason::Malformed, "malformed"),
+        ];
+        for (reason, code) in codes {
+            assert_eq!(serde_json::to_value(reason).unwrap(), code);
+            assert_eq!(
+                serde_json::from_value::<SurfaceReason>(serde_json::json!(code)).unwrap(),
+                reason
+            );
+        }
     }
 }

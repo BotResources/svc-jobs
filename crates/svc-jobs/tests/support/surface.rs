@@ -2,9 +2,7 @@ use br_test_harness::TestNats;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::db::Durable;
-use super::fixture::JobsFixture;
-use super::runner::{self, FakeRunner};
+use super::runner::FakeRunner;
 
 pub struct Agent {
     pub agent_id: Uuid,
@@ -43,7 +41,7 @@ impl Agent {
     }
 }
 
-async fn request(nats: &TestNats, subject: String, body: Value) -> Value {
+pub async fn request(nats: &TestNats, subject: String, body: Value) -> Value {
     let reply = tokio::time::timeout(
         super::LONG,
         nats.client().request(subject, body.to_string().into()),
@@ -52,6 +50,15 @@ async fn request(nats: &TestNats, subject: String, body: Value) -> Value {
     .expect("Jobs answers a runner surface request")
     .expect("a runner surface request finds a responder");
     serde_json::from_slice(&reply.payload).expect("a surface reply is JSON")
+}
+
+pub async fn raw(nats: &TestNats, verb: &str, runner: &FakeRunner<'_>, body: Value) -> Value {
+    request(
+        nats,
+        format!("jobs.runner.{verb}.{}", runner.runner_type),
+        body,
+    )
+    .await
 }
 
 pub async fn register(
@@ -120,23 +127,4 @@ pub fn agent_ids(listing: &Value) -> Vec<String> {
         .unwrap_or_default();
     ids.sort();
     ids
-}
-
-pub async fn start(fixture: &JobsFixture, runner: &FakeRunner<'_>, trigger: &Value) {
-    runner.start_run(trigger).await;
-    let run = runner::run_id(trigger);
-    let durable = Durable::open(&fixture.app_url()).await;
-    let waited = tokio::time::Instant::now();
-    while durable
-        .count("SELECT count(*) FROM run_starts WHERE run_id = $1", run)
-        .await
-        == 0
-    {
-        assert!(
-            waited.elapsed() < super::LONG,
-            "Jobs never applied the start of run {run}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    durable.close().await;
 }

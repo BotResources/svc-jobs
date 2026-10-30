@@ -29,12 +29,6 @@ pub async fn cancel_jobs_requested_by(
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     for requested in jobs.store.jobs_requested_by_run(ended.run_id).await? {
-        let Some(job) = jobs.load(requested).await? else {
-            continue;
-        };
-        if job.is_terminal() {
-            continue;
-        }
         let outcome = resolve::cancel(
             jobs,
             requested,

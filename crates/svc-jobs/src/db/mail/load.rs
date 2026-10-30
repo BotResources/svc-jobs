@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
+use crate::db::directory::PARENT_TERMINAL;
 use crate::db::hydrate::unavailable;
 
 #[derive(Debug, Clone)]
@@ -91,19 +92,17 @@ pub async fn standing_of(
     addresses: &[Uuid],
 ) -> Result<HashMap<Uuid, AddressStanding>, PortError> {
     let held = sqlx::query(
-        "SELECT d.agent_id, d.run_id::uuid AS run_id, d.initial_job_id::uuid AS initial_job_id, d.state, d.has_inbox, d.declares_restart, \
+&        "SELECT d.agent_id, d.run_id::uuid AS run_id, d.initial_job_id::uuid AS initial_job_id, d.state, d.has_inbox, d.declares_restart, \
             EXISTS (SELECT 1 FROM saved_state_agents s WHERE s.agent_id = d.agent_id) AS saved, \
             rt.type_key, \
             coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
-            EXISTS (SELECT 1 FROM job_resolutions jr \
-                    WHERE jr.job_id = coalesce(j.parent_job_id, j.id)) AS parent_terminal \
+            {PARENT_TERMINAL} AS parent_terminal \
          FROM directory_agents d \
          JOIN runs r ON r.id = d.run_id \
          JOIN jobs j ON j.id = r.job_id \
          JOIN runner_types rt ON rt.id = j.runner_type_id \
          LEFT JOIN registered_runner_types reg ON reg.runner_type_id = rt.id \
-         WHERE d.agent_id = ANY($1)",
-    )
+         WHERE d.agent_id = ANY($1)".replace("{PARENT_TERMINAL}", PARENT_TERMINAL))
     .bind(addresses)
     .fetch_all(&mut *tx)
     .await

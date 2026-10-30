@@ -1,13 +1,13 @@
 mod support;
 
 use serde_json::json;
-use support::dispatch;
-use support::events::EventLog;
 use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
-use support::runner::{self, FakeRunner};
+use support::runner;
+use support::runner::FakeRunner;
 use support::surface::{self, Agent};
-use support::{LONG, wire};
+use support::tree::{call_child, pair};
+use support::{LONG, dispatch, wire};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -32,7 +32,7 @@ async fn a_registration_is_accepted_only_for_a_started_run_of_the_sending_instan
     let before_start = surface::register(nats, &instance, run, &[Agent::with_inbox()]).await;
     assert_eq!(surface::reason(&before_start), "run_not_started");
 
-    surface::start(&fixture, &instance, &trigger).await;
+    instance.start_applied(&fixture, &trigger).await;
     let stranger = surface::register_as(
         nats,
         &runner_type,
@@ -103,7 +103,7 @@ async fn a_repeated_registration_is_absorbed_and_a_later_one_replaces_what_the_a
         .declare_v2(&JobDeclaration::new(&runner_type))
         .await;
     let trigger = instance.next_trigger(LONG).await;
-    surface::start(&fixture, &instance, &trigger).await;
+    instance.start_applied(&fixture, &trigger).await;
     let run = runner::run_id(&trigger);
 
     let agent_id = Uuid::now_v7();
@@ -134,59 +134,6 @@ async fn a_repeated_registration_is_absorbed_and_a_later_one_replaces_what_the_a
     fixture.shutdown().await;
 }
 
-struct Pair<'a> {
-    parent: FakeRunner<'a>,
-    child: FakeRunner<'a>,
-}
-
-async fn pair<'a>(fixture: &'a JobsFixture, label: &str) -> Pair<'a> {
-    let client = fixture.gql();
-    let admin = fixture.admin();
-    let mut parent = FakeRunner::new(
-        fixture.nats(),
-        &wire::unique_runner_type(&format!("{label}-parent")),
-        "instance-a",
-    )
-    .declaring_capacity(3);
-    let mut child = FakeRunner::new(
-        fixture.nats(),
-        &wire::unique_runner_type(&format!("{label}-child")),
-        "instance-a",
-    );
-    parent.connect().await;
-    child.connect().await;
-    dispatch::await_live_instances(&client, admin, &parent.runner_type, 1, LONG).await;
-    dispatch::await_live_instances(&client, admin, &child.runner_type, 1, LONG).await;
-    Pair { parent, child }
-}
-
-async fn call_child(
-    fixture: &JobsFixture,
-    pair: &mut Pair<'_>,
-    parent_job: Uuid,
-    parent_run: Uuid,
-) -> serde_json::Value {
-    let producer = Producer::new(fixture.fabric(), "projects");
-    let job_id = Uuid::now_v7();
-    producer
-        .send_v3(
-            wire::VERB_CREATE,
-            json!({
-                "job_id": job_id.to_string(),
-                "runner_type": pair.child.runner_type,
-                "producer": "projects",
-                "parent_job_id": parent_job.to_string(),
-                "mode": "SYNC",
-                "acting_run_id": parent_run.to_string(),
-                "acting_instance_key": pair.parent.instance_key,
-            }),
-        )
-        .await;
-    let trigger = pair.child.next_trigger(LONG).await;
-    assert_eq!(runner::job_id(&trigger), job_id);
-    trigger
-}
-
 #[tokio::test]
 async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_same_tree() {
     let fixture = JobsFixture::start().await;
@@ -196,7 +143,7 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
     let root = JobDeclaration::new(&pair.parent.runner_type);
     producer.declare_v2(&root).await;
     let parent_trigger = pair.parent.next_trigger(LONG).await;
-    surface::start(&fixture, &pair.parent, &parent_trigger).await;
+    pair.parent.start_applied(&fixture, &parent_trigger).await;
     let parent_run = runner::run_id(&parent_trigger);
     let shared = Agent::with_inbox();
     let shared_id = shared.agent_id;
@@ -206,7 +153,7 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
     );
 
     let called = call_child(&fixture, &mut pair, root.job_id, parent_run).await;
-    surface::start(&fixture, &pair.child, &called).await;
+    pair.child.start_applied(&fixture, &called).await;
     let child_run = runner::run_id(&called);
     let while_running = surface::register(
         nats,
@@ -218,8 +165,7 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
     assert_eq!(surface::reason(&while_running), "agent_id_not_finished");
 
     pair.parent.complete_run(&parent_trigger).await;
-    let mut refused = "agent_id_not_finished".to_owned();
-    for _ in 0..40 {
+    let taken_over = br_test_harness::wait_until(LONG, || async {
         let attempt = surface::register(
             nats,
             &pair.child,
@@ -227,15 +173,11 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
             &[Agent::with_inbox().with_id(shared_id)],
         )
         .await;
-        if attempt["accepted"] == true {
-            refused.clear();
-            break;
-        }
-        refused = surface::reason(&attempt).to_owned();
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    assert_eq!(
-        refused, "",
+        attempt["accepted"] == true
+    })
+    .await;
+    assert!(
+        taken_over,
         "a finished agent of the same tree is taken over"
     );
     let listing = surface::list(nats, &pair.child, child_run).await;
@@ -254,7 +196,7 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
     let other_tree = JobDeclaration::new(&pair.parent.runner_type);
     producer.declare_v2(&other_tree).await;
     let other_trigger = pair.parent.next_trigger(LONG).await;
-    surface::start(&fixture, &pair.parent, &other_trigger).await;
+    pair.parent.start_applied(&fixture, &other_trigger).await;
     let foreign = surface::register(
         nats,
         &pair.parent,
@@ -267,185 +209,32 @@ async fn an_agent_of_another_run_is_taken_over_only_when_finished_and_in_the_sam
 }
 
 #[tokio::test]
-async fn a_failed_run_removes_its_agents_and_those_of_its_descendant_runs_for_good() {
+async fn a_request_of_another_wire_version_or_naming_an_unreadable_run_is_malformed() {
     let fixture = JobsFixture::start().await;
-    let producer = Producer::new(fixture.fabric(), "projects");
-    let mut pair = pair(&fixture, "directory-removal").await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let runner_type = wire::unique_runner_type("directory-malformed");
+    let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
+    instance.connect().await;
+    dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
     let nats = fixture.nats();
-    let root = JobDeclaration::new(&pair.parent.runner_type).with_max_attempts(1);
-    producer.declare_v2(&root).await;
-    let parent_trigger = pair.parent.next_trigger(LONG).await;
-    surface::start(&fixture, &pair.parent, &parent_trigger).await;
-    let parent_run = runner::run_id(&parent_trigger);
-    let parent_agent = Agent::with_inbox();
-    surface::register(nats, &pair.parent, parent_run, &[parent_agent]).await;
-    let called = call_child(&fixture, &mut pair, root.job_id, parent_run).await;
-    surface::start(&fixture, &pair.child, &called).await;
-    let child_run = runner::run_id(&called);
-    let child_agent = Agent::with_inbox();
-    let child_agent_id = child_agent.agent_id;
-    surface::register(nats, &pair.child, child_run, &[child_agent]).await;
-    assert_eq!(
-        surface::agent_ids(&surface::list(nats, &pair.child, child_run).await).len(),
-        2,
-        "the directory lists the agents of the whole tree"
-    );
+    let run = Uuid::now_v7().to_string();
 
-    pair.parent
-        .fail_run(&parent_trigger, "PERMANENT", "provider_refused", None)
-        .await;
-
-    let durable = support::db::Durable::open(&fixture.app_url()).await;
-    let mut remaining = 1;
-    for _ in 0..80 {
-        remaining = durable
-            .count(
-                "SELECT count(*) FROM directory_agents WHERE initial_job_id = $1",
-                root.job_id,
-            )
-            .await;
-        if remaining == 0 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    assert_eq!(remaining, 0, "a failed run takes its dependents with it");
-    let late = surface::register(
-        nats,
-        &pair.child,
-        child_run,
-        &[Agent::with_inbox().with_id(child_agent_id)],
-    )
-    .await;
-    assert!(
-        ["run_removed", "run_not_started"].contains(&surface::reason(&late)),
-        "a removed run registers nothing more: {late}"
-    );
-    durable.close().await;
-    fixture.shutdown().await;
-}
-
-#[tokio::test]
-async fn a_background_call_must_name_a_mail_address_of_the_calling_run() {
-    let fixture = JobsFixture::start().await;
-    let answers = EventLog::open_v2(fixture.fabric()).await;
-    let producer = Producer::new(fixture.fabric(), "projects");
-    let mut pair = pair(&fixture, "directory-caller").await;
-    let nats = fixture.nats();
-    let first = JobDeclaration::new(&pair.parent.runner_type);
-    let second = JobDeclaration::new(&pair.parent.runner_type);
-    producer.declare_v2(&first).await;
-    producer.declare_v2(&second).await;
-    let first_trigger = pair.parent.next_trigger(LONG).await;
-    let second_trigger = pair.parent.next_trigger(LONG).await;
-    let (first_job, first_run) = (
-        runner::job_id(&first_trigger),
-        runner::run_id(&first_trigger),
-    );
-    let (_, second_run) = (
-        runner::job_id(&second_trigger),
-        runner::run_id(&second_trigger),
-    );
-    surface::start(&fixture, &pair.parent, &first_trigger).await;
-    surface::start(&fixture, &pair.parent, &second_trigger).await;
-    let own = Agent::with_inbox();
-    let own_address = own.agent_id;
-    let foreign = Agent::with_inbox();
-    let foreign_address = foreign.agent_id;
-    surface::register(nats, &pair.parent, first_run, &[own]).await;
-    surface::register(nats, &pair.parent, second_run, &[foreign]).await;
-
-    let call = |address: Uuid| {
-        let job_id = Uuid::now_v7();
-        (
-            job_id,
+    for verb in ["register_agents", "list_agents", "mark_read"] {
+        let body = |version: u8, run_id: &str| {
             json!({
-                "job_id": job_id.to_string(),
-                "runner_type": pair.child.runner_type,
-                "producer": "projects",
-                "parent_job_id": first_job.to_string(),
-                "mode": "BACKGROUND",
-                "caller_address": address.to_string(),
-                "acting_run_id": first_run.to_string(),
-                "acting_instance_key": pair.parent.instance_key,
-            }),
-        )
-    };
-    let (unheld_job, unheld) = call(Uuid::now_v7());
-    producer.send_v3(wire::VERB_CREATE, unheld).await;
-    let refused = answers
-        .expect_one(wire::FACT_CREATION_REJECTED, unheld_job, LONG)
-        .await;
-    assert_eq!(refused.payload()["reason_code"], "caller_address_not_held");
-
-    let (foreign_job, other_run) = call(foreign_address);
-    producer.send_v3(wire::VERB_CREATE, other_run).await;
-    let refused = answers
-        .expect_one(wire::FACT_CREATION_REJECTED, foreign_job, LONG)
-        .await;
-    assert_eq!(
-        refused.payload()["reason_code"],
-        "caller_address_not_of_run"
-    );
-
-    let (accepted_job, accepted) = call(own_address);
-    producer.send_v3(wire::VERB_CREATE, accepted).await;
-    let trigger = pair.child.next_trigger(LONG).await;
-    assert_eq!(runner::job_id(&trigger), accepted_job);
-    assert_eq!(trigger["mode"], "BACKGROUND");
-    assert_eq!(trigger["caller_address"], own_address.to_string());
-    answers.stop().await;
-    fixture.shutdown().await;
-}
-
-async fn eventually_count(
-    durable: &support::db::Durable,
-    sql: &str,
-    id: Uuid,
-    expected: i64,
-) -> i64 {
-    let mut found = -1;
-    for _ in 0..80 {
-        found = durable.count(sql, id).await;
-        if found == expected {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                "version": version,
+                "run_id": run_id,
+                "instance_key": instance.instance_key,
+                "agents": [],
+                "item_ids": [],
+            })
+        };
+        let other_version = surface::raw(nats, verb, &instance, body(2, &run)).await;
+        assert_eq!(surface::reason(&other_version), "malformed", "{verb}");
+        let not_a_run_id =
+            surface::raw(nats, verb, &instance, body(1, &Uuid::new_v4().to_string())).await;
+        assert_eq!(surface::reason(&not_a_run_id), "malformed", "{verb}");
     }
-    found
-}
-
-#[tokio::test]
-async fn a_run_that_ends_with_success_leaves_its_agents_finished_until_its_job_is_cancelled() {
-    let fixture = JobsFixture::start().await;
-    let producer = Producer::new(fixture.fabric(), "projects");
-    let mut pair = pair(&fixture, "directory-finish").await;
-    let nats = fixture.nats();
-    let root = JobDeclaration::new(&pair.parent.runner_type);
-    producer.declare_v2(&root).await;
-    let trigger = pair.parent.next_trigger(LONG).await;
-    surface::start(&fixture, &pair.parent, &trigger).await;
-    let run = runner::run_id(&trigger);
-    let agent = Agent::with_inbox();
-    surface::register(nats, &pair.parent, run, &[agent]).await;
-    let durable = support::db::Durable::open(&fixture.app_url()).await;
-    let in_tree = "SELECT count(*) FROM directory_agents WHERE initial_job_id = $1";
-    let finished = "SELECT count(*) FROM directory_agents \
-                    WHERE initial_job_id = $1 AND state = 'FINISHED'";
-
-    pair.parent.complete_run(&trigger).await;
-    assert_eq!(
-        eventually_count(&durable, finished, root.job_id, 1).await,
-        1
-    );
-    assert_eq!(durable.count(in_tree, root.job_id).await, 1);
-
-    producer.cancel(root.job_id).await;
-    assert_eq!(
-        eventually_count(&durable, in_tree, root.job_id, 0).await,
-        0,
-        "the cancel of a job removes the agents of its runs, those that ended with success included"
-    );
-    durable.close().await;
     fixture.shutdown().await;
 }

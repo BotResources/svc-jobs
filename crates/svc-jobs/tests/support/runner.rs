@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use super::db::Durable;
+use super::fixture::JobsFixture;
 use super::{clock, infra, wire};
 
 pub struct FakeRunner<'a> {
@@ -264,6 +266,20 @@ impl<'a> FakeRunner<'a> {
             }),
         )
         .await;
+    }
+
+    pub async fn start_applied(&self, fixture: &JobsFixture, trigger: &Value) {
+        self.start_run(trigger).await;
+        let durable = Durable::open(&fixture.app_url()).await;
+        durable
+            .await_count(
+                "SELECT count(*) FROM run_starts WHERE run_id = $1",
+                run_id(trigger),
+                1,
+                "the start of the run",
+            )
+            .await;
+        durable.close().await;
     }
 
     pub async fn declare_plan(&self, trigger: &Value, labels: &[&str]) {

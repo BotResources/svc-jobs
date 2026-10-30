@@ -149,7 +149,7 @@ pub async fn commit(fixture: &Fixture, changes: Vec<JobChange>) -> Result<(), Se
     .await
 }
 
-pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str) -> (Job, RunId) {
+pub async fn a_queued_job(fixture: &Fixture, runner_type: &str) -> Job {
     let job_id = JobId::new(Uuid::now_v7()).expect("a v7 job id");
     let declaration = CreateJob {
         id: job_id,
@@ -176,10 +176,15 @@ pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str)
         .await
         .expect("the job is queued");
 
-    let job = JobReader::load(&fixture.store, job_id)
+    JobReader::load(&fixture.store, job_id)
         .await
         .expect("the queued job loads")
-        .expect("the queued job exists");
+        .expect("the queued job exists")
+}
+
+pub async fn a_job_with_one_dispatched_run(fixture: &Fixture, runner_type: &str) -> (Job, RunId) {
+    let job = a_queued_job(fixture, runner_type).await;
+    let job_id = job.id();
     let run_id = RunId::new(Uuid::now_v7()).expect("a v7 run id");
     let dispatched = job
         .dispatch_run(

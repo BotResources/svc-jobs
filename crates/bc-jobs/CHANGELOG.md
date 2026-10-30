@@ -22,14 +22,27 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `PassportUserMismatch`, `PassportParentMismatch`, `InitialJobMismatch`,
   `ParentNotOfRun`, `ModeRequired`, `CallerAddressNotHeld`, `PayloadTooLarge`.
 - `domain::directory`: `AgentId`, `AgentState`, `decide_registration`
-  (refusals `run_unknown`, `run_not_started`, `instance_mismatch`,
-  `agent_id_in_other_tree`, `agent_id_not_finished`, `malformed`) and
+  (refusals `run_unknown`, `run_not_started`, `run_ended`, `instance_mismatch`,
+  `agent_id_in_other_tree`, `agent_id_not_finished`, `agent_named_twice`,
+  `malformed`) and
   `DirectoryEntry` with `restartable_now`.
 - `JobsError::CallerAddressNotOfRun`, `AgentId`, and the `run_removed` refusal
   of a registration. An `AgentId` is any UUID: the runner makes it.
 - `RunnerTransport::acknowledged_start`: the start fact of a Run that the
   broker acknowledged and Jobs has not applied yet.
-- `JobsError::NoFreeCapacity`, `Fleet::declared_capacity` and `free_capacity`.
+- `JobsError::NoFreeCapacity`, `RunnerType::declared_capacity` and `free_capacity`.
+- `ports::directory::AgentDirectory` (`register`, `list`): the decision is
+  passed in, the adapter owns the transaction and the Tree lock.
+- `domain::directory::caller_address`: the single decision on the address of a
+  BACKGROUND call.
+- Mail, notices, kept payloads, Results and saved states: the pure decisions
+  `mail_id_reused`, the recipient rules, the read rules and the size rules.
+- A Job that is finished or declared failed keeps its live Run: finish and
+  declared failure withdraw nothing; the terminal fact of the Run applies as
+  usual and leaves the Job unchanged. `Job` may hold a live Run after its
+  resolution.
+- `SuccessorDispatch::Wait` and `RunnerType::successor_dispatch(current_runs)`:
+  a manual retry dispatches only while the type has free capacity.
 - `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
   the Passport, the payload and the call.
 

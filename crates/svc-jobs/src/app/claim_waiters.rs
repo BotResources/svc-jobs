@@ -1,14 +1,3 @@
-//! The claims a pod holds open, by runner type, and how they are woken.
-//!
-//! A Job queued for a type wakes ONE held claim of that type — the oldest — so
-//! a burst of claims does not stampede the ledger for every Job. A claim woken
-//! but leaving without taking the wake (it was served by its own pass, or its
-//! wait ended) passes the wake on to the next one, so no Job is left waiting
-//! with claims parked beside it. A retry falling due is one more Job to take:
-//! the pod keeps ONE timer per type, armed for the earliest retry it knows
-//! of, and wakes one claim when it fires. Facts that change what every claim
-//! of a type may do — the fleet of the type moved — wake them all.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -35,7 +24,6 @@ pub struct Waiter {
     woken: AtomicBool,
 }
 
-/// One held claim, registered until dropped.
 pub struct HeldClaim {
     waiters: Arc<ClaimWaiters>,
     runner_type: RunnerTypeKey,
@@ -43,7 +31,6 @@ pub struct HeldClaim {
 }
 
 impl HeldClaim {
-    /// Parks until this claim is woken. The wake is consumed.
     pub async fn woken(&self) {
         self.waiter.notify.notified().await;
         self.waiter.woken.store(false, Ordering::SeqCst);
@@ -118,9 +105,6 @@ impl ClaimWaiters {
         }
     }
 
-    /// Arms the type's retry timer for `due_in` from now, unless it is already
-    /// armed for an earlier moment. When it fires, one held claim of the type
-    /// is woken; a claim parking afterwards arms it again for the next retry.
     pub fn arm_retry(self: &Arc<Self>, runner_type: &RunnerTypeKey, due_in: Duration) {
         let due = Instant::now() + due_in;
         let mut timers = self.timers();
@@ -144,7 +128,6 @@ impl ClaimWaiters {
         }
     }
 
-    /// Whether a retry timer of the type is armed and not yet fired.
     pub fn has_retry_timer(&self, runner_type: &RunnerTypeKey) -> bool {
         self.timers()
             .get(runner_type)
@@ -199,51 +182,39 @@ mod tests {
 
     #[tokio::test]
     async fn a_queued_job_wakes_the_oldest_held_claim_only() {
-        // Given: two claims held for one type
         let waiters = Arc::new(ClaimWaiters::default());
         let first = waiters.hold(&analyst());
         let second = waiters.hold(&analyst());
-        // When: one job is queued
         waiters.wake_one(&analyst());
-        // Then: the oldest claim alone is woken
         assert!(is_woken(&first).await);
         assert!(!is_woken(&second).await);
     }
 
     #[tokio::test]
     async fn a_claim_leaving_without_its_wake_passes_it_on() {
-        // Given: two claims held, the first woken
         let waiters = Arc::new(ClaimWaiters::default());
         let first = waiters.hold(&analyst());
         let second = waiters.hold(&analyst());
         waiters.wake_one(&analyst());
-        // When: the first leaves without consuming the wake
         drop(first);
-        // Then: the second is woken in its place
         assert!(is_woken(&second).await);
     }
 
     #[tokio::test]
     async fn a_wake_landing_before_the_claim_parks_is_not_lost() {
-        // Given: a claim registered but not yet parked
         let waiters = Arc::new(ClaimWaiters::default());
         let claim = waiters.hold(&analyst());
-        // When: it is woken before it awaits
         waiters.wake_one(&analyst());
-        // Then: parking returns at once
         assert!(is_woken(&claim).await);
     }
 
     #[tokio::test]
     async fn a_fleet_change_wakes_every_claim_of_its_type_only() {
-        // Given: two claims for one type and one for another
         let waiters = Arc::new(ClaimWaiters::default());
         let first = waiters.hold(&analyst());
         let second = waiters.hold(&analyst());
         let other = waiters.hold(&RunnerTypeKey::new("scribe").unwrap());
-        // When: the type's fleet moves
         waiters.wake_all(&analyst());
-        // Then: both its claims wake, the other type's does not
         assert!(is_woken(&first).await);
         assert!(is_woken(&second).await);
         assert!(!is_woken(&other).await);
@@ -251,17 +222,13 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_retry_falling_due_wakes_one_claim_through_one_timer() {
-        // Given: two claims held for one type, and two retries armed
         let waiters = Arc::new(ClaimWaiters::default());
         let first = waiters.hold(&analyst());
         let second = waiters.hold(&analyst());
         waiters.arm_retry(&analyst(), Duration::from_secs(5));
         waiters.arm_retry(&analyst(), Duration::from_secs(9));
-        // Then: one timer stands, for the earliest retry
         assert!(waiters.has_retry_timer(&analyst()));
-        // When: it fires
         tokio::time::sleep(Duration::from_secs(6)).await;
-        // Then: one claim is woken, the other keeps waiting, and the timer is spent
         assert!(is_woken(&first).await);
         assert!(!is_woken(&second).await);
         assert!(!waiters.has_retry_timer(&analyst()));

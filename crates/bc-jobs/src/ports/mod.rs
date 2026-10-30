@@ -1,3 +1,4 @@
+pub mod directory;
 pub mod environment;
 pub mod fleet;
 pub mod job;

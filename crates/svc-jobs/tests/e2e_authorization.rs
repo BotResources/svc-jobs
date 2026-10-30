@@ -45,7 +45,7 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     events.expect_one(wire::FACT_QUEUED, running_id, LONG).await;
     let trigger = instance.next_trigger(LONG).await;
     let running_run = runner::run_id(&trigger);
-    support::surface::start(&fixture, &instance, &trigger).await;
+    instance.start_applied(&fixture, &trigger).await;
     gql::wait_for_status(&client, admin, running_id, "IN_PROGRESS", LONG).await;
 
     let mut watch =

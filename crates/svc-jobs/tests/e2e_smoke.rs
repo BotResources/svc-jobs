@@ -20,17 +20,22 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 7] = [
+const DECLARED_QUERIES: [&str; 12] = [
     "jobs",
+    "jobsAttachment",
     "jobsFleet",
     "jobsJob",
     "jobsJobBySource",
     "jobsLogs",
+    "jobsMail",
     "jobsMyMaxPriority",
+    "jobsPayload",
+    "jobsSavedState",
+    "jobsUnread",
     "jobsUserMaxPriorities",
 ];
 
-const DECLARED_MUTATIONS: [&str; 12] = [
+const DECLARED_MUTATIONS: [&str; 18] = [
     "jobsCancelJob",
     "jobsClearRunnerTypeMaxRunDuration",
     "jobsClearUserMaxPriority",
@@ -39,10 +44,16 @@ const DECLARED_MUTATIONS: [&str; 12] = [
     "jobsForceJobPriority",
     "jobsManualRetryJob",
     "jobsReactivateRunnerType",
+    "jobsReadResult",
     "jobsRetireRunnerType",
+    "jobsSaveState",
+    "jobsSendMail",
     "jobsSetRunnerTypeDispatchMode",
     "jobsSetRunnerTypeMaxRunDuration",
     "jobsSetUserMaxPriority",
+    "jobsUploadAttachment",
+    "jobsUploadPayload",
+    "jobsUploadResult",
 ];
 
 const DECLARED_SUBSCRIPTIONS: [&str; 6] = [

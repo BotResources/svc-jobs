@@ -2,13 +2,14 @@ use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
+use crate::domain::directory::caller_address::guard_caller_address_is_named;
 use crate::domain::ids::{JobId, SourceEntityId};
 use crate::domain::job::parenting::guard_parent_admits_work;
 use crate::domain::job::{Job, JobCall};
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::ownership::JobOwner;
 use crate::domain::passport::JobPassport;
-use crate::domain::payload::{CallMode, JobPayload};
+use crate::domain::payload::JobPayload;
 use crate::domain::policy::ServiceLimits;
 use crate::domain::priority::{JobPriority, Priority, PriorityBasis, UserMaxPriority};
 use crate::domain::references::{KnownUser, SourceReference};
@@ -194,17 +195,10 @@ fn resolve_triggered_by(
 fn resolve_call(command: &CreateJob) -> Result<Option<JobCall>, JobsError> {
     match (&command.requester, command.call) {
         (Requester::Run(_), None) => Err(JobsError::ModeRequired),
-        (Requester::Run(_), Some(call)) => {
-            if call.mode == CallMode::Background && call.caller_address.is_none() {
-                return Err(JobsError::CallerAddressNotHeld);
-            }
-            Ok(Some(JobCall {
-                mode: call.mode,
-                caller_address: (call.mode == CallMode::Background)
-                    .then_some(call.caller_address)
-                    .flatten(),
-            }))
-        }
+        (Requester::Run(_), Some(call)) => Ok(Some(JobCall {
+            mode: call.mode,
+            caller_address: guard_caller_address_is_named(call.mode, call.caller_address)?,
+        })),
         (Requester::Service(_), _) => Ok(None),
     }
 }

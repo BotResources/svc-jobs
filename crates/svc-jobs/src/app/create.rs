@@ -1,5 +1,6 @@
 use bc_jobs::JobsError;
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
+use bc_jobs::domain::directory::caller_address;
 use bc_jobs::domain::ids::KnownUserId;
 use bc_jobs::domain::ownership::ActorRef;
 use bc_jobs::domain::priority::PriorityBasis;
@@ -94,14 +95,23 @@ async fn guard_caller_address(
     wire: &CreateJobV3,
     run_id: bc_jobs::domain::ids::RunId,
 ) -> Result<(), ServiceError> {
-    let (Some(CallMode::Background), Some(address)) = (wire.mode, wire.caller_address) else {
+    let Some(mode) = wire.mode else {
         return Ok(());
     };
-    match jobs.store.mail_address_run(address).await? {
-        Some(held_by) if held_by == run_id => Ok(()),
-        Some(_) => Err(JobsError::CallerAddressNotOfRun.into()),
-        None => Err(JobsError::CallerAddressNotHeld.into()),
-    }
+    let holder = match wire.caller_address {
+        Some(address) => jobs.store.mail_address_run(address).await?,
+        None => None,
+    };
+    let mode = match mode {
+        CallMode::Sync => bc_jobs::domain::payload::CallMode::Sync,
+        CallMode::Background => bc_jobs::domain::payload::CallMode::Background,
+    };
+    Ok(caller_address::guard_caller_address(
+        mode,
+        wire.caller_address,
+        run_id,
+        holder,
+    )?)
 }
 
 async fn decide(

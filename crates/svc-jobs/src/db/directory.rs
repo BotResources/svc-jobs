@@ -1,13 +1,16 @@
+use async_trait::async_trait;
 use bc_jobs::JobsError;
 use bc_jobs::domain::directory::AgentState;
 use bc_jobs::domain::directory::listing::DirectoryEntry;
 use bc_jobs::domain::directory::registration::{
-    AgentDeclaration, HeldAgent, RegistrationRefusal, RunStanding, decide_registration,
-    require_live,
+    AgentDeclaration, HeldAgent, RegistrationRefusal, RunStanding,
 };
 use bc_jobs::domain::ids::{AgentId, JobId, RunId};
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::directory::{
+    AgentDirectory, ListedEntry, RegistrationDecision, RunCaller, StandingDecision,
+};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -15,11 +18,8 @@ use uuid::Uuid;
 use super::PgStore;
 use super::hydrate::unavailable;
 
-pub struct ListedRow {
-    pub entry: DirectoryEntry,
-    pub runner_type_retired: bool,
-    pub parent_job_terminal: bool,
-}
+pub const PARENT_TERMINAL: &str = "(j.parent_job_id IS NOT NULL AND EXISTS \
+    (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.parent_job_id))";
 
 const STANDING_SQL: &str = "SELECT rt.type_key, ri.instance_key, \
         (rs.run_id IS NOT NULL) AS started, (t.run_id IS NOT NULL) AS ended, \
@@ -77,23 +77,23 @@ pub async fn lock_tree(tx: &mut PgConnection, initial_job_id: JobId) -> Result<(
     Ok(())
 }
 
-impl PgStore {
-    pub async fn register_agents(
+#[async_trait]
+impl AgentDirectory for PgStore {
+    async fn register(
         &self,
-        run_id: RunId,
-        runner_type: &str,
-        instance_key: &str,
+        caller: RunCaller<'_>,
         declarations: &[AgentDeclaration],
+        decide: RegistrationDecision<'_>,
         at: DateTime<Utc>,
     ) -> Result<Result<(), RegistrationRefusal>, PortError> {
         let mut tx = self.begin().await?;
-        let first = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
+        let first = caller_standing(&mut tx, &caller).await?;
         if let RunStanding::Started { initial_job_id } = first {
             lock_tree(&mut tx, initial_job_id).await?;
         }
-        let current = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
+        let current = caller_standing(&mut tx, &caller).await?;
         let held = held_agents(&mut tx, declarations).await?;
-        let registration = match decide_registration(run_id, current, declarations, &held) {
+        let registration = match decide(current, &held) {
             Ok(registration) => registration,
             Err(refusal) => return Ok(Err(refusal)),
         };
@@ -104,6 +104,55 @@ impl PgStore {
         Ok(Ok(()))
     }
 
+    async fn list(
+        &self,
+        caller: RunCaller<'_>,
+        decide: StandingDecision<'_>,
+    ) -> Result<Result<Vec<ListedEntry>, RegistrationRefusal>, PortError> {
+        let mut tx = self.begin().await?;
+        let current = caller_standing(&mut tx, &caller).await?;
+        let initial_job_id = match decide(current) {
+            Ok(initial_job_id) => initial_job_id,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let rows = sqlx::query(
+            &"SELECT d.agent_id::uuid AS agent_id, d.run_id::uuid AS run_id, rt.type_key, \
+                d.state, d.has_inbox, d.declares_restart, \
+                EXISTS (SELECT 1 FROM saved_state_agents s \
+                        WHERE s.agent_id = d.agent_id) AS holds_saved_state, \
+                coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
+                {PARENT_TERMINAL} AS parent_terminal \
+             FROM directory_agents d \
+             JOIN runs r ON r.id = d.run_id \
+             JOIN jobs j ON j.id = r.job_id \
+             JOIN runner_types rt ON rt.id = j.runner_type_id \
+             LEFT JOIN registered_runner_types reg ON reg.runner_type_id = rt.id \
+             WHERE d.initial_job_id = $1 \
+             ORDER BY d.registered_at, d.agent_id"
+                .replace("{PARENT_TERMINAL}", PARENT_TERMINAL),
+        )
+        .bind(initial_job_id.as_uuid())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        rows.iter().map(listed).collect::<Result<_, _>>().map(Ok)
+    }
+}
+
+async fn caller_standing(
+    tx: &mut PgConnection,
+    caller: &RunCaller<'_>,
+) -> Result<RunStanding, PortError> {
+    standing(
+        tx,
+        caller.run_id,
+        Some(caller.runner_type),
+        caller.instance_key,
+    )
+    .await
+}
+
+impl PgStore {
     pub async fn awaiting_start(&self, run_id: RunId) -> Result<Option<RunnerTypeKey>, PortError> {
         let found: Option<String> = sqlx::query_scalar(
             "SELECT rt.type_key FROM runs r \
@@ -134,45 +183,10 @@ impl PgStore {
         .map_err(unavailable)?;
         found.map(RunId::new).transpose().map_err(PortError::from)
     }
-
-    pub async fn list_agents(
-        &self,
-        run_id: RunId,
-        runner_type: &str,
-        instance_key: &str,
-    ) -> Result<Result<Vec<ListedRow>, RegistrationRefusal>, PortError> {
-        let mut tx = self.begin().await?;
-        let current = standing(&mut tx, run_id, Some(runner_type), instance_key).await?;
-        let initial_job_id = match require_live(current) {
-            Ok(initial_job_id) => initial_job_id,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let rows = sqlx::query(
-            "SELECT d.agent_id::uuid AS agent_id, d.run_id::uuid AS run_id, rt.type_key, \
-                d.state, d.has_inbox, d.declares_restart, \
-                EXISTS (SELECT 1 FROM saved_state_agents s \
-                        WHERE s.agent_id = d.agent_id) AS holds_saved_state, \
-                coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
-                EXISTS (SELECT 1 FROM job_resolutions jr \
-                        WHERE jr.job_id = coalesce(j.parent_job_id, j.id)) AS parent_terminal \
-             FROM directory_agents d \
-             JOIN runs r ON r.id = d.run_id \
-             JOIN jobs j ON j.id = r.job_id \
-             JOIN runner_types rt ON rt.id = j.runner_type_id \
-             LEFT JOIN registered_runner_types reg ON reg.runner_type_id = rt.id \
-             WHERE d.initial_job_id = $1 \
-             ORDER BY d.registered_at, d.agent_id",
-        )
-        .bind(initial_job_id.as_uuid())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        rows.iter().map(listed).collect::<Result<_, _>>().map(Ok)
-    }
 }
 
-fn listed(row: &sqlx::postgres::PgRow) -> Result<ListedRow, PortError> {
-    Ok(ListedRow {
+fn listed(row: &sqlx::postgres::PgRow) -> Result<ListedEntry, PortError> {
+    Ok(ListedEntry {
         entry: DirectoryEntry {
             agent_id: AgentId::new(row.get("agent_id")),
             run_id: RunId::new(row.get("run_id"))?,

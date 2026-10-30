@@ -17,7 +17,9 @@ pub async fn run_finished(tx: &mut PgConnection, run_id: Uuid) -> Result<(), Por
 const REMOVE_TREE: &str = "\
     marked AS ( \
         INSERT INTO directory_removed_runs (run_id, removed_at) \
-        SELECT run_id, $2 FROM tree ON CONFLICT (run_id) DO NOTHING), \
+        SELECT t.run_id, $2 FROM tree t \
+        WHERE NOT EXISTS (SELECT 1 FROM run_terminals rt WHERE rt.run_id = t.run_id) \
+        ON CONFLICT (run_id) DO NOTHING), \
      tombstones AS ( \
         INSERT INTO directory_removed_addresses (agent_id, removed_at) \
         SELECT agent_id, $2 FROM directory_agents \

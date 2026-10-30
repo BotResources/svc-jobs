@@ -22,6 +22,7 @@ pub mod runner;
 pub mod stream;
 pub mod subs;
 pub mod surface;
+pub mod tree;
 pub mod views;
 pub mod wire;
 

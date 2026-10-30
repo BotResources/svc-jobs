@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use bc_jobs::domain::actions::fleet::guard_accept_job;
 use bc_jobs::domain::fleet::lifecycle::RunnerTypeLifecycle;
 use bc_jobs::domain::ids::{EventId, JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
@@ -15,10 +14,14 @@ use br_util_nats_fabric::stage;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use super::guards::{
+    claim_source, guard_decision_still_holds, guard_descendants_unchanged,
+    guard_free_capacity_of_every_type, guard_runner_types_still_accept_jobs, lock_directory_trees,
+};
 use super::premise::{PriorityPremise, guard_priority_premise_still_holds};
 use super::rederive;
-use crate::app::{fingerprint, followups, integration};
-use crate::db::fleet::{capacity, load};
+use crate::app::{followups, integration};
+use crate::db::fleet::load;
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
@@ -140,11 +143,8 @@ pub async fn commit_job_changes_in(
     if changes.is_empty() {
         return Ok(());
     }
-    for change in &changes {
-        if let Some(runner_type) = &change.free_capacity_of {
-            guard_free_capacity(&mut *tx, runner_type).await?;
-        }
-    }
+    guard_free_capacity_of_every_type(&mut *tx, &changes).await?;
+    lock_directory_trees(&mut *tx, &changes).await?;
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
     for change in &changes {
         guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
@@ -171,19 +171,6 @@ pub async fn commit_job_changes_in(
     for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
         apply_change(&mut *tx, ids, &followup, metadata, at).await?;
     }
-    Ok(())
-}
-
-pub async fn guard_free_capacity(
-    tx: &mut sqlx::PgConnection,
-    runner_type: &RunnerTypeKey,
-) -> Result<(), ServiceError> {
-    let Some(capacity) = capacity::lock_and_read(tx, runner_type).await? else {
-        return Err(ServiceError::Contended);
-    };
-    capacity
-        .runner_type
-        .guard_free_capacity(capacity.current_runs)?;
     Ok(())
 }
 
@@ -266,8 +253,8 @@ async fn apply_change(
 }
 
 pub struct RoutedRunnerType<'a> {
-    key: &'a RunnerTypeKey,
-    lifecycle: Option<RunnerTypeLifecycle>,
+    pub(super) key: &'a RunnerTypeKey,
+    pub(super) lifecycle: Option<RunnerTypeLifecycle>,
 }
 
 async fn resolve_runner_type_routes<'a>(
@@ -292,61 +279,4 @@ async fn resolve_runner_type_routes<'a>(
         });
     }
     Ok(routed)
-}
-
-fn guard_runner_types_still_accept_jobs(
-    routed: &[RoutedRunnerType<'_>],
-) -> Result<(), ServiceError> {
-    for runner_type in routed {
-        if let Some(lifecycle) = runner_type.lifecycle {
-            guard_accept_job(lifecycle, runner_type.key)?;
-        }
-    }
-    Ok(())
-}
-
-async fn guard_descendants_unchanged(
-    tx: &mut sqlx::PgConnection,
-    change: &JobChange,
-) -> Result<(), ServiceError> {
-    let Some(decided_on) = &change.descendants_premise else {
-        return Ok(());
-    };
-    let mut current = PgStore::descendant_ids_in(tx, &[change.job_id.as_uuid()]).await?;
-    current.sort_unstable();
-    if &current == decided_on {
-        Ok(())
-    } else {
-        Err(ServiceError::Contended)
-    }
-}
-
-fn guard_decision_still_holds(
-    decided_on: Option<&Job>,
-    locked: Option<&Job>,
-) -> Result<(), ServiceError> {
-    let (Some(decided_on), Some(locked)) = (decided_on, locked) else {
-        return Err(ServiceError::Contended);
-    };
-    if fingerprint::of_job(decided_on) == fingerprint::of_job(locked) {
-        Ok(())
-    } else {
-        Err(ServiceError::Contended)
-    }
-}
-
-async fn claim_source(
-    tx: &mut sqlx::PgConnection,
-    job_id: JobId,
-    source: &SourceReference,
-) -> Result<(), ServiceError> {
-    apply::refs::lock_source_entity(tx, source.bc(), source.entity_id().as_uuid()).await?;
-    match PgStore::active_job_for_source_in(tx, source).await? {
-        Some(active) if active != job_id.as_uuid() => Err(ServiceError::Domain(
-            bc_jobs::JobsError::SourceAlreadyActive {
-                active_job_id: active,
-            },
-        )),
-        _ => Ok(()),
-    }
 }

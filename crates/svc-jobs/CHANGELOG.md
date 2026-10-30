@@ -12,10 +12,11 @@ to `## Unreleased`).
 
 ## 0.6.0 - 2026-10-30
 
-Requester, Passport and lineage on every job. This release is a work in
-progress of the 0.6 line: the runner surface (agent directory, mail, results,
-saved state and restart, GraphQL `jobs:runner`, the arrival doorbell and
-`jobs.runner.mark_read`) is not in it yet.
+Requester, Passport and lineage on every job, the runner surface and the agent
+directory. This release is a work in progress of the 0.6 line: the restart of
+finished agents, the acts-for rule, the cascade to successors, the expiry of
+Results, the notices to Callers and the storage of kept payloads are not in it
+yet.
 
 ### Added
 
@@ -56,7 +57,48 @@ saved state and restart, GraphQL `jobs:runner`, the arrival doorbell and
   (mail, cc notice, notice); the kept payloads; the Results; the saved states
   and the restart origins.
 
+- The GraphQL runner surface for holders of the scope `jobs:runner`:
+  `jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
+  `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
+  `jobsMail`, `jobsSaveState`, `jobsSavedState`. Admission has a third branch:
+  a request selecting runner fields only is admitted for an active principal
+  holding the scope; administrators read no mail, Result or payload.
+- The scope `jobs:runner` is declared to the identity service at boot
+  (`SCOPE_DECLARATION_ENABLED`, default on); readiness waits for acceptance.
+- `jobs.runner.mark_read.{runner_type}` marks items read for the Run that holds
+  them; the doorbell `run.item_arrived.v1` rings for an item that reaches a
+  live Run.
+- `JOBS_SAVED_STATE_MAX_BYTES` (default 1 MiB).
+- Registration, listing and read-marking requests are bounded in flight by
+  `JOBS_CLAIM_MAX_HELD`; a request of another wire version is answered
+  `malformed`; the reason `run_ended` answers a request for a Run that ended.
+
 ### Changed
+
+- Push dispatch selects the waiting Jobs within the free capacity of each
+  runner type, so a saturated type neither starves the others nor keeps the
+  dispatch loop spinning.
+- Finishing a Job or declaring it failed no longer withdraws its live Run and
+  changes nothing in the directory. A terminal fact for a live Run of a
+  terminal Job ends the Run for its Instance and for the directory and leaves
+  the Job as it is; the backstops also reclaim the Runs of terminal Jobs.
+- A manual retry waits for free capacity like any other Job.
+- The end of a Run that fails or is cancelled also cancels the non-terminal
+  descendants of the terminal Jobs it requested.
+- A change of the directory takes the lock of its Tree before the Job rows, on
+  the writer paths as well as on registration, so a registration cannot insert
+  agents of a Run that a concurrent writer removes; the capacity locks of one
+  commit are taken in runner-type order.
+- Removal marks only the Runs that have not ended as removed.
+- The caller-address rule is one domain decision fed with the addresses the
+  acting Run holds.
+
+### Fixed
+
+- A root Job is no longer its own parent when the restart obstacle
+  "parent Job terminal" is read for the listing and for mail.
+
+### Changed (earlier in the line)
 
 - A creation of a job with no parent, by version 1 or 2, is refused with
   `passport_required`.

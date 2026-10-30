@@ -18,7 +18,9 @@ every consumer, so each version is deliberate. Release headings are plain
 - `runner_surface`: the requests `jobs.runner.register_agents.{runner_type}`,
   `jobs.runner.mark_read.{runner_type}` and `jobs.runner.list_agents.{runner_type}`
   — `RegisterAgents`, `MarkRead`, `ListAgents`, their replies and the closed
-  reason codes. Jobs sends no reply when it fails on its own side, so no
+  `SurfaceReason` enum (`run_unknown`, `run_not_started`, `run_ended`,
+  `run_removed`, `instance_mismatch`, `agent_id_in_other_tree`,
+  `agent_id_not_finished`, `item_not_yours`, `job_not_of_run`, `malformed`). Jobs sends no reply when it fails on its own side, so no
   `unavailable` reason exists: a request left unanswered is repeated.
 
 ## 0.6.0 - 2026-10-26

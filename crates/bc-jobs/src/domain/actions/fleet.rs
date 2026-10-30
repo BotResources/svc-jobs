@@ -199,10 +199,14 @@ pub fn successor_dispatch(
     runner_type: Option<&RunnerType>,
     first_run_id: RunId,
     service_default: MaxRunDuration,
+    current_runs: u32,
 ) -> SuccessorDispatch {
     match runner_type {
-        Some(known) if known.dispatch_mode() == DispatchMode::Claim => {
-            SuccessorDispatch::AwaitClaim
+        Some(known)
+            if known.dispatch_mode() == DispatchMode::Claim
+                || known.free_capacity(current_runs) == 0 =>
+        {
+            SuccessorDispatch::Wait
         }
         known => SuccessorDispatch::Push {
             first_run_id,

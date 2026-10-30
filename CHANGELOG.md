@@ -11,10 +11,11 @@ form to decide whether a version ships.
 
 ## 0.6.0 - 2026-10-30
 
-Requester, Passport and lineage on every job. This release is a work in
-progress of the 0.6 line: the runner surface (agent directory, mail, results,
-saved state and restart, GraphQL `jobs:runner`) and capacity enforcement are
-not in it yet.
+Requester, Passport and lineage on every job, the runner surface and the agent
+directory. This release is a work in progress of the 0.6 line: the restart of
+finished agents, the acts-for rule, the cascade to successors, the expiry of
+Results, the notices to Callers and the storage of kept payloads are not in it
+yet.
 
 ### Added
 
@@ -31,11 +32,77 @@ not in it yet.
   and `jobs.claim.v2.{runner_type}`.
 - A Run that fails or is cancelled cancels the Jobs it requested.
 - Migration `0004`: `requester`, `passport`, `payload`, `call` on `jobs`.
+- Capacity enforcement: a Run is pushed or claimed only while its runner type
+  has free capacity (the declared capacity of its ready live instances minus
+  its Runs that have not ended); otherwise it waits, and the end of a Run wakes
+  it. Refusal `no_free_capacity`. Migration `0005`: `current_runs`.
+- The agent directory: `jobs.runner.register_agents.{runner_type}` and
+  `jobs.runner.list_agents.{runner_type}` answer runner requests on the core
+  bus (queue group `svc_jobs_runner_surface`), fail-closed with a typed reason.
+  A Run that ends with success makes its agents `FINISHED`; a Run that fails or
+  is cancelled, and the cancel of a Job, remove the agents of the Run and of its
+  descendant Runs for good. Migration `0006`: `directory_agents`,
+  `directory_removed_runs`, `jobs.parent_run_id`.
+- A BACKGROUND call is refused with `caller_address_not_held` or
+  `caller_address_not_of_run` unless the address is an inbox address of the
+  acting Run in the directory.
+
+- Before a runner-surface request is refused with `run_not_started`, Jobs
+  applies the start fact of that Run that the broker already acknowledged, so a
+  runner may ask at once after it published the start. Jobs sends no reply
+  when it fails on its own side.
+- Migration `0007`: `agent_id` of the directory is any UUID; the removed
+  addresses; the mails, their recipients and attachments; the inbox items
+  (mail, cc notice, notice); the kept payloads; the Results; the saved states
+  and the restart origins.
+
+- The GraphQL runner surface for holders of the scope `jobs:runner`:
+  `jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
+  `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
+  `jobsMail`, `jobsSaveState`, `jobsSavedState`. Admission has a third branch:
+  a request selecting runner fields only is admitted for an active principal
+  holding the scope; administrators read no mail, Result or payload.
+- The scope `jobs:runner` is declared to the identity service at boot
+  (`SCOPE_DECLARATION_ENABLED`, default on); readiness waits for acceptance.
+- `jobs.runner.mark_read.{runner_type}` marks items read for the Run that holds
+  them; the doorbell `run.item_arrived.v1` rings for an item that reaches a
+  live Run.
+- `JOBS_SAVED_STATE_MAX_BYTES` (default 1 MiB).
+- Registration, listing and read-marking requests are bounded in flight by
+  `JOBS_CLAIM_MAX_HELD`; a request of another wire version is answered
+  `malformed`; the reason `run_ended` answers a request for a Run that ended.
 
 ### Changed
 
+- Push dispatch selects the waiting Jobs within the free capacity of each
+  runner type, so a saturated type neither starves the others nor keeps the
+  dispatch loop spinning.
+- Finishing a Job or declaring it failed no longer withdraws its live Run and
+  changes nothing in the directory. A terminal fact for a live Run of a
+  terminal Job ends the Run for its Instance and for the directory and leaves
+  the Job as it is; the backstops also reclaim the Runs of terminal Jobs.
+- A manual retry waits for free capacity like any other Job.
+- The end of a Run that fails or is cancelled also cancels the non-terminal
+  descendants of the terminal Jobs it requested.
+- A change of the directory takes the lock of its Tree before the Job rows, on
+  the writer paths as well as on registration, so a registration cannot insert
+  agents of a Run that a concurrent writer removes; the capacity locks of one
+  commit are taken in runner-type order.
+- Removal marks only the Runs that have not ended as removed.
+- The caller-address rule is one domain decision fed with the addresses the
+  acting Run holds.
+
+### Fixed
+
+- A root Job is no longer its own parent when the restart obstacle
+  "parent Job terminal" is read for the listing and for mail.
+
+### Changed (earlier in the line)
+
 - A creation of a job with no parent, by version 1 or 2, is refused with
   `passport_required`.
+- A creation under an ended parent is refused with `parent_terminal` in the
+  version 2 rejection (version 1 keeps `parent_job_terminal`).
 - Rejections are published in both generations (`creation_rejected.v1` and `.v2`).
 
 ### Removed

@@ -35,15 +35,7 @@ impl Job {
         };
         let mut events = Vec::with_capacity(2);
         if run.is_held_by_an_instance() {
-            events.push(JobEvent::RunCancellationRequested(
-                RunCancellationRequested {
-                    job_id: self.id(),
-                    run_id: run.id(),
-                    reason_code: withdrawal.reason_code.clone(),
-                    requested_by: withdrawal.requested_by.clone(),
-                    originating_job_id: withdrawal.originating_job_id,
-                },
-            ));
+            events.push(self.stop_request(run, withdrawal));
         }
         events.push(JobEvent::RunCancelled(RunCancelled {
             job_id: self.id(),
@@ -53,16 +45,30 @@ impl Job {
         events
     }
 
-    pub(crate) fn resolve_after_withdrawing_its_run(
+    pub(crate) fn resolve_asking_its_run_to_stop(
         &self,
         resolution: JobEvent,
     ) -> Result<JobCommandResult, JobsError> {
-        let mut result =
-            JobCommandResult::new(self.withdraw_active_run(&RunWithdrawal::for_resolution()?));
-        if self.active_run().is_some_and(Run::is_held_by_an_instance) {
-            result = result.with_warning(CommandWarning::CancellationIsBestEffort);
-        }
+        let withdrawal = RunWithdrawal::for_resolution()?;
+        let mut result = match self.active_run() {
+            Some(run) if run.is_held_by_an_instance() => {
+                JobCommandResult::new(vec![self.stop_request(run, &withdrawal)])
+                    .with_warning(CommandWarning::CancellationIsBestEffort)
+            }
+            Some(_) => JobCommandResult::new(self.withdraw_active_run(&withdrawal)),
+            None => JobCommandResult::new(vec![]),
+        };
         result.events.push(resolution);
         Ok(result)
+    }
+
+    fn stop_request(&self, run: &Run, withdrawal: &RunWithdrawal) -> JobEvent {
+        JobEvent::RunCancellationRequested(RunCancellationRequested {
+            job_id: self.id(),
+            run_id: run.id(),
+            reason_code: withdrawal.reason_code.clone(),
+            requested_by: withdrawal.requested_by.clone(),
+            originating_job_id: withdrawal.originating_job_id,
+        })
     }
 }

@@ -294,6 +294,16 @@ admins of the platform org, which the Passport carries as the same privilege as
 platform administration. No org-scoped or per-project access exists in this
 version.
 
+A holder of the scope `jobs:runner` reaches the runner gestures alone
+(`jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
+`jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
+`jobsMail`, `jobsSaveState`, `jobsSavedState`), each for the Run the call
+names. A request mixing runner fields with any other field is answered
+`FORBIDDEN`. Platform administrators read no mail, Result or kept payload; they
+see the inline payload as the Job carries it. The service declares the scope
+`jobs:runner` to the identity service at boot and stays not ready until the
+declaration is accepted.
+
 `X-Passport` is a trusted header: the service decodes it, it does not
 authenticate its origin. Deploy svc-jobs only behind a gateway that strips
 client-forged copies and re-injects the resolved passport, on a network
@@ -383,6 +393,8 @@ failing job by job.
 | `JOBS_CLAIM_RESERVATION_SECONDS` | `60` | A run reserved by a claim and not started within this fails as transient with `claim_lost`; a pushed trigger left unstarted this long after its type switched to `CLAIM` is cancelled with `trigger_stranded` (both swept with the backstops). Must exceed `JOBS_CLAIM_MAX_WAIT_SECONDS`, or the service refuses to boot. |
 | `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered `busy` immediately. |
 | `JOBS_PAYLOAD_INLINE_MAX_BYTES` | `524288` | The largest inline payload a creation may carry (message, attachment names, types and contents together); above it the creation is rejected with `payload_too_large`. A larger payload is kept by Jobs or sent by reference. |
+| `JOBS_SAVED_STATE_MAX_BYTES` | `1048576` (1 MiB) | The largest saved state a Run may store for one agent. |
+| `SCOPE_DECLARATION_ENABLED` | `true` | Declares the scope `jobs:runner` at boot and gates readiness on its acceptance. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |

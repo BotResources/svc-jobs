@@ -20,9 +20,6 @@ pub struct ManualRetryJob {
     pub successor_job_id: JobId,
     pub dispatch: SuccessorDispatch,
     pub requested_by: KnownUser,
-    /// The maximum that applies to the user the successor runs for — theirs or
-    /// the service default — which caps the request it copies when it has no
-    /// parent.
     pub applicable_maximum: Priority,
 }
 
@@ -107,7 +104,7 @@ pub fn manual_retry(
             }));
             Some(first_run_id)
         }
-        SuccessorDispatch::AwaitClaim => None,
+        SuccessorDispatch::Wait => None,
     };
     Ok(ManualRetryOutcome::Started(Box::new(ManualRetryPlan {
         predecessor: CommandResult::from_event(JobEvent::ManualRetryStarted(ManualRetryStarted {
