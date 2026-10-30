@@ -14,11 +14,14 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   the Tree of a Job, for the administrator view.
 - `ports::transport::RunnerTransport::announces`: whether one Instance has a
   presence entry, read directly.
-- `domain::runner::call_notices::may_notify_a_caller`: the events after which
-  a Caller can receive a notice; `CallNotices::plan` plans nothing for any
-  other event.
-- `decide_deliveries` treats `RestartInFlight` in the arm of `Running`: the
-  restart Run is rung once it has started.
+- `event::run_inbox::RunInboxEffect` and `JobEvent::run_inbox_effect`: the one
+  exhaustive classification of what an event does to the inbox of a Run (start
+  or end a Run, write a call notice); `serializes_with_the_tree_directory` says
+  whether its write takes the Tree lock, and `CallNotices::plan` derives the
+  notices from it. A new `JobEvent` does not compile until it is classified.
+- Refactor, same decisions: `decide_deliveries` handles `RestartInFlight` in the
+  arm of `Running`. A restart Run that has not started is rung by nothing; the
+  0.8.0 note on `Delivery::rings_live_run` means a started Run.
 
 ## 0.8.0 - 2026-10-30
 
@@ -97,9 +100,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `domain::runner::saved_state::SavedState::new(value, maximum_bytes)` owns the
   size guard of a saved state and returns `SavedStateRefusal`; the port
   `SavedStates::save_state` takes the checked `SavedState` and no maximum.
-- A mail or a cc notice reaching an agent whose restart Job is live rings the
-  restart Run once it has started (`Delivery::rings_live_run` for
-  `RestartInFlight`); a restart Run that has not started is rung by nothing.
+- A mail or notice reaching an agent whose restart Job is live rings the live
+  Run of that restart Job (`Delivery::rings_live_run` for `RestartInFlight`).
 
 ## 0.7.0 - 2026-10-29
 

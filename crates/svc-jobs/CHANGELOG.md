@@ -22,11 +22,38 @@ to `## Unreleased`).
   listing it compares with the open sessions can miss a key rewritten while it
   is read, and each absent key is now confirmed by a direct read before its
   session is closed and its Runs are reclaimed.
-- A Run start and every write that can put an item in an inbox (a mail, a cc
-  notice, a call notice) take the Tree lock, so an item that reaches an agent
-  whose restart Run starts at the same moment is either rung to that Run or
-  listed by the first read the Run makes after its start; before, it could be
-  neither (`regression_ring_start_race`).
+- A Run start, a queued Job, a scheduled retry and a failed Job now take the
+  Tree lock as a Run end, a mail and a cc notice already did, because each of
+  them can put a call notice in the inbox of a Caller's Run. An item that
+  reaches an agent whose restart Run starts at the same moment is either rung
+  to that Run or listed by the first read the Run makes after its start; before,
+  it could be neither (`regression_ring_start_race`). One classification of what
+  an event does to the inbox of a Run (`bc-jobs` `RunInboxEffect`) decides both
+  the lock and the notices, and a new kind of event does not compile until it
+  is classified.
+- Waiting for the Tree lock is bounded (5 s): a write that cannot take it is
+  refused as `concurrent_modification` and a runner fact is redelivered, instead
+  of holding a connection and the status consumer for as long as another write
+  holds the Tree. An event that ends a Run or writes a call notice on a Job
+  whose Tree is unknown is refused (`job_not_found`) instead of going unlocked.
+
+### Added
+
+- The gauge `jobs_claims_held{runner_type}`: the claims this pod has registered
+  to wait for work.
+
+### Known gaps
+
+- The runner configuration reaches the runner as the same JSON value, not as
+  the producer's text: key order and number notation are normalised, where the
+  sealed test "Config and payload travel apart" says byte for byte.
+- A GraphQL runner call names its Instance by key alone and carries no runner
+  type, so an Instance of another runner type with the same key is not told
+  apart from the Instance that holds the Run; the NATS surface names the type
+  and refuses it (`e2e_runner_isolation`,
+  `a_graphql_call_of_another_runner_type_with_the_same_instance_key_is_not_refused_known_gap`).
+- The queue position of a call notice is measured while the Tree lock is held:
+  the lock cannot be released before the write ends.
 
 ### Tests
 
@@ -77,8 +104,8 @@ sealed 0.6 tests that it proved only in part:
 - A retired type leaves the mail unread with a reason; a terminal parent
   refuses the mail and keeps a failure notice unread.
 - A retry gets new agents and a restart keeps its agent ids.
-- A runner uses only its own Runs, addresses and Jobs, and is refused first on
-  another Instance and without the runner scope.
+- A runner uses only its own Runs, addresses and Jobs, and is refused when it
+  names another Instance's key and without the runner scope.
 - A sync runner call ends with the answer or the failure in the Caller's Run,
   stays in progress until the Caller finishes it, and is cancelled with it.
 - Acts-for is transitive across two restarts; a plain retry gets none of it.
@@ -91,8 +118,8 @@ sealed 0.6 tests that it proved only in part:
 - Cancel comes from the Requester or the working runner and reaches every Job
   below; cancelling a restart Job reaches the Jobs of the Runs it acts for.
 - Claim reservation waits for free capacity after a heartbeat lowers it.
-- Config and payload travel apart, to a manual-retry successor too, and a
-  reference is not read.
+- Config and payload travel apart (the config as the same JSON value), to a
+  manual-retry successor too, and a reference is not read.
 - Every Job has a Passport that Jobs stores and hands on unchanged: the whole
   Passport in every trigger, the implied KnownUser, `passport_user_mismatch`.
 - Mail stays inside one Tree: `other_tree`, `sender_not_of_run`,
@@ -252,6 +279,12 @@ kept payloads.
 
 - A mail or a cc notice reaching an agent whose restart Run has started rings
   that Run once; a restart Run that has not started is rung by nothing.
+- The reconciliation of the presence bucket reads the open sessions before the
+  announced instances, so a session opened during the listing is not reported
+  lost.
+- The backstop sweep is a fixed ordered list of independent steps; the due
+  restarts come last, after every safety backstop, and a failing step never
+  stops the others.
 - A root Job is no longer its own parent when the restart obstacle
   "parent Job terminal" is read for the listing and for mail.
 - A Job that finished while its Run was still live: the Run is now reclaimed when
@@ -264,8 +297,6 @@ kept payloads.
 - Marking items read checks only the requested items.
 - Saving a state takes the Tree lock, so a save no longer leaves a state behind
   a Run that was removed at the same time.
-- `jobsSaveState` refuses a state above the setting (`state_too_large`) before
-  it checks the work under the Tree lock.
 - Two uploads of the same attachment id, or two mails of the same mail id, from
   two Trees at once keep one content and one uploader; the other is refused with
   `mail_id_reused`.
