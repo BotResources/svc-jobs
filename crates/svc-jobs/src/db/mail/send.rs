@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, AttachmentId, ItemId, JobId, RunId};
 use bc_jobs::domain::mail::access::guard_sender_holds;
 use bc_jobs::domain::mail::content::{MailContent, SendAdmission, guard_attachments_uploaded};
@@ -8,8 +9,7 @@ use bc_jobs::domain::mail::inbox::ItemKind;
 use bc_jobs::domain::mail::refusal::MailRefusal;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::environment::IdFactory;
-use br_core_events::EventMetadata;
+use bc_jobs::ports::mail::{MailSender, Minting, SendMail, Sent};
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -20,27 +20,11 @@ use crate::db::PgStore;
 use crate::db::doorbell::{Arrival, Ring, ring};
 use crate::db::hydrate::unavailable;
 use crate::db::restart::wake_addresses;
-use crate::db::work::{WorkNamed, require_work};
+use crate::db::work::require_work;
 
-pub struct SendMail<'a> {
-    pub work: WorkNamed<'a>,
-    pub content: MailContent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sent {
-    pub refused_restarts: Vec<AgentId>,
-    pub wakes_restart: bool,
-}
-
-pub struct Minting<'a> {
-    pub ids: &'a dyn IdFactory,
-    pub metadata: &'a EventMetadata,
-    pub at: DateTime<Utc>,
-}
-
-impl PgStore {
-    pub async fn send_mail(
+#[async_trait]
+impl MailSender for PgStore {
+    async fn send_mail(
         &self,
         request: SendMail<'_>,
         minting: Minting<'_>,
@@ -131,7 +115,7 @@ impl PgStore {
             wakes_restart: !waking.is_empty(),
             refused_restarts: plan
                 .iter()
-                .filter_map(|delivery| delivery.refused_restart.map(|refused| refused.address))
+                .filter_map(|delivery| delivery.refused_restart)
                 .collect(),
         }))
     }

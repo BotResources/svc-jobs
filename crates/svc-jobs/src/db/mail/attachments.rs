@@ -1,10 +1,14 @@
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, AttachmentId, MailId};
 use bc_jobs::domain::mail::content::{
     AttachmentAdmission, AttachmentBody, StoredAttachment, decide_attachment_upload,
 };
 use bc_jobs::domain::mail::refusal::MailRefusal;
+use bc_jobs::domain::mail::views::AttachmentMeta;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::mail::{AttachmentStore, UploadAttachment};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -12,32 +16,7 @@ use uuid::Uuid;
 use super::send::guard_sender;
 use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
-use crate::db::work::{WorkNamed, addresses_of_run, require_work};
-
-pub struct UploadAttachment<'a> {
-    pub work: WorkNamed<'a>,
-    pub mail_id: MailId,
-    pub attachment_id: AttachmentId,
-    pub from: AgentId,
-    pub name: String,
-    pub content_type: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttachmentMeta {
-    pub attachment_id: AttachmentId,
-    pub name: String,
-    pub content_type: String,
-    pub size: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AttachmentContent {
-    pub name: String,
-    pub content_type: String,
-    pub content: String,
-}
+use crate::db::work::{addresses_of_run, require_work};
 
 pub async fn listed_attachments(
     tx: &mut PgConnection,
@@ -62,8 +41,9 @@ pub async fn listed_attachments(
         .collect())
 }
 
-impl PgStore {
-    pub async fn upload_attachment(
+#[async_trait]
+impl AttachmentStore for PgStore {
+    async fn upload_attachment(
         &self,
         request: UploadAttachment<'_>,
         at: DateTime<Utc>,
@@ -114,12 +94,12 @@ impl PgStore {
         Ok(Ok(()))
     }
 
-    pub async fn fetch_attachment(
+    async fn fetch_attachment(
         &self,
         work: WorkNamed<'_>,
         mail_id: MailId,
         attachment_id: AttachmentId,
-    ) -> Result<Result<AttachmentContent, RunnerRefusal>, PortError> {
+    ) -> Result<Result<AttachmentBody, RunnerRefusal>, PortError> {
         let mut tx = self.begin().await?;
         let context = match require_work(&mut tx, work, false).await? {
             Ok(context) => context,
@@ -143,7 +123,7 @@ impl PgStore {
         .await
         .map_err(unavailable)?;
         Ok(match row {
-            Some(row) => Ok(AttachmentContent {
+            Some(row) => Ok(AttachmentBody {
                 name: row.get("name"),
                 content_type: row.get("content_type"),
                 content: row.get("content"),

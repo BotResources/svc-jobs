@@ -1,5 +1,6 @@
 mod guard;
 mod input;
+mod mail_output;
 mod mutation;
 mod output;
 mod query;

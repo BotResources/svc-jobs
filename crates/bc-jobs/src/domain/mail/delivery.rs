@@ -43,6 +43,16 @@ pub struct RefusedRestart {
     pub address: AgentId,
 }
 
+impl RefusedRestart {
+    pub fn code(&self) -> &'static str {
+        "restart_refused_type_retired"
+    }
+
+    pub fn message(&self) -> &'static str {
+        "The agent restarts on a retired runner type: the mail stays unread at this address."
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Delivery {
     pub address: AgentId,
@@ -121,6 +131,15 @@ mod tests {
     use crate::domain::keys::RunnerTypeKey;
     use crate::fixtures::{job_id, run_id};
     use uuid::Uuid;
+
+    #[test]
+    fn a_refused_restart_names_its_wire_code_and_words() {
+        let refused = RefusedRestart {
+            address: AgentId::new(uuid::Uuid::now_v7()),
+        };
+        assert_eq!(refused.code(), "restart_refused_type_retired");
+        assert!(refused.message().contains("retired runner type"));
+    }
 
     fn held(
         tree: JobId,

@@ -62,6 +62,17 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   (`AttachmentBody`, `StoredAttachment`, `AttachmentAdmission`): the mail
   decisions that were in the Postgres adapter.
 - `runs_lost_with_instance` also covers the live Run of a finished Job.
+- `Job::fail_run_for_missing_passport` and `PASSPORT_REQUIRED`: a Run whose Job holds
+  no Passport fails permanently, and a pushed Run may settle unstarted for that
+  reason. `RunTrigger::passport` is required and `RunTrigger::of_job` refuses a Job
+  without one (`PassportRequired`).
+- `RunRefusal`, `MarkReadRefusal`: the refusals of a call that names a Run only;
+  `RunnerRefusal::ItemNotYours` is removed.
+- Ports `MailSender`, `MailReader`, `AttachmentStore`, `Inbox`, `KeptPayloads`,
+  `Results` and `SavedStates`, with the read models `MailView`, `MailRead`,
+  `AttachmentMeta`, `UnreadItem`, `UnreadMail`, `SavedStateView`, `StoredResult`
+  and the request types `WorkNamed`, `SendMail`, `Sent`, `Minting`,
+  `UploadAttachment`, `Uploader`; `RefusedRestart::code` and `message`.
 
 ## 0.7.0 - 2026-10-29
 

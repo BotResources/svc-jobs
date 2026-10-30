@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::reason::Reason;
+
 pub const WIRE_VERSION: u8 = 1;
 pub const WIRE_VERSION_V2: u8 = 2;
 
@@ -10,7 +12,6 @@ pub const TRIGGER_STREAM: &str = "JOBS_TRIGGER";
 pub const STATUS_STREAM: &str = "JOBS_STATUS";
 pub const LOG_STREAM: &str = "JOBS_LOG";
 pub const TRIGGER_FILTER: &str = "jobs.trigger.>";
-/// Every claim subject: one segment per runner type.
 pub const CLAIM_FILTER: &str = "jobs.claim.*";
 pub const CLAIM_V2_FILTER: &str = "jobs.claim.v2.*";
 pub const STATUS_FILTER: &str = "jobs.status.>";
@@ -73,16 +74,6 @@ pub struct RunCompleted {
 pub const FAILURE_KIND_TRANSIENT: &str = "TRANSIENT";
 pub const FAILURE_KIND_PERMANENT: &str = "PERMANENT";
 
-/// The closed retry vocabulary of a terminal failure report.
-///
-/// Jobs reads it as retry policy and nothing else: `TRANSIENT` may buy another
-/// attempt against the job's budget, `PERMANENT` ends automatic retry at once.
-/// There is no third word — a report naming one does not parse, so a runner
-/// declaring an unclassified failure fails to compile rather than fails to be
-/// understood in production.
-///
-/// [`Default`] is the contract's absent-kind rule: an unclassified failure is
-/// permanent, because a kind nobody chose must never burn a retry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FailureKind {
@@ -102,9 +93,6 @@ impl FailureKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailureReport {
-    /// Absent means [`FailureKind::Permanent`]. The field stays optional so a
-    /// runner that never classifies its failures keeps writing the exact bytes
-    /// it writes today.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<FailureKind>,
     pub reason_code: String,
@@ -213,41 +201,18 @@ pub const CLAIM_REASON_RUNNER_TYPE_RETIRED: &str = "runner_type_retired";
 pub const CLAIM_REASON_CLAIM_SPENT: &str = "claim_spent";
 pub const CLAIM_REASON_MALFORMED_CLAIM: &str = "malformed_claim";
 pub const CLAIM_REASON_BUSY: &str = "busy";
-/// The reason a reserved Run its Instance never started fails with.
 pub const RUN_FAILURE_CLAIM_LOST: &str = "claim_lost";
-/// The reason a Run left on the trigger stream of a type switched to `CLAIM`
-/// is cancelled with, once nobody started it within the reservation delay
-/// after the switch. It does not count as an attempt: its Job waits to be
-/// claimed.
 pub const RUN_CANCELLATION_TRIGGER_STRANDED: &str = "trigger_stranded";
 
-/// Why a claim was refused rather than served or answered empty. A closed
-/// vocabulary: a reason outside it does not parse, so a runner compiled
-/// against this contract handles every refusal Jobs can give.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimRefusal {
-    /// Jobs has no live presence for this Instance of this type: announce
-    /// presence (or wait for it to be observed), then claim again later.
     InstanceUnknown,
-    /// The type is dispatched by `PUSH`: stop claiming and consume the trigger
-    /// stream. Claim again only once the type is switched back to `CLAIM`.
     NotClaimMode,
-    /// The Instance reports `DRAINING`: stop claiming until it reports `READY`.
     InstanceDraining,
-    /// The type is retired and takes no new Job: stop claiming.
     RunnerTypeRetired,
-    /// The `claim_id` already served a Run that was started or settled: mint a
-    /// new `claim_id` for a new slot. Never reuse one.
     ClaimSpent,
-    /// The claim could not be read — an unparseable payload, a nil `claim_id`,
-    /// an invalid subject: fix the claim; repeating it unchanged gets the same
-    /// answer.
     MalformedClaim,
-    /// The pod that received the claim could not hold it — it holds as many
-    /// claims as it may, or its store is momentarily unavailable. Nothing was
-    /// reserved for this answer: wait `retry_after_ms` (carried by the reply),
-    /// then repeat the SAME claim, under the same `claim_id`.
     Busy,
 }
 
@@ -275,14 +240,6 @@ impl ClaimRefusal {
     }
 }
 
-/// An Instance of a `CLAIM` runner type asking for its next Run, on
-/// `jobs.claim.{runner_type}` (core NATS request/reply).
-///
-/// `claim_id` identifies one free slot of the Instance: repeating a claim
-/// under the same `claim_id` — because its reply was lost — returns the Run
-/// already reserved to it, never a second one. A different `claim_id` from the
-/// same Instance is another slot. `wait_ms` is the longest the Instance waits
-/// for the reply; Jobs holds the claim at most that long, within its own bound.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claim {
     #[serde(default = "wire_version")]
@@ -292,11 +249,15 @@ pub struct Claim {
     pub wait_ms: u64,
 }
 
-/// The answer to a [`Claim`]. `run` carries exactly what a trigger carries;
-/// absent, it means nothing was waiting during the wait — or, with a `reason`,
-/// that the claim was refused. An empty answer is claimed again; a refusal is
-/// handled as its [`ClaimRefusal`] says. `retry_after_ms` comes with `busy`
-/// only: how long to wait before repeating the same claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimV2 {
+    #[serde(default = "wire_version_v2")]
+    pub version: u8,
+    pub instance_key: String,
+    pub claim_id: Uuid,
+    pub wait_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimReply {
     #[serde(default = "wire_version")]
@@ -328,7 +289,6 @@ impl ClaimReply {
         }
     }
 
-    /// A refusal other than `busy`, which always names its back-off.
     pub fn refused(reason: ClaimRefusal) -> Self {
         Self {
             version: WIRE_VERSION,
@@ -338,8 +298,6 @@ impl ClaimReply {
         }
     }
 
-    /// The pod could not hold the claim: repeat the same claim after
-    /// `retry_after_ms`.
     pub fn busy(retry_after_ms: u64) -> Self {
         Self {
             version: WIRE_VERSION,
@@ -368,8 +326,7 @@ pub struct TriggerV2 {
     pub attempt: u32,
     pub parent_job_id: Uuid,
     pub initial_job_id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub passport: Option<Value>,
+    pub passport: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triggered_by: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -391,7 +348,7 @@ pub struct ClaimReplyV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<TriggerV2>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<ClaimRefusal>,
+    pub reason: Option<Reason<ClaimRefusal>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
 }
@@ -419,7 +376,7 @@ impl ClaimReplyV2 {
         Self {
             version: WIRE_VERSION_V2,
             run: None,
-            reason: Some(reason),
+            reason: Some(reason.into()),
             retry_after_ms: None,
         }
     }
@@ -428,7 +385,7 @@ impl ClaimReplyV2 {
         Self {
             version: WIRE_VERSION_V2,
             run: None,
-            reason: Some(ClaimRefusal::Busy),
+            reason: Some(ClaimRefusal::Busy.into()),
             retry_after_ms: Some(retry_after_ms),
         }
     }

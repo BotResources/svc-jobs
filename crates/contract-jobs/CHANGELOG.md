@@ -24,8 +24,17 @@ every consumer, so each version is deliberate. Release headings are plain
   — `RegisterAgents`, `MarkRead`, `ListAgents`, their replies and the closed
   `SurfaceReason` enum (`run_unknown`, `run_not_started`, `run_ended`,
   `run_removed`, `instance_mismatch`, `agent_id_in_other_tree`,
-  `agent_id_not_finished`, `item_not_yours`, `job_not_of_run`, `malformed`). Jobs sends no reply when it fails on its own side, so no
-  `unavailable` reason exists: a request left unanswered is repeated.
+  `agent_id_not_finished`, `item_not_yours`, `malformed`: nine codes). Jobs sends no
+  reply when it fails on its own side, so no `unavailable` reason exists: a request
+  left unanswered is repeated.
+- `runner::ClaimV2`: the claim of version 2; a missing `version` reads as 2.
+  `Claim` (version 1) is unchanged.
+- `TriggerV2.passport` is required: a version 2 trigger, or a version 2 claim reply
+  serving a run, without it does not deserialize.
+- `reason::Reason<T>`: the `reason` of `ClaimReplyV2`, `SurfaceReply` and
+  `ListAgentsReply` is a known word or an unknown word that keeps its text and is
+  never read as another reason. `ClaimReply` (version 1) is unchanged.
+- No rustdoc or comment remains in the crate.
 
 ## 0.6.0 - 2026-10-26
 

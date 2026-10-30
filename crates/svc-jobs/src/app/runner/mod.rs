@@ -6,16 +6,18 @@ mod state;
 
 pub use answer::{hand_over_result, read_result};
 pub use inbox::unread;
-pub use mail::{SendMailInput, fetch_attachment, read_mail, send_mail, upload_attachment};
+pub use mail::{
+    AttachmentInput, SendMailInput, fetch_attachment, read_mail, send_mail, upload_attachment,
+};
 pub use payload::{Uploader, fetch_payload, upload_payload};
 pub use state::{read_saved_state, save_state};
 
 use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::work::WorkNamed;
 use uuid::Uuid;
 
 use super::{Jobs, catch_up};
-use crate::db::work::WorkNamed;
 use crate::error::ServiceError;
 
 pub type Outcome<T> = Result<Result<T, RunnerRefusal>, ServiceError>;

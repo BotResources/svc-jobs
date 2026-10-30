@@ -34,6 +34,7 @@ pub mod write;
 
 use std::sync::Arc;
 
+use bc_jobs::JobsError;
 use bc_jobs::domain::actions::fleet::RetirementWindow;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
@@ -145,11 +146,22 @@ impl Jobs {
             let outcome = match event {
                 JobEvent::RunDispatched(fact) if fact.claimed_by.is_some() => Ok(()),
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
-                    Ok(run) => {
-                        self.transport
-                            .dispatch(&RunTrigger::of_job(job, fact.run_id, run.attempt_number()))
-                            .await
-                    }
+                    Ok(run) => match RunTrigger::of_job(job, fact.run_id, run.attempt_number()) {
+                        Ok(trigger) => self.transport.dispatch(&trigger).await,
+                        Err(JobsError::PassportRequired) => {
+                            if let Err(error) =
+                                Box::pin(reclaim::without_passport(self, job, fact.run_id)).await
+                            {
+                                tracing::error!(
+                                    job_id = %job.id().as_uuid(),
+                                    error = %error,
+                                    "a run with no Passport to send could not be failed"
+                                );
+                            }
+                            Ok(())
+                        }
+                        Err(error) => Err(bc_jobs::ports::PortError::StoredStateRejected(error)),
+                    },
                     Err(error) => Err(bc_jobs::ports::PortError::StoredStateRejected(error)),
                 },
                 JobEvent::RunCancellationRequested(fact) => {

@@ -7,19 +7,13 @@ use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::mail::author::{MailAuthor, SourceConversation};
 use bc_jobs::domain::mail::content::{AttachmentRef, MailContent};
 use bc_jobs::domain::mail::delivery::{AddressStanding, HeldAddress};
+use bc_jobs::domain::mail::views::MailView;
 use bc_jobs::ports::PortError;
-use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use crate::db::directory::PARENT_TERMINAL;
 use crate::db::hydrate::unavailable;
-
-#[derive(Debug, Clone)]
-pub struct MailView {
-    pub content: MailContent,
-    pub created_at: DateTime<Utc>,
-}
 
 pub async fn load_mail(
     tx: &mut PgConnection,

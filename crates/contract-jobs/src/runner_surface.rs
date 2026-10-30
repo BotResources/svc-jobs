@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::reason::Reason;
 use crate::segment::SubjectSegment;
 use crate::{
     CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE, CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE,
@@ -28,7 +29,6 @@ pub enum SurfaceReason {
     AgentIdInOtherTree,
     AgentIdNotFinished,
     ItemNotYours,
-    JobNotOfRun,
     Malformed,
 }
 
@@ -91,7 +91,7 @@ pub struct SurfaceReply {
     pub version: u8,
     pub accepted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<SurfaceReason>,
+    pub reason: Option<Reason<SurfaceReason>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -110,7 +110,7 @@ impl SurfaceReply {
         Self {
             version: SURFACE_WIRE_VERSION,
             accepted: false,
-            reason: Some(reason),
+            reason: Some(reason.into()),
             message: Some(message.to_owned()),
         }
     }
@@ -143,7 +143,7 @@ pub struct ListAgentsReply {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<Vec<ListedAgent>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<SurfaceReason>,
+    pub reason: Option<Reason<SurfaceReason>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -164,7 +164,7 @@ impl ListAgentsReply {
             version: SURFACE_WIRE_VERSION,
             accepted: false,
             agents: None,
-            reason: Some(reason),
+            reason: Some(reason.into()),
             message: Some(message.to_owned()),
         }
     }
@@ -225,7 +225,6 @@ mod tests {
             (SurfaceReason::AgentIdInOtherTree, "agent_id_in_other_tree"),
             (SurfaceReason::AgentIdNotFinished, "agent_id_not_finished"),
             (SurfaceReason::ItemNotYours, "item_not_yours"),
-            (SurfaceReason::JobNotOfRun, "job_not_of_run"),
             (SurfaceReason::Malformed, "malformed"),
         ];
         for (reason, code) in codes {

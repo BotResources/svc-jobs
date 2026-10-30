@@ -3,10 +3,8 @@ use uuid::Uuid;
 
 use super::guard::runner_caller;
 use super::input::GqlWorkInput;
-use super::output::{
-    GqlAttachmentResult, GqlContent, GqlContentResult, GqlMailResult, GqlSavedStateResult,
-    GqlUnreadResult,
-};
+use super::mail_output::{GqlAttachmentResult, GqlMailResult, GqlUnreadResult};
+use super::output::{GqlContent, GqlContentResult, GqlSavedStateResult};
 use crate::app::runner;
 use crate::edge::error::edge_error;
 use crate::edge::state::EdgeState;

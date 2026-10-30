@@ -1,4 +1,4 @@
-use bc_jobs::domain::ownership::ActorRef;
+use async_trait::async_trait;
 use bc_jobs::domain::payload::{JobPayload, PayloadAttachment};
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::kept_payload::{
@@ -6,14 +6,16 @@ use bc_jobs::domain::runner::kept_payload::{
     guard_job_serves_kept_payload,
 };
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::kept_payload::{KeptPayloads, Uploader};
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::unavailable;
-use super::work::{WorkNamed, require_work};
+use super::work::require_work;
 
 const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
         SELECT $1::uuid, 0 \
@@ -26,11 +28,6 @@ const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
           AND coalesce(j.predecessor_job_id, origin.job_id) IS NOT NULL) \
     SELECT kp.job_id FROM src s JOIN kept_payloads kp ON kp.job_id = s.job_id \
     ORDER BY s.depth LIMIT 1";
-
-pub enum Uploader<'a> {
-    Run(WorkNamed<'a>),
-    Service(ActorRef),
-}
 
 fn corrupt(error: serde_json::Error) -> PortError {
     PortError::Unavailable {
@@ -59,8 +56,9 @@ async fn stored(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<StoredPayl
     }))
 }
 
-impl PgStore {
-    pub async fn upload_payload(
+#[async_trait]
+impl KeptPayloads for PgStore {
+    async fn upload_payload(
         &self,
         uploader: Uploader<'_>,
         for_job_id: Uuid,
@@ -104,12 +102,12 @@ impl PgStore {
         Ok(Ok(admission))
     }
 
-    pub async fn stored_payload(&self, job_id: Uuid) -> Result<Option<StoredPayload>, PortError> {
+    async fn stored_payload(&self, job_id: Uuid) -> Result<Option<StoredPayload>, PortError> {
         let mut connection = self.pool().acquire().await.map_err(unavailable)?;
         stored(&mut connection, job_id).await
     }
 
-    pub async fn fetch_payload(
+    async fn fetch_payload(
         &self,
         work: WorkNamed<'_>,
     ) -> Result<Result<KeptPayload, RunnerRefusal>, PortError> {

@@ -4,7 +4,7 @@ use bc_jobs::domain::runner::kept_payload::{KeptPayload, UploadAdmission};
 use uuid::Uuid;
 
 use super::{Jobs, Outcome, WorkIds, started};
-use crate::db::kept_payloads::Uploader as StoreUploader;
+use bc_jobs::ports::kept_payload::{KeptPayloads, Uploader as StoreUploader};
 
 pub enum Uploader {
     Run(WorkIds),

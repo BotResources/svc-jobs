@@ -9,7 +9,8 @@ use crate::domain::job::status::JobStatus;
 use crate::domain::keys::ReasonCode;
 use crate::domain::policy::{Jitter, RetryPolicy, ServiceLimits};
 use crate::domain::run::failure::{
-    CLAIM_LOST, INSTANCE_LOST, RUN_TIMEOUT, RunFailureKind, RunFailureReport, TRIGGER_STRANDED,
+    CLAIM_LOST, INSTANCE_LOST, PASSPORT_REQUIRED, RUN_TIMEOUT, RunFailureKind, RunFailureReport,
+    TRIGGER_STRANDED,
 };
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -61,6 +62,23 @@ impl Job {
             return Ok(discarded);
         }
         let report = RunFailureReport::platform(RunFailureKind::Transient, INSTANCE_LOST)?;
+        let fact = command.into_failure(report);
+        Ok(CommandResult::new(
+            self.run_failure_events(run, &fact, policy, limits)?,
+        ))
+    }
+
+    pub fn fail_run_for_missing_passport(
+        &self,
+        command: ReclaimRun,
+        policy: &RetryPolicy,
+        limits: &ServiceLimits,
+    ) -> Result<JobCommandResult, JobsError> {
+        let run = self.find_run(command.run_id)?;
+        if let Some(discarded) = self.discard_settled("RunFailed", run) {
+            return Ok(discarded);
+        }
+        let report = RunFailureReport::platform(RunFailureKind::Permanent, PASSPORT_REQUIRED)?;
         let fact = command.into_failure(report);
         Ok(CommandResult::new(
             self.run_failure_events(run, &fact, policy, limits)?,

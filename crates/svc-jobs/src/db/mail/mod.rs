@@ -4,7 +4,5 @@ mod load;
 mod read;
 mod send;
 
-pub use attachments::{AttachmentContent, AttachmentMeta, UploadAttachment};
-pub use load::MailView;
-pub use read::MailRead;
-pub use send::{Minting, SendMail, Sent, insert_item};
+pub use attachments::listed_attachments;
+pub use send::insert_item;

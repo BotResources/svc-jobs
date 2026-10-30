@@ -1,5 +1,6 @@
 use super::{Jobs, Outcome, WorkIds, started};
-use crate::db::saved_states::SavedStateView;
+use bc_jobs::domain::runner::views::SavedStateView;
+use bc_jobs::ports::saved_state::SavedStates;
 
 pub async fn save_state(jobs: &Jobs, work: &WorkIds, state: serde_json::Value) -> Outcome<()> {
     started(jobs, work).await?;

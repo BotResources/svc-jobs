@@ -1,9 +1,14 @@
+use async_trait::async_trait;
+use bc_jobs::domain::mail::views::{AttachmentMeta, UnreadItem, UnreadMail};
+use bc_jobs::domain::runner::work::WorkNamed;
+use bc_jobs::ports::inbox::Inbox;
 use std::collections::{HashMap, HashSet};
 
 use bc_jobs::domain::ids::{AgentId, ItemId, MailId, RunId};
 use bc_jobs::domain::mail::access::{guard_address_is_of_the_run, guard_marks_only_own_items};
-use bc_jobs::domain::mail::inbox::{ItemKind, Notice};
+use bc_jobs::domain::mail::inbox::ItemKind;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::work::MarkReadRefusal;
 use bc_jobs::ports::PortError;
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
@@ -12,33 +17,7 @@ use uuid::Uuid;
 use super::PgStore;
 use super::acts_for::acts_for_in;
 use super::hydrate::unavailable;
-use super::mail::AttachmentMeta;
-use super::work::{WorkNamed, addresses_of_run, require_run, require_work};
-
-#[derive(Debug, Clone)]
-pub struct UnreadMail {
-    pub mail_id: MailId,
-    pub from: AgentId,
-    pub author: String,
-    pub source_conversation: Uuid,
-    pub subject: String,
-    pub body: String,
-    pub attachments: Vec<AttachmentMeta>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UnreadItem {
-    pub item_id: ItemId,
-    pub seq: i64,
-    pub kind: ItemKind,
-    pub address: Option<Uuid>,
-    pub run_id: Option<Uuid>,
-    pub accepted_at: DateTime<Utc>,
-    pub mail_id: Option<MailId>,
-    pub subject: Option<String>,
-    pub mail: Option<UnreadMail>,
-    pub notice: Option<Notice>,
-}
+use super::work::{addresses_of_run, require_run, require_work};
 
 const UNREAD_SQL: &str = "\
     SELECT i.item_id::uuid AS item_id, i.seq, i.kind, i.address, i.run_id::uuid AS run_id, \
@@ -50,8 +29,9 @@ const UNREAD_SQL: &str = "\
       AND (i.address = ANY($1) OR ($3 AND i.run_id = ANY($2))) \
     ORDER BY i.seq";
 
-impl PgStore {
-    pub async fn unread(
+#[async_trait]
+impl Inbox for PgStore {
+    async fn unread(
         &self,
         work: WorkNamed<'_>,
         address: Option<AgentId>,
@@ -95,19 +75,19 @@ impl PgStore {
         Ok(Ok(items))
     }
 
-    pub async fn mark_read(
+    async fn mark_read(
         &self,
         run_id: Uuid,
         instance_key: &str,
         runner_type: &str,
         item_ids: &[Uuid],
         at: DateTime<Utc>,
-    ) -> Result<Result<(), RunnerRefusal>, PortError> {
+    ) -> Result<Result<(), MarkReadRefusal>, PortError> {
         let mut tx = self.begin().await?;
         let (run_id, _) =
             match require_run(&mut tx, run_id, instance_key, Some(runner_type)).await? {
                 Ok(found) => found,
-                Err(refusal) => return Ok(Err(RunnerRefusal::Work(refusal))),
+                Err(refusal) => return Ok(Err(refusal.into())),
             };
         let addresses: Vec<Uuid> = addresses_of_run(&mut tx, run_id)
             .await?
@@ -134,10 +114,10 @@ impl PgStore {
             .map(|item| ItemId::new(*item).ok())
             .collect();
         let Some(requested) = requested else {
-            return Ok(Err(RunnerRefusal::ItemNotYours));
+            return Ok(Err(MarkReadRefusal::ItemNotYours));
         };
         if guard_marks_only_own_items(&requested, &reachable).is_err() {
-            return Ok(Err(RunnerRefusal::ItemNotYours));
+            return Ok(Err(MarkReadRefusal::ItemNotYours));
         }
         sqlx::query(
             "UPDATE inbox_items SET read_at = $2 WHERE item_id = ANY($1) AND read_at IS NULL",

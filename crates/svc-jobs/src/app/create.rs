@@ -8,6 +8,7 @@ use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::kept_payload::guard_kept_payload_uploaded;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
+use bc_jobs::ports::kept_payload::KeptPayloads;
 use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::EventMetadata;
 use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};

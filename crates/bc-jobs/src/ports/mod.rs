@@ -1,8 +1,13 @@
 pub mod directory;
 pub mod environment;
 pub mod fleet;
+pub mod inbox;
 pub mod job;
+pub mod kept_payload;
 pub mod log;
+pub mod mail;
+pub mod result;
+pub mod saved_state;
 pub mod transport;
 pub mod user;
 

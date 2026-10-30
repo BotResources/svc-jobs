@@ -72,7 +72,7 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> wire::ClaimReplyV
     let Some(runner_type) = subject.strip_prefix(CLAIM_PREFIX) else {
         return wire::ClaimReplyV2::refused(wire::ClaimRefusal::MalformedClaim);
     };
-    let claim: wire::Claim = match serde_json::from_slice(payload) {
+    let claim: wire::ClaimV2 = match serde_json::from_slice(payload) {
         Ok(claim) => claim,
         Err(error) => {
             tracing::warn!(subject, error = %error, "a claim this service cannot read, refused");
@@ -130,7 +130,7 @@ mod tests {
         let unexpected = reply_of(ClaimAnswer::Refused(JobsError::RetryNotScheduled));
         let failed = reply_of(ClaimAnswer::Unavailable);
         for reply in [unexpected, failed] {
-            assert_eq!(reply.reason, Some(wire::ClaimRefusal::Busy));
+            assert_eq!(reply.reason, Some(wire::ClaimRefusal::Busy.into()));
             assert_eq!(reply.retry_after_ms, Some(BUSY_RETRY_AFTER_MS));
         }
     }
@@ -140,7 +140,10 @@ mod tests {
         let draining = reply_of(ClaimAnswer::Refused(JobsError::InstanceDraining {
             instance_key: "pod-1".to_owned(),
         }));
-        assert_eq!(draining.reason, Some(wire::ClaimRefusal::InstanceDraining));
+        assert_eq!(
+            draining.reason,
+            Some(wire::ClaimRefusal::InstanceDraining.into())
+        );
         assert_eq!(draining.retry_after_ms, None);
     }
 }

@@ -12,7 +12,6 @@ pub enum RunnerRefusal {
     Result(ResultRefusal),
     SavedState(SavedStateRefusal),
     NoKeptPayload,
-    ItemNotYours,
 }
 
 impl RunnerRefusal {
@@ -24,7 +23,6 @@ impl RunnerRefusal {
             Self::Result(refusal) => refusal.code(),
             Self::SavedState(refusal) => refusal.code(),
             Self::NoKeptPayload => "no_kept_payload",
-            Self::ItemNotYours => "item_not_yours",
         }
     }
 
@@ -36,7 +34,6 @@ impl RunnerRefusal {
             Self::Result(refusal) => refusal.message(),
             Self::SavedState(refusal) => refusal.message(),
             Self::NoKeptPayload => "The Job has no payload kept by Jobs.",
-            Self::ItemNotYours => "An item is not at an address of the Run, nor a notice of it.",
         }
     }
 

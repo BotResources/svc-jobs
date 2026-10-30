@@ -129,7 +129,14 @@ async fn recalled(
     let job = jobs.require(job_id).await?;
     Ok(Some(match job.recall_claim(run_id)? {
         RecalledClaim::Pending { run_id, attempt } => {
-            ClaimAnswer::Served(Box::new(RunTrigger::of_job(&job, run_id, attempt)))
+            match RunTrigger::of_job(&job, run_id, attempt) {
+                Ok(trigger) => ClaimAnswer::Served(Box::new(trigger)),
+                Err(JobsError::PassportRequired) => {
+                    super::reclaim::without_passport(jobs, &job, run_id).await?;
+                    ClaimAnswer::Spent
+                }
+                Err(other) => return Err(other.into()),
+            }
         }
         RecalledClaim::Spent => ClaimAnswer::Spent,
     }))
@@ -201,9 +208,15 @@ async fn reserve(
     )
     .await?;
     tx.commit().await?;
-    Ok(Reservation::Reserved(Box::new(RunTrigger::of_job(
-        &job, run_id, attempt,
-    ))))
+    match RunTrigger::of_job(&job, run_id, attempt) {
+        Ok(trigger) => Ok(Reservation::Reserved(Box::new(trigger))),
+        Err(JobsError::PassportRequired) => {
+            let stored = jobs.require(job_id).await?;
+            super::reclaim::without_passport(jobs, &stored, run_id).await?;
+            Ok(Reservation::PassedOver(job_id))
+        }
+        Err(other) => Err(other.into()),
+    }
 }
 
 async fn wait_for_work(

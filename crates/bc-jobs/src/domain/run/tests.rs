@@ -39,39 +39,31 @@ fn pending() -> RunState {
 
 #[test]
 fn a_run_status_is_derived_from_its_lifecycle_facts() {
-    // Given: a dispatched run with no further fact
     let run = Run::hydrate(pending()).unwrap();
-    // Then: it is pending
     assert_eq!(run.status(), RunStatus::Pending);
 
-    // When: an instance claims it
     let started = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(5))),
         ..pending()
     })
     .unwrap();
-    // Then: it is started
     assert_eq!(started.status(), RunStatus::Started);
 
-    // When: it finishes
     let finished = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(5))),
         terminal: Some(RunTerminal::completed(at(9))),
         ..pending()
     })
     .unwrap();
-    // Then: the terminal fact governs
     assert_eq!(finished.status(), RunStatus::Completed);
 }
 
 #[test]
 fn a_run_that_started_before_it_was_dispatched_cannot_be_loaded() {
-    // Given: a stored run whose start predates its dispatch
     let result = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(-5))),
         ..pending()
     });
-    // Then: the impossible history is refused at load
     assert_eq!(
         result.err(),
         Some(JobsError::CorruptState {
@@ -82,7 +74,6 @@ fn a_run_that_started_before_it_was_dispatched_cannot_be_loaded() {
 
 #[test]
 fn a_retry_schedule_hanging_off_a_completed_run_cannot_be_loaded() {
-    // Given: a stored run that completed yet carries a retry schedule
     let schedule = RetrySchedule::new(RetryScheduleId::new(Uuid::now_v7()).unwrap(), at(60));
     let result = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(5))),
@@ -90,7 +81,6 @@ fn a_retry_schedule_hanging_off_a_completed_run_cannot_be_loaded() {
         retry_schedule: Some(schedule),
         ..pending()
     });
-    // Then: retry-after-success is refused at load
     assert_eq!(
         result.err(),
         Some(JobsError::CorruptState {
@@ -101,7 +91,6 @@ fn a_retry_schedule_hanging_off_a_completed_run_cannot_be_loaded() {
 
 #[test]
 fn a_retry_schedule_hanging_off_a_permanent_failure_cannot_be_loaded() {
-    // Given: a stored run that failed permanently yet carries a retry schedule
     let report =
         RunFailureReport::platform(RunFailureKind::Permanent, "configuration_invalid").unwrap();
     let schedule = RetrySchedule::new(RetryScheduleId::new(Uuid::now_v7()).unwrap(), at(60));
@@ -110,18 +99,15 @@ fn a_retry_schedule_hanging_off_a_permanent_failure_cannot_be_loaded() {
         retry_schedule: Some(schedule),
         ..pending()
     });
-    // Then: a permanent failure ends retry, at write time and at load time
     assert!(result.is_err());
 }
 
 #[test]
 fn a_first_attempt_carrying_a_retry_schedule_reference_cannot_be_loaded() {
-    // Given: a stored attempt one claiming to descend from a retry schedule
     let result = Run::hydrate(RunState {
         automatic_retry_schedule_id: Some(RetryScheduleId::new(Uuid::now_v7()).unwrap()),
         ..pending()
     });
-    // Then: the contradiction is refused
     assert_eq!(
         result.err(),
         Some(JobsError::CorruptState {
@@ -132,13 +118,11 @@ fn a_first_attempt_carrying_a_retry_schedule_reference_cannot_be_loaded() {
 
 #[test]
 fn a_started_run_past_the_maximum_duration_has_outrun_its_budget() {
-    // Given: a run started an hour ago with a thirty minute ceiling
     let run = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(0))),
         ..pending()
     })
     .unwrap();
-    // When/Then: the ceiling is exceeded, while a pending run never is
     assert!(run.has_outrun(at(3600), TimeDelta::minutes(30)));
     assert!(!run.has_outrun(at(60), TimeDelta::minutes(30)));
     assert!(
@@ -161,37 +145,30 @@ fn reserved_at(offset: i64) -> RunState {
 
 #[test]
 fn a_run_carries_the_maximum_duration_it_was_dispatched_with_not_the_default() {
-    // Given: a run dispatched for a type allowing 96 hours, started at zero
     let run = Run::hydrate(RunState {
         max_duration: Some(MaxRunDuration::from_seconds(96 * 3600).unwrap()),
         start: Some(RunStart::new(instance(), at(0))),
         ..pending()
     })
     .unwrap();
-    // When: fifty hours have passed, while the service default is 72 hours
-    // Then: the run is within its own budget
     assert!(!run.has_outrun(at(50 * 3600), TimeDelta::hours(72)));
     assert!(run.has_outrun(at(97 * 3600), TimeDelta::hours(72)));
 }
 
 #[test]
 fn a_run_dispatched_before_runs_carried_a_duration_answers_to_the_service_default() {
-    // Given: a legacy run, started at zero, with no duration of its own
     let run = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(0))),
         ..pending()
     })
     .unwrap();
-    // When/Then: the service default governs it
     assert!(run.has_outrun(at(73 * 3600), TimeDelta::hours(72)));
     assert!(!run.has_outrun(at(71 * 3600), TimeDelta::hours(72)));
 }
 
 #[test]
 fn a_reserved_run_belongs_to_its_claimant_before_it_starts() {
-    // Given: a run reserved to pod-7 and not started
     let run = Run::hydrate(reserved_at(1)).unwrap();
-    // When/Then: it is still pending, but pod-7 holds it
     assert_eq!(run.status(), RunStatus::Pending);
     assert!(run.is_reserved());
     assert!(run.is_held_by(&instance()));
@@ -201,28 +178,23 @@ fn a_reserved_run_belongs_to_its_claimant_before_it_starts() {
 
 #[test]
 fn a_reserved_run_never_started_loses_its_claim_past_the_delay() {
-    // Given: a run reserved at one second
     let run = Run::hydrate(reserved_at(1)).unwrap();
-    // When/Then: within the delay it holds, past it the claim is lost
     assert!(!run.has_lost_its_claim(at(30), TimeDelta::seconds(60)));
     assert!(run.has_lost_its_claim(at(62), TimeDelta::seconds(60)));
 }
 
 #[test]
 fn a_started_or_settled_reserved_run_never_loses_its_claim() {
-    // Given: a reserved run its instance started
     let started = Run::hydrate(RunState {
         start: Some(RunStart::new(instance(), at(5))),
         ..reserved_at(1)
     })
     .unwrap();
-    // When/Then: however late, the claim was honoured
     assert!(!started.has_lost_its_claim(at(10_000), TimeDelta::seconds(60)));
 }
 
 #[test]
 fn a_reserved_run_started_by_another_instance_cannot_be_loaded() {
-    // Given: a run reserved to pod-7 but started by pod-9
     let elsewhere = RunnerInstanceReference::new(
         RunnerTypeKey::new("analyst").unwrap(),
         InstanceKey::new("pod-9").unwrap(),
@@ -231,7 +203,6 @@ fn a_reserved_run_started_by_another_instance_cannot_be_loaded() {
         start: Some(RunStart::new(elsewhere, at(5))),
         ..reserved_at(1)
     });
-    // Then: the contradiction is refused at load
     assert_eq!(
         result.err(),
         Some(JobsError::CorruptState {
@@ -242,9 +213,7 @@ fn a_reserved_run_started_by_another_instance_cannot_be_loaded() {
 
 #[test]
 fn a_reserved_run_may_fail_without_ever_starting_while_a_pushed_one_may_not() {
-    // Given: a transient failure report, as the lost-claim backstop records one
     let report = RunFailureReport::platform(RunFailureKind::Transient, "claim_lost").unwrap();
-    // When: a reserved run and a pushed run each fail unstarted
     let reserved = Run::hydrate(RunState {
         terminal: Some(RunTerminal::failed(at(90), report.clone())),
         ..reserved_at(1)
@@ -253,7 +222,6 @@ fn a_reserved_run_may_fail_without_ever_starting_while_a_pushed_one_may_not() {
         terminal: Some(RunTerminal::failed(at(90), report)),
         ..pending()
     });
-    // Then: the reserved one loads — an instance held it — the pushed one does not
     assert!(reserved.is_ok());
     assert_eq!(
         pushed.err(),
@@ -264,9 +232,19 @@ fn a_reserved_run_may_fail_without_ever_starting_while_a_pushed_one_may_not() {
 }
 
 #[test]
+fn a_pushed_run_with_no_passport_to_send_fails_unstarted_and_loads() {
+    let report =
+        RunFailureReport::platform(RunFailureKind::Permanent, "passport_required").unwrap();
+    let pushed = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::failed(at(90), report)),
+        ..pending()
+    });
+    assert!(pushed.is_ok());
+}
+
+#[test]
 fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_cannot_be_withdrawn()
 {
-    // Given: a pushed run never taken, withdrawn as stranded
     let withdrawn = Run::hydrate(RunState {
         terminal: Some(RunTerminal::withdrawn(
             at(90),
@@ -275,9 +253,7 @@ fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_c
         ..pending()
     })
     .unwrap();
-    // Then: it loads, and is not an attempt
     assert!(!withdrawn.counts_as_attempt());
-    // When: a reserved run carries a withdrawal
     let taken = Run::hydrate(RunState {
         terminal: Some(RunTerminal::withdrawn(
             at(90),
@@ -285,7 +261,6 @@ fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_c
         )),
         ..reserved_at(1)
     });
-    // Then: the contradiction is refused at load
     assert_eq!(
         taken.err(),
         Some(JobsError::CorruptState {

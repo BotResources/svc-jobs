@@ -66,3 +66,22 @@ async fn one(jobs: &Jobs, job: &Job, run_id: RunId) -> Result<(), ServiceError> 
     )
     .await
 }
+
+pub async fn without_passport(jobs: &Jobs, job: &Job, run_id: RunId) -> Result<(), ServiceError> {
+    let result = job.fail_run_for_missing_passport(
+        ReclaimRun {
+            run_id,
+            retry_schedule_id: RetryScheduleId::new(jobs.ids.next())?,
+            resolution_id: ResolutionId::new(jobs.ids.next())?,
+            jitter: jobs.jitter.draw(),
+            at: jobs.clock.now(),
+        },
+        &jobs.retry,
+        &jobs.limits,
+    )?;
+    jobs.commit(
+        vec![JobChange::new(job.id(), Some(job.clone()), result.events)],
+        &service_metadata(),
+    )
+    .await
+}

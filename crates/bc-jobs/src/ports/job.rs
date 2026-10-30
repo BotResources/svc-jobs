@@ -48,20 +48,14 @@ pub trait DueWorkReader: Send + Sync {
         windows: &[DispatchWindow],
     ) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs whose started Run is past its maximum duration at `now`: the one
-    /// it was dispatched with, `service_default` for a Run that carries none.
     async fn jobs_with_outrun_runs(
         &self,
         now: DateTime<Utc>,
         service_default: TimeDelta,
     ) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs whose Run was reserved by a claim before `cutoff` and never
-    /// started.
     async fn jobs_with_lost_claims(&self, cutoff: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 
-    /// Jobs of `CLAIM` runner types whose Run was published on the trigger
-    /// stream before `cutoff` and never started nor reserved.
     async fn jobs_with_stranded_triggers(
         &self,
         cutoff: DateTime<Utc>,

@@ -288,6 +288,11 @@ impl JobBuilder {
         self
     }
 
+    pub fn without_passport(mut self) -> Self {
+        self.state.passport = None;
+        self
+    }
+
     pub fn with_initial_job(mut self, initial_job_id: JobId) -> Self {
         self.state.initial_job_id = Some(initial_job_id);
         self

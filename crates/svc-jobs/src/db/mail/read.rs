@@ -1,26 +1,24 @@
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, MailId};
 use bc_jobs::domain::mail::access::guard_reads_mail;
 use bc_jobs::domain::mail::delivery::RecipientKind;
 use bc_jobs::domain::mail::refusal::MailRefusal;
+use bc_jobs::domain::mail::views::MailRead;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::mail::MailReader;
 use sqlx::Row;
 
-use super::attachments::{AttachmentMeta, listed_attachments};
-use super::load::{MailView, load_mail};
+use super::attachments::listed_attachments;
+use super::load::load_mail;
 use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
-use crate::db::work::{WorkNamed, addresses_of_run, require_work};
+use crate::db::work::{addresses_of_run, require_work};
 
-#[derive(Debug, Clone)]
-pub struct MailRead {
-    pub view: MailView,
-    pub attachments: Vec<AttachmentMeta>,
-    pub read_as: RecipientKind,
-}
-
-impl PgStore {
-    pub async fn read_mail(
+#[async_trait]
+impl MailReader for PgStore {
+    async fn read_mail(
         &self,
         work: WorkNamed<'_>,
         mail_id: MailId,

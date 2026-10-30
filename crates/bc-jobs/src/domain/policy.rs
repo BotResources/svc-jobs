@@ -80,8 +80,6 @@ impl ServiceLimits {
         })
     }
 
-    /// The maximum priority of a user who has none of their own, and of a Job
-    /// that runs for nobody.
     #[must_use]
     pub fn with_default_max_priority(mut self, maximum: Priority) -> Self {
         self.default_max_priority = maximum;
@@ -120,9 +118,6 @@ impl ServiceLimits {
         self.default_max_attempts
     }
 
-    /// The service default maximum Run duration: the one a RunnerType is
-    /// registered with, and the one a Run dispatched before Runs carried their
-    /// own applies.
     pub fn max_run_duration(&self) -> TimeDelta {
         self.max_run_duration
     }

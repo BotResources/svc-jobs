@@ -12,15 +12,16 @@ use uuid::Uuid;
 use support::fixture::{
     APP_PASSWORD, APP_ROLE, JobsFixture, Knobs, require_provisioned_infrastructure,
 };
-use support::runner::{self, FakeRunner};
-use support::{LONG, gql, wire};
+use support::runner::FakeRunner;
+use support::{LONG, QUIET, gql, wire};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 const PRE_0_6_MIGRATIONS: usize = 3;
 
 #[tokio::test]
-async fn a_job_from_before_0_6_is_its_own_parent_and_initial_job_and_still_runs() {
+async fn a_job_from_before_0_6_is_its_own_parent_and_initial_job_and_fails_at_dispatch_for_want_of_a_passport()
+ {
     require_provisioned_infrastructure();
     let db = E2eDatabase::create(true, &[])
         .await
@@ -69,13 +70,16 @@ async fn a_job_from_before_0_6_is_its_own_parent_and_initial_job_and_still_runs(
 
     let mut instance = FakeRunner::new(fixture.nats(), &legacy_type, "instance-a");
     instance.connect().await;
-    let trigger = instance.next_trigger(LONG).await;
-    assert_eq!(runner::job_id(&trigger), job_id);
-    assert_eq!(trigger["parent_job_id"], json!(job_id.to_string()));
-    assert_eq!(trigger["initial_job_id"], json!(job_id.to_string()));
-    assert_eq!(trigger["passport"], Value::Null);
-    instance.start_run(&trigger).await;
-    gql::wait_for_status(&client, &admin, job_id, "IN_PROGRESS", LONG).await;
+    gql::wait_for_status(&client, &admin, job_id, "FAILED", LONG).await;
+    let failed = gql::job(&client, &admin, job_id).await;
+    let runs = failed["runs"].as_array().expect("the job carries its runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["failureReport"]["kind"], json!("PERMANENT"));
+    assert_eq!(
+        runs[0]["failureReport"]["reasonCode"],
+        json!("passport_required")
+    );
+    instance.expect_no_trigger(QUIET).await;
 
     fixture.shutdown().await;
 }

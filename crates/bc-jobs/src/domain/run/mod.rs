@@ -11,6 +11,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::ids::{RetryScheduleId, RunId};
+use crate::domain::run::failure::PASSPORT_REQUIRED;
 use crate::domain::run::origin::RunOrigin;
 use crate::domain::run::parts::{
     RetrySchedule, RunCancellationRequest, RunReservation, RunStart, RunTerminal,
@@ -162,9 +163,6 @@ impl Run {
         self.automatic_retry_schedule_id
     }
 
-    /// The maximum duration this Run was dispatched with. Absent on a Run
-    /// dispatched before Runs carried their own, which the service default
-    /// governs.
     pub fn max_duration(&self) -> Option<MaxRunDuration> {
         self.max_duration
     }
@@ -177,8 +175,6 @@ impl Run {
         self.reservation.is_some()
     }
 
-    /// The Instance this Run belongs to: the one executing it, or the one it is
-    /// reserved to until it starts.
     pub fn instance(&self) -> Option<&RunnerInstanceReference> {
         self.start
             .as_ref()
@@ -186,9 +182,6 @@ impl Run {
             .or_else(|| self.reservation.as_ref().map(RunReservation::instance))
     }
 
-    /// Whether an Instance already holds this Run — it started it, or claimed
-    /// it — so that settling the Run must reach the Instance through a cancel
-    /// entry rather than by withdrawing a trigger.
     pub fn is_held_by_an_instance(&self) -> bool {
         self.has_started() || self.is_reserved()
     }
@@ -251,13 +244,10 @@ impl Run {
             .is_some_and(|start| start.instance() == instance)
     }
 
-    /// Whether this live Run counts against the Instance's room: started on
-    /// it, or reserved to it and not yet started.
     pub fn is_held_by(&self, instance: &RunnerInstanceReference) -> bool {
         self.instance() == Some(instance)
     }
 
-    /// A reserved Run its Instance never started, past the reservation delay.
     pub fn has_lost_its_claim(&self, now: DateTime<Utc>, reservation_delay: TimeDelta) -> bool {
         match (&self.reservation, &self.start, &self.terminal) {
             (Some(reservation), None, None) => now - reservation.reserved_at() > reservation_delay,
@@ -279,11 +269,6 @@ impl Run {
         latest
     }
 
-    /// A Run published on the trigger stream that no Instance ever started,
-    /// past `delay`: its type switched to claims, and no pushed Instance is
-    /// left to take it.
-    /// A pushed trigger nobody took, `delay` after its type switched to
-    /// `CLAIM` at `claimed_since` (or after its dispatch, when that is later).
     pub fn has_a_stranded_trigger(
         &self,
         now: DateTime<Utc>,
@@ -296,17 +281,12 @@ impl Run {
             && now - self.dispatched_at.max(claimed_since) > delay
     }
 
-    /// Whether this Run counts as an attempt of its Job. A Run withdrawn
-    /// unstarted — its trigger stranded by a switch to `CLAIM` — does not: the
-    /// Job waits again as it waited before it.
     pub fn counts_as_attempt(&self) -> bool {
         self.terminal
             .as_ref()
             .is_none_or(|terminal| terminal.withdrawal().is_none())
     }
 
-    /// A started Run past its maximum duration: the one it was dispatched with,
-    /// or `service_default` for a Run that carries none.
     pub fn has_outrun(&self, now: DateTime<Utc>, service_default: TimeDelta) -> bool {
         let max_duration = self
             .max_duration
@@ -318,18 +298,18 @@ impl Run {
     }
 }
 
-/// A Run may settle without ever starting when it is cancelled before an
-/// Instance took it, or when it fails while reserved to an Instance that never
-/// started it (a lost claim, a lost Instance).
-/// A Run may end without ever starting when it was cancelled, when the
-/// instance holding its reservation never started it, or when the stranded-
-/// trigger backstop failed a trigger left unconsumed by a switch to `CLAIM`.
 fn settles_unstarted(terminal: &RunTerminal, reserved: bool) -> bool {
     match terminal.kind() {
         RunTerminalKind::Cancelled => true,
-        RunTerminalKind::Failed => reserved,
+        RunTerminalKind::Failed => reserved || fails_for_missing_passport(terminal),
         RunTerminalKind::Completed => false,
     }
+}
+
+fn fails_for_missing_passport(terminal: &RunTerminal) -> bool {
+    terminal
+        .failure()
+        .is_some_and(|report| report.reason_code().as_str() == PASSPORT_REQUIRED)
 }
 
 fn transiently_failed(terminal: Option<&RunTerminal>) -> bool {

@@ -1,25 +1,23 @@
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{ResultId, RunId};
-use bc_jobs::domain::payload::{CallMode, PayloadAttachment};
+use bc_jobs::domain::payload::CallMode;
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::answer::{
     ResultRefusal, guard_keeps_a_result, guard_reads_result, guard_result_alive,
 };
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
+use bc_jobs::domain::runner::views::StoredResult;
+use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::environment::IdFactory;
+use bc_jobs::ports::result::Results;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
 use super::PgStore;
 use super::acts_for::acts_for_in;
 use super::hydrate::unavailable;
-use super::work::{WorkNamed, require_work};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredResult {
-    pub message: String,
-    pub attachments: Vec<PayloadAttachment>,
-}
+use super::work::require_work;
 
 fn corrupt(error: serde_json::Error) -> PortError {
     PortError::Unavailable {
@@ -27,8 +25,9 @@ fn corrupt(error: serde_json::Error) -> PortError {
     }
 }
 
-impl PgStore {
-    pub async fn hand_over_result(
+#[async_trait]
+impl Results for PgStore {
+    async fn hand_over_result(
         &self,
         work: WorkNamed<'_>,
         answer: &StoredResult,
@@ -85,7 +84,7 @@ impl PgStore {
         Ok(Ok(result_id))
     }
 
-    pub async fn read_result(
+    async fn read_result(
         &self,
         work: WorkNamed<'_>,
         result_id: ResultId,

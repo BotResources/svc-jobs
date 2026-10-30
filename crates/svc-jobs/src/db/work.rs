@@ -1,6 +1,6 @@
 use bc_jobs::domain::directory::registration::RunStanding;
 use bc_jobs::domain::ids::{AgentId, JobId, RunId};
-use bc_jobs::domain::runner::work::{WorkFacts, WorkRefusal, decide_work};
+use bc_jobs::domain::runner::work::{RunRefusal, WorkFacts, WorkNamed, WorkRefusal, decide_work};
 use bc_jobs::ports::PortError;
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -8,13 +8,6 @@ use uuid::Uuid;
 use super::directory::{lock_tree, standing};
 use super::hydrate::unavailable;
 use super::saved_states::saved_state_run_in;
-
-#[derive(Debug, Clone, Copy)]
-pub struct WorkNamed<'a> {
-    pub job_id: Uuid,
-    pub run_id: Uuid,
-    pub instance_key: &'a str,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkContext {
@@ -60,18 +53,18 @@ pub async fn require_run(
     run_id: Uuid,
     instance_key: &str,
     runner_type: Option<&str>,
-) -> Result<Result<(RunId, JobId), WorkRefusal>, PortError> {
+) -> Result<Result<(RunId, JobId), RunRefusal>, PortError> {
     let Ok(run_id) = RunId::new(run_id) else {
-        return Ok(Err(WorkRefusal::Malformed));
+        return Ok(Err(RunRefusal::Malformed));
     };
     let current = standing(tx, run_id, runner_type, instance_key).await?;
     match current {
         RunStanding::Started { initial_job_id } => Ok(Ok((run_id, initial_job_id))),
-        RunStanding::Unknown => Ok(Err(WorkRefusal::RunUnknown)),
-        RunStanding::NotStarted => Ok(Err(WorkRefusal::RunNotStarted)),
-        RunStanding::Ended => Ok(Err(WorkRefusal::RunEnded)),
-        RunStanding::Removed => Ok(Err(WorkRefusal::RunRemoved)),
-        RunStanding::StartedOnAnotherInstance => Ok(Err(WorkRefusal::InstanceMismatch)),
+        RunStanding::Unknown => Ok(Err(RunRefusal::RunUnknown)),
+        RunStanding::NotStarted => Ok(Err(RunRefusal::RunNotStarted)),
+        RunStanding::Ended => Ok(Err(RunRefusal::RunEnded)),
+        RunStanding::Removed => Ok(Err(RunRefusal::RunRemoved)),
+        RunStanding::StartedOnAnotherInstance => Ok(Err(RunRefusal::InstanceMismatch)),
     }
 }
 

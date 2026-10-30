@@ -8,17 +8,12 @@ use super::input::{
     GqlReadResultInput, GqlSaveStateInput, GqlSendMailInput, GqlUploadAttachmentInput,
     GqlUploadPayloadInput, GqlUploadResultInput,
 };
-use super::output::{
-    GqlContent, GqlContentResult, GqlRestartRefused, GqlRunnerResult, GqlSendMailResult,
-};
-use crate::app::runner::{self, SendMailInput, Uploader};
-use crate::db::answers::StoredResult;
+use super::mail_output::{GqlRestartRefused, GqlSendMailResult};
+use super::output::{GqlContent, GqlContentResult, GqlRunnerResult};
+use crate::app::runner::{self, AttachmentInput, SendMailInput, Uploader};
 use crate::edge::error::edge_error;
 use crate::edge::state::EdgeState;
-
-const RESTART_REFUSED_TYPE_RETIRED: &str = "restart_refused_type_retired";
-const RESTART_REFUSED_MESSAGE: &str =
-    "The agent restarts on a retired runner type: the mail stays unread at this address.";
+use bc_jobs::domain::runner::views::StoredResult;
 
 #[derive(Default)]
 pub struct RunnerMutation;
@@ -110,13 +105,15 @@ impl RunnerMutation {
         let state = ctx.data::<EdgeState>()?;
         let outcome = runner::upload_attachment(
             &state.jobs,
-            &input.work.into(),
-            input.mail_id,
-            input.attachment_id,
-            input.from_address,
-            input.name,
-            input.content_type,
-            input.content,
+            AttachmentInput {
+                work: input.work.into(),
+                mail_id: input.mail_id,
+                attachment_id: input.attachment_id,
+                from: input.from_address,
+                name: input.name,
+                content_type: input.content_type,
+                content: input.content,
+            },
         )
         .await
         .map_err(edge_error)?;
@@ -160,10 +157,10 @@ impl RunnerMutation {
                 restart_refused: sent
                     .refused_restarts
                     .iter()
-                    .map(|address| GqlRestartRefused {
-                        address: address.as_uuid(),
-                        reason: RESTART_REFUSED_TYPE_RETIRED.to_owned(),
-                        message: RESTART_REFUSED_MESSAGE.to_owned(),
+                    .map(|refused| GqlRestartRefused {
+                        address: refused.address.as_uuid(),
+                        reason: refused.code().to_owned(),
+                        message: refused.message().to_owned(),
                     })
                     .collect(),
                 ..GqlSendMailResult::default()

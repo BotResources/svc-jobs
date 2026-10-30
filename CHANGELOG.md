@@ -164,6 +164,15 @@ kept payloads.
   `mail_id_reused`.
 - The caller address of a background call is checked again under the Tree lock
   of the calling Run in the transaction that creates the Job.
+- The runner claim is read as `ClaimV2`; a Job whose Passport is missing is not sent
+  to a runner, neither pushed nor served by a claim: its Run fails permanently
+  with `passport_required`. This includes a Job stored before 0.6, which holds no
+  Passport.
+- The bus refusal of `mark_read` is a `MarkReadRefusal`, which cannot hold
+  `job_not_of_run`.
+- The runner calls reach the store through the `bc-jobs` ports; the GraphQL
+  resolvers of the runner surface no longer import the Postgres adapter, and the
+  mail result types are split from the content result types.
 
 ### Removed
 

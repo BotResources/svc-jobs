@@ -7,6 +7,7 @@ pub mod event_v2;
 pub mod graphql_roots;
 #[cfg(feature = "integration")]
 mod integration;
+pub mod reason;
 pub mod runner;
 pub mod runner_surface;
 pub mod runner_transport;
@@ -72,3 +73,6 @@ pub const KV_JOBS_DISPATCH_MODE: &str = "jobs.dispatch_mode.{runner_type}";
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_v2_claim;

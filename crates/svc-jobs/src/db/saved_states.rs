@@ -1,21 +1,18 @@
+use async_trait::async_trait;
 use bc_jobs::domain::ids::{AgentId, RunId};
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::domain::runner::saved_state::{SavedStateRefusal, guard_state_within};
+use bc_jobs::domain::runner::views::SavedStateView;
+use bc_jobs::domain::runner::work::WorkNamed;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::saved_state::SavedStates;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::unavailable;
-use super::work::{WorkNamed, require_work};
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SavedStateView {
-    pub state: serde_json::Value,
-    pub agent_ids: Vec<AgentId>,
-    pub mail_addresses: Vec<AgentId>,
-}
+use super::work::require_work;
 
 const SAVED_STATE_RUN_SQL: &str = "WITH RECURSIVE chain(run_id, depth) AS ( \
         SELECT ro.restarts_run_id, 1 FROM runs r \
@@ -39,8 +36,9 @@ pub async fn saved_state_run_in(
     found.map(RunId::new).transpose().map_err(PortError::from)
 }
 
-impl PgStore {
-    pub async fn save_state(
+#[async_trait]
+impl SavedStates for PgStore {
+    async fn save_state(
         &self,
         work: WorkNamed<'_>,
         state: &serde_json::Value,
@@ -83,7 +81,7 @@ impl PgStore {
         Ok(Ok(()))
     }
 
-    pub async fn read_saved_state(
+    async fn read_saved_state(
         &self,
         work: WorkNamed<'_>,
     ) -> Result<Result<SavedStateView, RunnerRefusal>, PortError> {

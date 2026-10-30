@@ -29,10 +29,7 @@ pub fn wire_trigger(trigger: &RunTrigger) -> wire::TriggerV2 {
         attempt: trigger.attempt.get(),
         parent_job_id: trigger.parent_job_id.as_uuid(),
         initial_job_id: trigger.initial_job_id.as_uuid(),
-        passport: trigger
-            .passport
-            .as_ref()
-            .map(|passport| passport.document().clone()),
+        passport: trigger.passport.document().clone(),
         triggered_by: trigger.triggered_by.as_ref().map(|user| user.id().0),
         config: trigger
             .config

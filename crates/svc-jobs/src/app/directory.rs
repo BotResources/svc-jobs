@@ -4,9 +4,9 @@ use bc_jobs::domain::directory::registration::{
 };
 use bc_jobs::domain::directory::{AgentId, AgentState};
 use bc_jobs::domain::ids::RunId;
-use bc_jobs::domain::runner::refusal::RunnerRefusal;
-use bc_jobs::domain::runner::work::WorkRefusal;
+use bc_jobs::domain::runner::work::{MarkReadRefusal, RunRefusal};
 use bc_jobs::ports::directory::{AgentDirectory, ListedEntry, RunCaller};
+use bc_jobs::ports::inbox::Inbox;
 use contract_jobs::runner_surface as wire;
 
 use super::{Jobs, catch_up};
@@ -74,7 +74,7 @@ pub async fn mark_read(
     match outcome {
         Ok(Ok(())) => Some(wire::SurfaceReply::accepted()),
         Ok(Err(refusal)) => Some(wire::SurfaceReply::refused(
-            runner_reason(&refusal),
+            mark_read_reason(&refusal),
             refusal.message(),
         )),
         Err(error) => {
@@ -158,19 +158,17 @@ fn registration_reason(refusal: &RegistrationRefusal) -> wire::SurfaceReason {
     }
 }
 
-fn runner_reason(refusal: &RunnerRefusal) -> wire::SurfaceReason {
+fn mark_read_reason(refusal: &MarkReadRefusal) -> wire::SurfaceReason {
     match refusal {
-        RunnerRefusal::Work(work) => match work {
-            WorkRefusal::RunUnknown => wire::SurfaceReason::RunUnknown,
-            WorkRefusal::RunNotStarted => wire::SurfaceReason::RunNotStarted,
-            WorkRefusal::RunEnded => wire::SurfaceReason::RunEnded,
-            WorkRefusal::RunRemoved => wire::SurfaceReason::RunRemoved,
-            WorkRefusal::InstanceMismatch => wire::SurfaceReason::InstanceMismatch,
-            WorkRefusal::JobNotOfRun => wire::SurfaceReason::JobNotOfRun,
-            WorkRefusal::Malformed => wire::SurfaceReason::Malformed,
+        MarkReadRefusal::Run(run) => match run {
+            RunRefusal::RunUnknown => wire::SurfaceReason::RunUnknown,
+            RunRefusal::RunNotStarted => wire::SurfaceReason::RunNotStarted,
+            RunRefusal::RunEnded => wire::SurfaceReason::RunEnded,
+            RunRefusal::RunRemoved => wire::SurfaceReason::RunRemoved,
+            RunRefusal::InstanceMismatch => wire::SurfaceReason::InstanceMismatch,
+            RunRefusal::Malformed => wire::SurfaceReason::Malformed,
         },
-        RunnerRefusal::ItemNotYours => wire::SurfaceReason::ItemNotYours,
-        _ => wire::SurfaceReason::Malformed,
+        MarkReadRefusal::ItemNotYours => wire::SurfaceReason::ItemNotYours,
     }
 }
 

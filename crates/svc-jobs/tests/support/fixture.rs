@@ -23,11 +23,9 @@ pub struct Knobs {
     pub backstop_interval_seconds: u64,
     pub retirement_quiet_period_seconds: u64,
     pub runner_type_impact_interval_seconds: u64,
-    /// `None` leaves JOBS_DEFAULT_MAX_PRIORITY unset, so the service default applies.
     pub default_max_priority: Option<i64>,
     pub claim_reservation_seconds: u64,
     pub claim_max_wait_seconds: u64,
-    /// `None` leaves JOBS_CLAIM_MAX_HELD unset, so the service default applies.
     pub claim_max_held: Option<u64>,
     pub scope_declaration: bool,
 }

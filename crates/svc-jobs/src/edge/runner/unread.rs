@@ -3,8 +3,8 @@ use bc_jobs::domain::mail::inbox::{ItemKind, NoticeType};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use super::output::GqlMailAttachment;
-use crate::db::inbox::UnreadItem;
+use super::mail_output::GqlMailAttachment;
+use bc_jobs::domain::mail::views::UnreadItem;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 #[graphql(name = "JobsItemKind")]

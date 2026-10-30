@@ -10,6 +10,7 @@ use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::passport::JobPassport;
 use crate::domain::payload::JobPayload;
 use crate::domain::references::KnownUser;
+use crate::error::JobsError;
 use crate::ports::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,15 +23,16 @@ pub struct RunTrigger {
     pub triggered_by: Option<KnownUser>,
     pub parent_job_id: JobId,
     pub initial_job_id: JobId,
-    pub passport: Option<JobPassport>,
+    pub passport: JobPassport,
     pub payload: Option<JobPayload>,
     pub call: Option<JobCall>,
     pub restart_of_run_id: Option<RunId>,
 }
 
 impl RunTrigger {
-    pub fn of_job(job: &Job, run_id: RunId, attempt: AttemptNumber) -> Self {
-        Self {
+    pub fn of_job(job: &Job, run_id: RunId, attempt: AttemptNumber) -> Result<Self, JobsError> {
+        let passport = job.passport().cloned().ok_or(JobsError::PassportRequired)?;
+        Ok(Self {
             job_id: job.id(),
             run_id,
             runner_type: job.runner_type().clone(),
@@ -39,11 +41,11 @@ impl RunTrigger {
             triggered_by: job.triggered_by().cloned(),
             parent_job_id: job.wire_parent_job_id(),
             initial_job_id: job.initial_job_id(),
-            passport: job.passport().cloned(),
+            passport,
             payload: job.payload().cloned(),
             call: job.call().copied(),
             restart_of_run_id: job.restart_of_run_id(),
-        }
+        })
     }
 }
 
@@ -74,4 +76,22 @@ pub trait RunnerTransport: Send + Sync {
         run_id: RunId,
         runner_type: &RunnerTypeKey,
     ) -> Result<Option<InstanceKey>, PortError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixtures::{JobBuilder, run_id};
+
+    #[test]
+    fn a_trigger_is_built_only_for_a_job_that_holds_a_passport() {
+        let attempt = AttemptNumber::new(1).unwrap();
+        let with = JobBuilder::new().build();
+        assert!(RunTrigger::of_job(&with, run_id(), attempt).is_ok());
+        let without = JobBuilder::new().without_passport().build();
+        assert_eq!(
+            RunTrigger::of_job(&without, run_id(), attempt),
+            Err(JobsError::PassportRequired)
+        );
+    }
 }

@@ -56,13 +56,10 @@ pub struct Settings {
     pub scope_declaration_enabled: bool,
 }
 
-/// How long a claim is held open, and how long a Run it reserved may wait for
-/// its Instance to start it before failing with `claim_lost`.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimSettings {
     pub max_wait: Duration,
     pub reservation_delay: TimeDelta,
-    /// The claims one pod holds open at once; a claim beyond is answered empty.
     pub max_held: usize,
 }
 
@@ -201,9 +198,6 @@ impl Settings {
                 value: claim_max_wait_seconds.to_string(),
             });
         }
-        // A held claim must be answered well before a reservation made for it
-        // could be judged lost: the reservation delay outlasts the longest
-        // wait a claim may be held.
         if u64::try_from(claim_reservation_seconds).unwrap_or(0) <= claim_max_wait_seconds {
             return Err(ServiceError::Configuration {
                 key: "JOBS_CLAIM_RESERVATION_SECONDS",

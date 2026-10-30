@@ -3,7 +3,8 @@ use bc_jobs::domain::runner::answer::ResultRefusal;
 use uuid::Uuid;
 
 use super::{Jobs, Outcome, WorkIds, started};
-use crate::db::answers::StoredResult;
+use bc_jobs::domain::runner::views::StoredResult;
+use bc_jobs::ports::result::Results;
 
 pub async fn hand_over_result(
     jobs: &Jobs,
