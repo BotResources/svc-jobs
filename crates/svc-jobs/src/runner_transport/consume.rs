@@ -15,7 +15,7 @@ use crate::config::ConsumerTuning;
 use crate::error::ServiceError;
 use crate::supervision::Established;
 
-const STATUS_DURABLE: &str = "svc_jobs_status";
+pub const STATUS_DURABLE: &str = "svc_jobs_status";
 const LOG_DURABLE: &str = "svc_jobs_logs";
 
 pub async fn consume_status(

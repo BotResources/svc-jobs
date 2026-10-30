@@ -24,7 +24,6 @@ pub const REASON_INSTANCE_MISMATCH: &str = "instance_mismatch";
 pub const REASON_AGENT_ID_IN_OTHER_TREE: &str = "agent_id_in_other_tree";
 pub const REASON_AGENT_ID_NOT_FINISHED: &str = "agent_id_not_finished";
 pub const REASON_MALFORMED: &str = "malformed";
-pub const REASON_UNAVAILABLE: &str = "unavailable";
 pub const REASON_ITEM_NOT_YOURS: &str = "item_not_yours";
 
 fn wire_version() -> u8 {

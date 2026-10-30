@@ -56,7 +56,32 @@ uuid_v7_id!(SourceEntityId, "source_entity_id");
 uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
-uuid_v7_id!(AgentId, "agent_id");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(from = "Uuid", into = "Uuid")]
+pub struct AgentId(Uuid);
+
+impl AgentId {
+    pub fn new(value: Uuid) -> Self {
+        Self(value)
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+impl From<AgentId> for Uuid {
+    fn from(value: AgentId) -> Self {
+        value.0
+    }
+}
+
+impl From<Uuid> for AgentId {
+    fn from(value: Uuid) -> Self {
+        Self(value)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "Uuid", into = "Uuid")]
@@ -121,6 +146,17 @@ mod tests {
         let v4 = serde_json::json!("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e");
         let result = serde_json::from_value::<RunId>(v4);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn an_agent_id_is_any_uuid_because_the_runner_makes_it() {
+        let v4 = Uuid::parse_str("6f8c3b4e-1f2a-4b6d-8c1e-2f3a4b5c6d7e").unwrap();
+        assert_eq!(AgentId::new(v4).as_uuid(), v4);
+        let wire = serde_json::to_value(AgentId::new(v4)).unwrap();
+        assert_eq!(
+            serde_json::from_value::<AgentId>(wire).unwrap().as_uuid(),
+            v4
+        );
     }
 
     #[test]

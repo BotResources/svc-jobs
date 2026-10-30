@@ -47,6 +47,15 @@ saved state and restart, GraphQL `jobs:runner`, the arrival doorbell and
   `caller_address_not_of_run` unless the address is an inbox address of the
   acting Run in the directory.
 
+- Before a runner-surface request is refused with `run_not_started`, Jobs
+  applies the start fact of that Run that the broker already acknowledged, so a
+  runner may ask at once after it published the start. Jobs sends no reply
+  when it fails on its own side.
+- Migration `0007`: `agent_id` of the directory is any UUID; the removed
+  addresses; the mails, their recipients and attachments; the inbox items
+  (mail, cc notice, notice); the kept payloads; the Results; the saved states
+  and the restart origins.
+
 ### Changed
 
 - A creation of a job with no parent, by version 1 or 2, is refused with

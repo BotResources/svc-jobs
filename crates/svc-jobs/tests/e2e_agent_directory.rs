@@ -65,14 +65,26 @@ async fn a_registration_is_accepted_only_for_a_started_run_of_the_sending_instan
         .expect("the critic is listed");
     assert!(without_inbox.get("mail_address").is_none());
 
-    let bad_id = surface::register(
+    let runner_made_id = surface::register(
         nats,
         &instance,
         run,
         &[Agent::with_inbox().with_id(Uuid::new_v4())],
     )
     .await;
-    assert_eq!(surface::reason(&bad_id), "malformed");
+    assert_eq!(runner_made_id["accepted"], true, "{runner_made_id}");
+    let twice = Uuid::now_v7();
+    let same_agent_twice = surface::register(
+        nats,
+        &instance,
+        run,
+        &[
+            Agent::with_inbox().with_id(twice),
+            Agent::with_inbox().with_id(twice),
+        ],
+    )
+    .await;
+    assert_eq!(surface::reason(&same_agent_twice), "malformed");
     fixture.shutdown().await;
 }
 

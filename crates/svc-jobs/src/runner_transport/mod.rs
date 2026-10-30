@@ -3,6 +3,7 @@ pub mod claim;
 pub mod consume;
 pub mod observability;
 pub mod presence;
+pub mod start_catch_up;
 pub mod surface;
 pub mod trigger;
 

@@ -68,4 +68,10 @@ pub trait RunnerTransport: Send + Sync {
     ) -> Result<(), PortError>;
 
     async fn announced_instances(&self) -> Result<HashSet<AnnouncedInstance>, PortError>;
+
+    async fn acknowledged_start(
+        &self,
+        run_id: RunId,
+        runner_type: &RunnerTypeKey,
+    ) -> Result<Option<InstanceKey>, PortError>;
 }

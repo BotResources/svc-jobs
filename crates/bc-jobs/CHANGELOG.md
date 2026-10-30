@@ -26,7 +26,9 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   `agent_id_in_other_tree`, `agent_id_not_finished`, `malformed`) and
   `DirectoryEntry` with `restartable_now`.
 - `JobsError::CallerAddressNotOfRun`, `AgentId`, and the `run_removed` refusal
-  of a registration.
+  of a registration. An `AgentId` is any UUID: the runner makes it.
+- `RunnerTransport::acknowledged_start`: the start fact of a Run that the
+  broker acknowledged and Jobs has not applied yet.
 - `JobsError::NoFreeCapacity`, `Fleet::declared_capacity` and `free_capacity`.
 - `ServiceLimits::inline_payload_max_bytes`; `RunTrigger` carries the lineage,
   the Passport, the payload and the call.

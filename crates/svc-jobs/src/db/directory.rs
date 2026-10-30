@@ -99,6 +99,26 @@ impl PgStore {
         Ok(Ok(()))
     }
 
+    pub async fn awaiting_start(&self, run_id: RunId) -> Result<Option<RunnerTypeKey>, PortError> {
+        let found: Option<String> = sqlx::query_scalar(
+            "SELECT rt.type_key FROM runs r \
+             JOIN jobs j ON j.id = r.job_id \
+             JOIN runner_types rt ON rt.id = j.runner_type_id \
+             WHERE r.id = $1 \
+               AND NOT EXISTS (SELECT 1 FROM run_starts s WHERE s.run_id = r.id) \
+               AND NOT EXISTS (SELECT 1 FROM run_terminals t WHERE t.run_id = r.id) \
+               AND NOT EXISTS (SELECT 1 FROM directory_removed_runs d WHERE d.run_id = r.id)",
+        )
+        .bind(run_id.as_uuid())
+        .fetch_optional(self.pool())
+        .await
+        .map_err(unavailable)?;
+        found
+            .map(RunnerTypeKey::new)
+            .transpose()
+            .map_err(PortError::from)
+    }
+
     pub async fn mail_address_run(&self, address: Uuid) -> Result<Option<RunId>, PortError> {
         let found: Option<Uuid> = sqlx::query_scalar(
             "SELECT run_id::uuid FROM directory_agents WHERE agent_id = $1 AND has_inbox",
@@ -147,7 +167,7 @@ impl PgStore {
 fn listed(row: &sqlx::postgres::PgRow) -> Result<ListedRow, PortError> {
     Ok(ListedRow {
         entry: DirectoryEntry {
-            agent_id: AgentId::new(row.get("agent_id"))?,
+            agent_id: AgentId::new(row.get("agent_id")),
             run_id: RunId::new(row.get("run_id"))?,
             runner_type: RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
             state: AgentState::from_db_str(&row.get::<String, _>("state"))?,
@@ -180,7 +200,7 @@ async fn held_agents(
     rows.iter()
         .map(|row| {
             Ok(HeldAgent {
-                agent_id: AgentId::new(row.get("agent_id"))?,
+                agent_id: AgentId::new(row.get("agent_id")),
                 run_id: RunId::new(row.get("run_id"))?,
                 initial_job_id: JobId::new(row.get("initial_job_id"))?,
                 state: AgentState::from_db_str(&row.get::<String, _>("state"))?,

@@ -55,7 +55,7 @@ mod tests {
 
     fn entry(state: AgentState, declares_restart: bool, holds_saved_state: bool) -> DirectoryEntry {
         DirectoryEntry {
-            agent_id: AgentId::new(Uuid::now_v7()).unwrap(),
+            agent_id: AgentId::new(Uuid::now_v7()),
             run_id: run_id(),
             runner_type: RunnerTypeKey::new("analyst").unwrap(),
             state,

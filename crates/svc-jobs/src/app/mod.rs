@@ -1,6 +1,7 @@
 pub mod acting;
 pub mod admin;
 pub mod backstop;
+pub mod catch_up;
 pub mod claim;
 pub mod claim_waiters;
 pub mod claim_wakes;

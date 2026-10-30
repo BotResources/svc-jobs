@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use async_trait::async_trait;
 use bc_jobs::domain::ids::RunId;
-use bc_jobs::domain::keys::{ReasonCode, RunnerTypeKey};
+use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use bc_jobs::domain::payload::{CallMode, JobPayload};
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::transport::{AnnouncedInstance, RunTrigger, RunnerTransport};
@@ -105,6 +105,14 @@ impl RunnerTransport for RunnerChannels {
 
     async fn announced_instances(&self) -> Result<HashSet<AnnouncedInstance>, PortError> {
         super::presence::announced(self).await
+    }
+
+    async fn acknowledged_start(
+        &self,
+        run_id: RunId,
+        runner_type: &RunnerTypeKey,
+    ) -> Result<Option<InstanceKey>, PortError> {
+        super::start_catch_up::acknowledged_start(self, run_id, runner_type).await
     }
 
     async fn withdraw_trigger(

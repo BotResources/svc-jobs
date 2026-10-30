@@ -4,17 +4,21 @@ use bc_jobs::domain::directory::{AgentId, AgentState};
 use bc_jobs::domain::ids::RunId;
 use contract_jobs::runner_surface as wire;
 
-use super::Jobs;
+use super::{Jobs, catch_up};
 use crate::db::directory::ListedRow;
 
 pub async fn register_agents(
     jobs: &Jobs,
     runner_type: &str,
     request: wire::RegisterAgents,
-) -> wire::SurfaceReply {
+) -> Option<wire::SurfaceReply> {
     let Some((run_id, declarations)) = decode_registration(&request) else {
-        return refused(RegistrationRefusal::Malformed);
+        return Some(refused(RegistrationRefusal::Malformed));
     };
+    if let Err(error) = catch_up::apply_acknowledged_start(jobs, run_id).await {
+        tracing::warn!(error = %error, "the acknowledged start of a run could not be applied");
+        return None;
+    }
     let outcome = jobs
         .store
         .register_agents(
@@ -26,11 +30,11 @@ pub async fn register_agents(
         )
         .await;
     match outcome {
-        Ok(Ok(())) => wire::SurfaceReply::accepted(),
-        Ok(Err(refusal)) => refused(refusal),
+        Ok(Ok(())) => Some(wire::SurfaceReply::accepted()),
+        Ok(Err(refusal)) => Some(refused(refusal)),
         Err(error) => {
             tracing::warn!(error = %error, "an agent registration could not be stored");
-            wire::SurfaceReply::refused(wire::REASON_UNAVAILABLE, "Jobs could not answer now.")
+            None
         }
     }
 }
@@ -39,26 +43,36 @@ pub async fn list_agents(
     jobs: &Jobs,
     runner_type: &str,
     request: wire::ListAgents,
-) -> wire::ListAgentsReply {
+) -> Option<wire::ListAgentsReply> {
     let Ok(run_id) = RunId::new(request.run_id) else {
         let refusal = RegistrationRefusal::Malformed;
-        return wire::ListAgentsReply::refused(refusal.code(), refusal.message());
+        return Some(wire::ListAgentsReply::refused(
+            refusal.code(),
+            refusal.message(),
+        ));
     };
+    if let Err(error) = catch_up::apply_acknowledged_start(jobs, run_id).await {
+        tracing::warn!(error = %error, "the acknowledged start of a run could not be applied");
+        return None;
+    }
     match jobs
         .store
         .list_agents(run_id, runner_type, &request.instance_key)
         .await
     {
-        Ok(Ok(rows)) => wire::ListAgentsReply::listed(
+        Ok(Ok(rows)) => Some(wire::ListAgentsReply::listed(
             rows.into_iter()
                 .filter(|row| row.entry.is_listed())
                 .map(listed)
                 .collect(),
-        ),
-        Ok(Err(refusal)) => wire::ListAgentsReply::refused(refusal.code(), refusal.message()),
+        )),
+        Ok(Err(refusal)) => Some(wire::ListAgentsReply::refused(
+            refusal.code(),
+            refusal.message(),
+        )),
         Err(error) => {
             tracing::warn!(error = %error, "the agents of a tree could not be read");
-            wire::ListAgentsReply::refused(wire::REASON_UNAVAILABLE, "Jobs could not answer now.")
+            None
         }
     }
 }
@@ -70,7 +84,7 @@ fn decode_registration(request: &wire::RegisterAgents) -> Option<(RunId, Vec<Age
         .iter()
         .map(|agent| {
             Some(AgentDeclaration {
-                agent_id: AgentId::new(agent.agent_id).ok()?,
+                agent_id: AgentId::new(agent.agent_id),
                 has_inbox: agent.has_inbox,
                 declares_restart: agent.declares_restart,
             })

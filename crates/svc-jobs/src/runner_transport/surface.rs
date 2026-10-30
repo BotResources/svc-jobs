@@ -30,7 +30,10 @@ pub async fn respond(
         let client = client.clone();
         let jobs = Arc::clone(&jobs);
         tokio::spawn(async move {
-            let bytes = answer(&jobs, message.subject.as_str(), &message.payload).await;
+            let Some(bytes) = answer(&jobs, message.subject.as_str(), &message.payload).await
+            else {
+                return;
+            };
             if let Err(error) = client.publish(reply_to, bytes.into()).await {
                 tracing::warn!(error = %error, "a surface reply could not be sent");
             }
@@ -51,22 +54,22 @@ async fn subscribe(
         .map_err(|error| ServiceError::Infra(error.to_string()))
 }
 
-async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Vec<u8> {
+async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
     if let Some(runner_type) = subject.strip_prefix(wire::REGISTER_AGENTS_PREFIX) {
         let reply = match decode::<wire::RegisterAgents>(payload) {
-            Some(request) => directory::register_agents(jobs, runner_type, request).await,
+            Some(request) => directory::register_agents(jobs, runner_type, request).await?,
             None => malformed(),
         };
-        return encode(&reply);
+        return Some(encode(&reply));
     }
     if let Some(runner_type) = subject.strip_prefix(wire::LIST_AGENTS_PREFIX) {
         let reply = match decode::<wire::ListAgents>(payload) {
-            Some(request) => directory::list_agents(jobs, runner_type, request).await,
+            Some(request) => directory::list_agents(jobs, runner_type, request).await?,
             None => wire::ListAgentsReply::refused(wire::REASON_MALFORMED, MALFORMED_WORDS),
         };
-        return encode(&reply);
+        return Some(encode(&reply));
     }
-    encode(&malformed())
+    Some(encode(&malformed()))
 }
 
 const MALFORMED_WORDS: &str = "Jobs cannot read the request.";

@@ -157,7 +157,7 @@ mod tests {
     use uuid::Uuid;
 
     fn agent() -> AgentId {
-        AgentId::new(Uuid::now_v7()).unwrap()
+        AgentId::new(Uuid::now_v7())
     }
 
     fn declaring(agent_id: AgentId) -> AgentDeclaration {
