@@ -11,9 +11,10 @@ use contract_jobs::graphql_roots as roots;
 use reqwest::StatusCode;
 use serde_json::json;
 use support::fixture::{
-    APP_PASSWORD, APP_ROLE, BIN, JobsFixture, free_port, require_provisioned_infrastructure,
+    APP_PASSWORD, APP_ROLE, BIN, JobsFixture, require_provisioned_infrastructure,
 };
 use support::runner::FakeRunner;
+use support::spawn::free_port;
 use support::{FLEET_CHANGED, QUIET, SHORT, gql, stream, subs, wire};
 
 const ROOT_FIELD_PREFIX: &str = "jobs";

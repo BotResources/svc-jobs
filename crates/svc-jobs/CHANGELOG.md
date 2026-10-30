@@ -44,8 +44,8 @@ to `## Unreleased`).
 
 ### Known gaps
 
-- The runner configuration reaches the runner as the same JSON value, not as
-  the producer's text: key order and number notation are normalised, where the
+- The runner configuration is kept as a JSON value (stored as `jsonb`) and
+  serialized again for the runner, so the producer's own text is not kept; the
   sealed test "Config and payload travel apart" says byte for byte.
 - A GraphQL runner call names its Instance by key alone and carries no runner
   type, so an Instance of another runner type with the same key is not told
