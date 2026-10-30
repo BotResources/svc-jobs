@@ -42,7 +42,7 @@ impl RunTrigger {
             passport: job.passport().cloned(),
             payload: job.payload().cloned(),
             call: job.call().copied(),
-            restart_of_run_id: None,
+            restart_of_run_id: job.restart_of_run_id(),
         }
     }
 }

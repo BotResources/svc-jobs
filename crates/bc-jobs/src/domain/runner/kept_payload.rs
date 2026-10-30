@@ -1,5 +1,6 @@
 use crate::domain::payload::PayloadAttachment;
 use crate::domain::requester::Requester;
+use crate::error::JobsError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeptPayload {
@@ -65,6 +66,17 @@ pub fn decide_upload(
     }
 }
 
+pub fn guard_kept_payload_uploaded(
+    creator: &Requester,
+    stored: Option<&StoredPayload>,
+) -> Result<(), JobsError> {
+    match stored {
+        None => Err(JobsError::PayloadNotUploaded),
+        Some(known) if &known.uploader == creator => Ok(()),
+        Some(_) => Err(JobsError::PayloadUploaderMismatch),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +135,28 @@ mod tests {
                 Some(&stored)
             ),
             Err(UploadRefusal::PayloadAlreadyUploaded)
+        );
+    }
+
+    #[test]
+    fn a_creation_naming_a_kept_payload_needs_it_uploaded_by_the_creator() {
+        let creator = Requester::Run(run_id());
+        let stored = StoredPayload {
+            uploader: creator,
+            payload: payload("m"),
+        };
+        assert_eq!(guard_kept_payload_uploaded(&creator, Some(&stored)), Ok(()));
+        assert_eq!(
+            guard_kept_payload_uploaded(&creator, None),
+            Err(JobsError::PayloadNotUploaded)
+        );
+        assert_eq!(
+            guard_kept_payload_uploaded(&Requester::Run(run_id()), Some(&stored)),
+            Err(JobsError::PayloadUploaderMismatch)
+        );
+        assert_eq!(
+            guard_kept_payload_uploaded(&service(), Some(&stored)),
+            Err(JobsError::PayloadUploaderMismatch)
         );
     }
 

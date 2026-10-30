@@ -143,6 +143,8 @@ pub fn create_job(
             passport,
             payload: command.payload,
             call,
+            restart_of_run_id: None,
+            restart_of_job_id: None,
         })),
     )))
 }

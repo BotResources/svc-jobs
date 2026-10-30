@@ -10,6 +10,17 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.8.0 - 2026-10-30
 
+- `commands::job::restart::restart_job` and `RestartJob`: the restart Job of a
+  finished Run (`JobQueued.restart_of_run_id`, `restart_of_job_id`;
+  `Job::restart_of_run_id`, `is_restart`).
+- `RestartStanding` and `DirectoryEntry::restart_standing`: the one decision on
+  the restart of an agent, shared by the listing, the delivery of a mail and the
+  restart; `Delivery::starts_restart`.
+- `ActsFor::runs`; `RESULT_RETENTION`, `result_expires_at`, `guard_result_alive`.
+- `guard_kept_payload_uploaded`; `JobsError::PayloadNotUploaded` and
+  `PayloadUploaderMismatch`.
+- `domain::runner::call_notices`: `CallNotices` and `NoticePlan`, the notices a
+  runner call owes its Caller.
 - `Job` carries its Initial Job, `Requester` (a service actor or a Run),
   `JobPassport`, `JobPayload` and `JobCall`; `CreateJob` and `JobQueued` carry
   them; a root job without a Passport is refused (`PassportRequired`).

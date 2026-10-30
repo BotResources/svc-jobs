@@ -85,6 +85,8 @@ pub fn manual_retry(
         passport: predecessor.passport().cloned(),
         payload: predecessor.payload().cloned(),
         call: predecessor.call().copied(),
+        restart_of_run_id: predecessor.restart_of_run_id(),
+        restart_of_job_id: None,
     }))];
     let first_run_id = match command.dispatch {
         SuccessorDispatch::Push {

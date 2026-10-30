@@ -1,6 +1,5 @@
 use super::refusal::{BadAddress, BadAddressReason, MailRefusal};
-use crate::domain::directory::AgentState;
-use crate::domain::directory::listing::{DirectoryEntry, RestartObstacles};
+use crate::domain::directory::listing::{DirectoryEntry, RestartObstacles, RestartStanding};
 use crate::domain::ids::{AgentId, JobId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +48,7 @@ pub struct Delivery {
     pub address: AgentId,
     pub kind: RecipientKind,
     pub rings_live_run: bool,
+    pub starts_restart: bool,
     pub refused_restart: Option<RefusedRestart>,
 }
 
@@ -92,31 +92,32 @@ fn decide_one(
     if held.initial_job_id != sender_initial_job {
         return Err(BadAddressReason::OtherTree);
     }
-    let delivery = |rings_live_run, refused_restart| Delivery {
+    let delivery = |rings_live_run, starts_restart, refused_restart| Delivery {
         address: recipient.address,
         kind: recipient.kind,
         rings_live_run,
+        starts_restart: starts_restart && recipient.kind == RecipientKind::Direct,
         refused_restart,
     };
-    match held.entry.state {
-        AgentState::Running => Ok(delivery(true, None)),
-        AgentState::Finished => {
-            if !held.entry.can_restart() || held.obstacles.parent_job_terminal {
-                return Err(BadAddressReason::RecipientCannotRestart);
-            }
-            let refused = (held.obstacles.runner_type_retired
-                && recipient.kind == RecipientKind::Direct)
-                .then_some(RefusedRestart {
-                    address: recipient.address,
-                });
-            Ok(delivery(false, refused))
+    match held.entry.restart_standing(held.obstacles) {
+        RestartStanding::Running => Ok(delivery(true, false, None)),
+        RestartStanding::NoSavedState | RestartStanding::ParentJobTerminal => {
+            Err(BadAddressReason::RecipientCannotRestart)
         }
+        RestartStanding::TypeRetired => {
+            let refused = (recipient.kind == RecipientKind::Direct).then_some(RefusedRestart {
+                address: recipient.address,
+            });
+            Ok(delivery(false, false, refused))
+        }
+        RestartStanding::Allowed => Ok(delivery(false, true, None)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::directory::AgentState;
     use crate::domain::keys::RunnerTypeKey;
     use crate::fixtures::{job_id, run_id};
     use uuid::Uuid;
@@ -264,6 +265,18 @@ mod tests {
         );
         let Deliveries(plan) = decide_deliveries(tree, &[recipient]).unwrap();
         assert!(!plan[0].rings_live_run);
+        assert!(plan[0].starts_restart);
         assert_eq!(plan[0].refused_restart, None);
+    }
+
+    #[test]
+    fn a_cc_notice_never_starts_a_restart() {
+        let tree = job_id();
+        let recipient = to(
+            RecipientKind::Cc,
+            held(tree, AgentState::Finished, true, CLEAR),
+        );
+        let Deliveries(plan) = decide_deliveries(tree, &[recipient]).unwrap();
+        assert!(!plan[0].starts_restart);
     }
 }

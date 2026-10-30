@@ -40,6 +40,8 @@ impl JobsError {
             Self::ModeRequired => "mode_required",
             Self::CallerAddressNotHeld => "caller_address_not_held",
             Self::CallerAddressNotOfRun => "caller_address_not_of_run",
+            Self::PayloadNotUploaded => "payload_not_uploaded",
+            Self::PayloadUploaderMismatch => "payload_uploader_mismatch",
             Self::PayloadTooLarge { .. } => "payload_too_large",
             Self::NotPlatformAdministrator => "not_platform_administrator",
             Self::NotSuperUser => "not_super_user",

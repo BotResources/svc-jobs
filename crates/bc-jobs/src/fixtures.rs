@@ -258,6 +258,7 @@ impl JobBuilder {
                 passport: Some(service_passport()),
                 payload: None,
                 call: None,
+                restart_of_run_id: None,
             },
         }
     }
@@ -299,6 +300,11 @@ impl JobBuilder {
             parent_job_id,
             runner_type: runner_type(),
         };
+        self
+    }
+
+    pub fn with_restart_of(mut self, run_id: RunId) -> Self {
+        self.state.restart_of_run_id = Some(run_id);
         self
     }
 

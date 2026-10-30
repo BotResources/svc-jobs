@@ -4,6 +4,7 @@ pub mod command_v3;
 pub mod dispatch_mode;
 pub mod event;
 pub mod event_v2;
+pub mod graphql_roots;
 #[cfg(feature = "integration")]
 mod integration;
 pub mod runner;

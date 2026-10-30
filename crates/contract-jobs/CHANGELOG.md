@@ -7,6 +7,10 @@ every consumer, so each version is deliberate. Release headings are plain
 
 ## 0.7.0 - 2026-10-30
 
+- `graphql_roots`: the eleven GraphQL roots of the runner surface as public constants
+  (`UPLOAD_PAYLOAD_ROOT`, `PAYLOAD_ROOT`, `UPLOAD_RESULT_ROOT`, `READ_RESULT_ROOT`,
+  `UPLOAD_ATTACHMENT_ROOT`, `ATTACHMENT_ROOT`, `SEND_MAIL_ROOT`, `UNREAD_ROOT`,
+  `MAIL_ROOT`, `SAVE_STATE_ROOT`, `SAVED_STATE_ROOT`) and `RUNNER_ROOTS`.
 - `command_v3`: `CreateJobV3`, `FinishJobV3`, `FailJobV3`, `CancelJobV3`,
   `Payload`, `CallMode` and the `cmd_job_{create,cancel,fail,finish}_v3_coords()`.
 - `event_v2`: `JobQueuedV2`, `JobCreationRejectedV2`, `JobStartedV2`,

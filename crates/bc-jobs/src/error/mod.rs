@@ -90,6 +90,8 @@ pub enum JobsError {
     ModeRequired,
     CallerAddressNotHeld,
     CallerAddressNotOfRun,
+    PayloadNotUploaded,
+    PayloadUploaderMismatch,
     PayloadTooLarge {
         size: usize,
         maximum: usize,

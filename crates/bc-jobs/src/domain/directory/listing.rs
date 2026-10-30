@@ -19,6 +19,21 @@ pub struct RestartObstacles {
     pub parent_job_terminal: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartStanding {
+    Running,
+    NoSavedState,
+    ParentJobTerminal,
+    TypeRetired,
+    Allowed,
+}
+
+impl RestartStanding {
+    pub fn is_allowed(self) -> bool {
+        self == Self::Allowed
+    }
+}
+
 impl DirectoryEntry {
     pub fn can_restart(&self) -> bool {
         self.declares_restart && self.holds_saved_state
@@ -35,14 +50,22 @@ impl DirectoryEntry {
         }
     }
 
-    pub fn restartable_now(&self, obstacles: RestartObstacles) -> Option<bool> {
+    pub fn restart_standing(&self, obstacles: RestartObstacles) -> RestartStanding {
         match self.state {
-            AgentState::Running => None,
-            AgentState::Finished => Some(
-                self.can_restart()
-                    && !obstacles.runner_type_retired
-                    && !obstacles.parent_job_terminal,
-            ),
+            AgentState::Running => RestartStanding::Running,
+            AgentState::Finished if !self.can_restart() => RestartStanding::NoSavedState,
+            AgentState::Finished if obstacles.parent_job_terminal => {
+                RestartStanding::ParentJobTerminal
+            }
+            AgentState::Finished if obstacles.runner_type_retired => RestartStanding::TypeRetired,
+            AgentState::Finished => RestartStanding::Allowed,
+        }
+    }
+
+    pub fn restartable_now(&self, obstacles: RestartObstacles) -> Option<bool> {
+        match self.restart_standing(obstacles) {
+            RestartStanding::Running => None,
+            standing => Some(standing.is_allowed()),
         }
     }
 }

@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
-use crate::domain::ids::{JobId, SourceEntityId};
+use crate::domain::ids::{JobId, RunId, SourceEntityId};
 use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
@@ -45,6 +45,7 @@ pub struct JobState {
     pub passport: Option<JobPassport>,
     pub payload: Option<JobPayload>,
     pub call: Option<JobCall>,
+    pub restart_of_run_id: Option<RunId>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +71,7 @@ pub struct Job {
     passport: Option<JobPassport>,
     payload: Option<JobPayload>,
     call: Option<JobCall>,
+    restart_of_run_id: Option<RunId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -180,6 +182,7 @@ impl Job {
             passport: state.passport,
             payload: state.payload,
             call: state.call,
+            restart_of_run_id: state.restart_of_run_id,
         })
     }
 
@@ -269,5 +272,13 @@ impl Job {
 
     pub fn call(&self) -> Option<&JobCall> {
         self.call.as_ref()
+    }
+
+    pub fn restart_of_run_id(&self) -> Option<RunId> {
+        self.restart_of_run_id
+    }
+
+    pub fn is_restart(&self) -> bool {
+        self.restart_of_run_id.is_some()
     }
 }

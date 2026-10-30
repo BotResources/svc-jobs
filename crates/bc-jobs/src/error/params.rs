@@ -37,6 +37,8 @@ impl JobsError {
             | Self::ModeRequired
             | Self::CallerAddressNotHeld
             | Self::CallerAddressNotOfRun
+            | Self::PayloadNotUploaded
+            | Self::PayloadUploaderMismatch
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman

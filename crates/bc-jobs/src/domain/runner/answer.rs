@@ -1,3 +1,5 @@
+use chrono::{DateTime, TimeDelta, Utc};
+
 use crate::domain::ids::RunId;
 use crate::domain::payload::CallMode;
 use crate::domain::requester::ActsFor;
@@ -27,6 +29,24 @@ impl ResultRefusal {
     }
 }
 
+pub const RESULT_RETENTION: TimeDelta = TimeDelta::days(7);
+
+pub fn result_expires_at(kept_at: DateTime<Utc>, read_at: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    read_at.unwrap_or(kept_at) + RESULT_RETENTION
+}
+
+pub fn guard_result_alive(
+    kept_at: DateTime<Utc>,
+    read_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<(), ResultRefusal> {
+    if now < result_expires_at(kept_at, read_at) {
+        Ok(())
+    } else {
+        Err(ResultRefusal::ResultUnknown)
+    }
+}
+
 pub fn guard_keeps_a_result(mode: Option<CallMode>) -> Result<(), ResultRefusal> {
     match mode {
         Some(CallMode::Sync) => Ok(()),
@@ -50,6 +70,31 @@ pub fn guard_reads_result(
 mod tests {
     use super::*;
     use crate::fixtures::run_id;
+
+    #[test]
+    fn a_result_nobody_reads_lives_seven_days_from_the_moment_it_was_kept() {
+        let kept = chrono::DateTime::<Utc>::UNIX_EPOCH;
+        let last_moment = kept + RESULT_RETENTION - TimeDelta::seconds(1);
+        assert_eq!(guard_result_alive(kept, None, last_moment), Ok(()));
+        assert_eq!(
+            guard_result_alive(kept, None, kept + RESULT_RETENTION),
+            Err(ResultRefusal::ResultUnknown)
+        );
+    }
+
+    #[test]
+    fn a_result_read_with_keep_lives_seven_days_from_that_read() {
+        let kept = chrono::DateTime::<Utc>::UNIX_EPOCH;
+        let read = kept + TimeDelta::days(5);
+        assert_eq!(
+            guard_result_alive(kept, Some(read), kept + TimeDelta::days(11)),
+            Ok(())
+        );
+        assert_eq!(
+            guard_result_alive(kept, Some(read), read + RESULT_RETENTION),
+            Err(ResultRefusal::ResultUnknown)
+        );
+    }
 
     #[test]
     fn only_a_synchronous_call_keeps_a_result() {

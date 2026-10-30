@@ -24,6 +24,10 @@ impl ActsFor {
         Self(runs.into_iter().collect())
     }
 
+    pub fn runs(&self) -> impl Iterator<Item = RunId> + '_ {
+        self.0.iter().copied()
+    }
+
     pub fn includes(&self, run_id: RunId) -> bool {
         self.0.contains(&run_id)
     }
