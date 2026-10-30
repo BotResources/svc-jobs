@@ -74,3 +74,16 @@ pub async fn mail(fixture: &JobsFixture, work: &Work, from: Uuid, to: Uuid) {
     .await;
     gesture::accepted(&sent, "jobsSendMail");
 }
+
+pub async fn act(fixture: &JobsFixture, verb: &str, job: Uuid, acting: &Work) {
+    Producer::new(fixture.fabric(), "projects")
+        .send_v3(
+            verb,
+            json!({
+                "job_id": job.to_string(),
+                "acting_run_id": acting.run_id.to_string(),
+                "acting_instance_key": acting.instance_key,
+            }),
+        )
+        .await;
+}
