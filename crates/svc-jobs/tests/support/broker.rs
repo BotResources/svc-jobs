@@ -1,12 +1,3 @@
-//! A `nats-server -js` whose process the scenario owns, so it can be stopped and
-//! started again on the same endpoint with the same JetStream store — what a NATS
-//! pod restarting on its volume, or the node under it coming back, looks like
-//! from the service.
-//!
-//! Only the PROCESS lifecycle lives here: the harness's spawned server cannot be
-//! restarted on the same port. Every NATS protocol access still goes through the
-//! harness clients (`FabricTestNats`, `TestNats`).
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -48,8 +39,6 @@ impl RestartableNats {
         format!("nats://{LOOPBACK}:{}", self.port)
     }
 
-    /// The broker goes away: its process is killed and its port refuses
-    /// connections until [`Self::resume`].
     pub async fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill().await;
@@ -57,8 +46,6 @@ impl RestartableNats {
         }
     }
 
-    /// The broker comes back on the same port, with the streams, buckets and
-    /// durables it held when it stopped.
     pub async fn resume(&mut self) {
         assert!(self.child.is_none(), "the broker is already running");
         self.child = Some(

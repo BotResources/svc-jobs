@@ -65,7 +65,7 @@ async fn await_blocked_mail(durable: &Durable) {
     }
 }
 
-async fn await_unrelated_start_applied(fixture: &JobsFixture, durable: &Durable) {
+async fn await_unrelated_start_applied_after_the_refusal(fixture: &JobsFixture, durable: &Durable) {
     let mut other = live_runner(fixture, "other-tree").await;
     Producer::new(fixture.fabric(), "projects")
         .declare_v2(&JobDeclaration::new(&other.runner_type))
@@ -77,7 +77,7 @@ async fn await_unrelated_start_applied(fixture: &JobsFixture, durable: &Durable)
             STARTS_OF_RUN,
             runner::run_id(&trigger),
             1,
-            "a start of another Tree is applied while the first start waits for its Tree",
+            "a start of another Tree is applied once the first start was refused on its Tree lock",
         )
         .await;
 }
@@ -146,7 +146,7 @@ async fn a_mail_racing_the_start_of_a_restart_run_is_rung_or_listed_by_its_first
                 0,
                 "a start refused on the Tree lock has not been applied"
             );
-            await_unrelated_start_applied(&fixture, &durable).await;
+            await_unrelated_start_applied_after_the_refusal(&fixture, &durable).await;
             None
         }
     };
