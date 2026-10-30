@@ -30,6 +30,7 @@ pub struct Knobs {
     pub scope_declaration: bool,
     pub task_restart_initial_backoff_milliseconds: Option<u64>,
     pub task_restart_max_backoff_seconds: Option<u64>,
+    pub presence_ttl: Duration,
 }
 
 impl Default for Knobs {
@@ -49,6 +50,7 @@ impl Default for Knobs {
             scope_declaration: false,
             task_restart_initial_backoff_milliseconds: None,
             task_restart_max_backoff_seconds: None,
+            presence_ttl: infra::STEADY_PRESENCE_TTL,
         }
     }
 }
@@ -95,7 +97,7 @@ impl JobsFixture {
             .with_published_language()
             .await;
         let nats = TestNats::setup_on(&fabric.url()).await;
-        infra::provision_runner_transport(&nats).await;
+        infra::provision_runner_transport(&nats, knobs.presence_ttl).await;
 
         let mut instances = Vec::new();
         let mut urls = Vec::new();

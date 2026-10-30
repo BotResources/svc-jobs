@@ -22,6 +22,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
     // Given: a job with retry capacity, watched from the list and fleet before it exists
     let fixture = JobsFixture::start_with(Knobs {
         retry_base_delay_seconds: BASE_DELAY_SECONDS,
+        presence_ttl: infra::EXPIRING_PRESENCE_TTL,
         ..Knobs::default()
     })
     .await;
@@ -185,7 +186,7 @@ async fn a_job_survives_the_loss_of_its_runner_without_administrator_interventio
 
     lost.crash();
     replacement.resume_after(&lost);
-    tokio::time::sleep(infra::PRESENCE_TTL).await;
+    tokio::time::sleep(infra::EXPIRING_PRESENCE_TTL).await;
 
     let disconnected =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_INSTANCE_DISCONNECTED, LONG).await;

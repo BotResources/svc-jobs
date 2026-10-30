@@ -184,7 +184,7 @@ async fn provision(url: &str) {
         .with_published_language()
         .await;
     let nats = TestNats::setup_on(url).await;
-    infra::provision_runner_transport(&nats).await;
+    infra::provision_runner_transport(&nats, infra::STEADY_PRESENCE_TTL).await;
     nats.cleanup().await;
     fabric.shutdown().await;
 }

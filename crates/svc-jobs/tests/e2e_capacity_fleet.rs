@@ -7,6 +7,7 @@ use br_test_harness::GraphqlClient;
 use serde_json::json;
 use support::claim;
 use support::fixture::{JobsFixture, Knobs};
+use support::infra;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{LONG, QUIET, dispatch, gql, wire};
@@ -110,7 +111,11 @@ async fn a_capacity_lowered_by_a_heartbeat_holds_the_claim_until_a_live_run_ends
 
 #[tokio::test]
 async fn push_capacity_follows_the_ready_instances_of_the_fleet() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_with(Knobs {
+        presence_ttl: infra::EXPIRING_PRESENCE_TTL,
+        ..Knobs::default()
+    })
+    .await;
     let client = fixture.gql();
     let admin = fixture.admin();
     let producer = Producer::new(fixture.fabric(), "projects");
