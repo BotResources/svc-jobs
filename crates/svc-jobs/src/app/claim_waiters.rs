@@ -8,6 +8,8 @@ use tokio::sync::Notify;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
+use super::claim_observability;
+
 #[derive(Default)]
 pub struct ClaimWaiters {
     held: Mutex<HashMap<RunnerTypeKey, VecDeque<Weak<Waiter>>>>,
@@ -39,6 +41,7 @@ impl HeldClaim {
 
 impl Drop for HeldClaim {
     fn drop(&mut self) {
+        claim_observability::released(&self.runner_type);
         if self.waiter.woken.swap(false, Ordering::SeqCst) {
             self.waiters.wake_one(&self.runner_type);
         }
@@ -51,6 +54,7 @@ impl ClaimWaiters {
             notify: Notify::new(),
             woken: AtomicBool::new(false),
         });
+        claim_observability::held(runner_type);
         self.lock()
             .entry(runner_type.clone())
             .or_default()

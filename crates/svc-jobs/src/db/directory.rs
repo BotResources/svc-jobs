@@ -64,13 +64,37 @@ pub async fn standing(
     })
 }
 
+const TREE_LOCK_WAIT: &str = "5s";
+const LOCK_NOT_AVAILABLE: &str = "55P03";
+
 pub async fn lock_tree(tx: &mut PgConnection, initial_job_id: JobId) -> Result<(), PortError> {
+    sqlx::query(&format!("SET LOCAL lock_timeout = '{TREE_LOCK_WAIT}'"))
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("directory:{}", initial_job_id.as_uuid()))
         .execute(&mut *tx)
         .await
+        .map_err(|error| {
+            if is_lock_timeout(&error) {
+                PortError::ConcurrentModification
+            } else {
+                unavailable(error)
+            }
+        })?;
+    sqlx::query("SET LOCAL lock_timeout TO DEFAULT")
+        .execute(&mut *tx)
+        .await
         .map_err(unavailable)?;
     Ok(())
+}
+
+fn is_lock_timeout(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|database| database.code())
+        .is_some_and(|code| code == LOCK_NOT_AVAILABLE)
 }
 
 #[async_trait]

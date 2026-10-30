@@ -1,6 +1,7 @@
 pub mod fleet;
 pub mod job;
 pub mod job_facts;
+pub mod run_inbox;
 pub mod user;
 
 use br_core_events::{DomainEvent, EventMetadata};

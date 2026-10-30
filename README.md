@@ -436,7 +436,7 @@ failing job by job.
 |---|---|
 | `GET /livez` | Liveness. Never tied to NATS or PostgreSQL: a dependency outage takes the pod out of rotation, it does not get it restarted. |
 | `GET /readyz` | Readiness — DOWN while migrating, while any declared stream/bucket is unbound, until every supervised background task has bound its own source of work, and whenever one of them is down; the reason names the culprit. |
-| `GET /metrics` | Prometheus metrics, among them `jobs_background_task_up{task}` (1 while a supervised task is bound, 0 while it is down) and `jobs_background_task_restarts_total{task}`. |
+| `GET /metrics` | Prometheus metrics, among them `jobs_background_task_up{task}` (1 while a supervised task is bound, 0 while it is down), `jobs_background_task_restarts_total{task}` and `jobs_claims_held{runner_type}` (the claims this pod has registered to wait for work). |
 | `GET /sdl` | The GraphQL SDL the running binary serves. |
 | `GET /graphql` | GraphiQL playground (passport-gated like the rest). |
 | `svc-jobs schema` | Prints the same SDL and exits — for codegen and CI diffing, no infrastructure needed. |
