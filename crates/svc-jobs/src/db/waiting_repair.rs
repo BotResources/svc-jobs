@@ -1,19 +1,3 @@
-//! Repairing the access paths from the facts they derive from.
-//!
-//! `waiting_jobs` and `unstarted_pushed_runs` are maintained in the
-//! transaction of every fact a 0.4 pod records. During a rolling update a 0.3
-//! pod keeps recording facts — admissions, dispatches, retries — without
-//! knowing either table, and a Job it leaves waiting would never be offered to
-//! dispatch. The repair recomputes both paths for a set of Jobs from the
-//! ledger and writes the difference: missing rows inserted, rows of Jobs that
-//! no longer wait (or triggers since taken) deleted, drifted rows corrected.
-//! It is idempotent and safe beside live writers. The drift is found by a
-//! read that takes no lock; only the Jobs actually drifted are then locked —
-//! with `SKIP LOCKED`, so a Job a writer holds is left to the writer and to
-//! the next sweep — and repaired. A correct row is never locked by the
-//! repair: a claim skipping locked rows never passes over a Job the repair
-//! merely looked at.
-
 use bc_jobs::ports::PortError;
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
@@ -23,11 +7,8 @@ use super::PgStore;
 use super::hydrate::unavailable;
 use super::lineage::root_of;
 
-/// How many Jobs one repair transaction covers.
 pub const REPAIR_BATCH: usize = 500;
 
-/// The facts that make a Job start or stop waiting, or publish, take or
-/// settle a trigger.
 const PATH_FACTS: [&str; 13] = [
     "JobQueued",
     "RunDispatched",
@@ -50,6 +31,8 @@ pub struct Repaired {
     pub waiting_written: i64,
     pub triggers_removed: i64,
     pub triggers_added: i64,
+    pub current_runs_removed: i64,
+    pub current_runs_added: i64,
 }
 
 impl Repaired {
@@ -62,27 +45,26 @@ impl Repaired {
         self.waiting_written += other.waiting_written;
         self.triggers_removed += other.triggers_removed;
         self.triggers_added += other.triggers_added;
+        self.current_runs_removed += other.current_runs_removed;
+        self.current_runs_added += other.current_runs_added;
     }
 }
 
 impl PgStore {
-    /// Every Job whose access paths may be wrong: the unresolved ones, and
-    /// those either path still names. Read once, at boot.
     pub async fn every_job_on_a_path(&self) -> Result<Vec<Uuid>, PortError> {
         sqlx::query_scalar(
             "SELECT j.id::uuid FROM jobs j \
              WHERE NOT EXISTS (SELECT 1 FROM job_resolutions r WHERE r.job_id = j.id) \
                AND NOT EXISTS (SELECT 1 FROM job_deletions d WHERE d.job_id = j.id) \
              UNION SELECT w.job_id::uuid FROM waiting_jobs w \
-             UNION SELECT u.job_id::uuid FROM unstarted_pushed_runs u",
+             UNION SELECT u.job_id::uuid FROM unstarted_pushed_runs u \
+             UNION SELECT c.job_id::uuid FROM current_runs c",
         )
         .fetch_all(self.pool())
         .await
         .map_err(unavailable)
     }
 
-    /// The Jobs that recorded a path fact since `since`, whichever pod
-    /// recorded it.
     pub async fn jobs_with_path_facts_since(
         &self,
         since: DateTime<Utc>,
@@ -99,8 +81,6 @@ impl PgStore {
         .map_err(unavailable)
     }
 
-    /// Repairs both access paths for `jobs`, batch by batch: the drift is
-    /// read without a lock, and only the drifted Jobs are locked and fixed.
     pub async fn repair_access_paths(&self, jobs: &[Uuid]) -> Result<Repaired, PortError> {
         let mut repaired = Repaired::default();
         for batch in jobs.chunks(REPAIR_BATCH) {
@@ -119,9 +99,6 @@ impl PgStore {
         Ok(repaired)
     }
 
-    /// Forgets the turns of roots that have nothing waiting any more and were
-    /// last served before `cutoff`: a root that waits again later starts as
-    /// one never served.
     pub async fn purge_idle_turns(&self, cutoff: DateTime<Utc>) -> Result<u64, PortError> {
         let done = sqlx::query(
             "DELETE FROM root_dispatch_turns t \
@@ -194,16 +171,34 @@ async fn repair_batch(tx: &mut PgConnection, batch: &[Uuid]) -> Result<Repaired,
     .fetch_one(&mut *tx)
     .await
     .map_err(unavailable)?;
+    let (current_runs_removed, current_runs_added): (i64, i64) = sqlx::query_as(&format!(
+        "WITH {}, \
+         removed AS ( \
+            DELETE FROM current_runs c WHERE c.job_id = ANY($1) \
+              AND NOT EXISTS (SELECT 1 FROM desired_current d WHERE d.run_id = c.run_id) \
+            RETURNING c.run_id), \
+         added AS ( \
+            INSERT INTO current_runs (run_id, job_id, runner_type_id) \
+            SELECT run_id, job_id, runner_type_id FROM desired_current \
+            ON CONFLICT (run_id) DO NOTHING \
+            RETURNING run_id) \
+         SELECT (SELECT count(*) FROM removed), (SELECT count(*) FROM added)",
+        desired_current_runs(),
+    ))
+    .bind(&locked)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(unavailable)?;
     Ok(Repaired {
         waiting_removed,
         waiting_written,
         triggers_removed,
         triggers_added,
+        current_runs_removed,
+        current_runs_added,
     })
 }
 
-/// The waiting rows the ledger implies for the Jobs in `$1`, as the CTEs `c`
-/// and `desired`.
 fn desired_waiting() -> String {
     format!(
         "c AS (SELECT * FROM jobs WHERE id = ANY($1)), \
@@ -229,8 +224,6 @@ fn desired_waiting() -> String {
     )
 }
 
-/// The outstanding triggers the ledger implies for the Jobs in `$1`, as the
-/// CTE `desired_runs`.
 fn desired_triggers() -> &'static str {
     "desired_runs AS ( \
         SELECT r.id AS run_id, r.job_id, j.runner_type_id, r.dispatched_at \
@@ -241,12 +234,17 @@ fn desired_triggers() -> &'static str {
           AND NOT EXISTS (SELECT 1 FROM run_reservations rr WHERE rr.run_id = r.id))"
 }
 
-/// The Jobs of `$1` whose access paths differ from what the ledger implies:
-/// a waiting row missing, stale or drifted, a trigger row missing or stale.
-/// A plain read — nothing is locked.
+fn desired_current_runs() -> &'static str {
+    "desired_current AS ( \
+        SELECT r.id AS run_id, r.job_id, j.runner_type_id \
+        FROM runs r JOIN jobs j ON j.id = r.job_id \
+        WHERE r.job_id = ANY($1) \
+          AND NOT EXISTS (SELECT 1 FROM run_terminals t WHERE t.run_id = r.id))"
+}
+
 fn drift_sql() -> String {
     format!(
-        "WITH {waiting}, {triggers} \
+        "WITH {waiting}, {triggers}, {current} \
          SELECT d.job_id::uuid FROM desired d \
             LEFT JOIN waiting_jobs w ON w.job_id = d.job_id \
             WHERE w.job_id IS NULL \
@@ -260,8 +258,14 @@ fn drift_sql() -> String {
             WHERE NOT EXISTS (SELECT 1 FROM unstarted_pushed_runs u WHERE u.run_id = dr.run_id) \
          UNION SELECT u.job_id::uuid FROM unstarted_pushed_runs u \
             WHERE u.job_id = ANY($1) \
-              AND NOT EXISTS (SELECT 1 FROM desired_runs dr WHERE dr.run_id = u.run_id)",
+              AND NOT EXISTS (SELECT 1 FROM desired_runs dr WHERE dr.run_id = u.run_id) \
+         UNION SELECT dc.job_id::uuid FROM desired_current dc \
+            WHERE NOT EXISTS (SELECT 1 FROM current_runs c WHERE c.run_id = dc.run_id) \
+         UNION SELECT c.job_id::uuid FROM current_runs c \
+            WHERE c.job_id = ANY($1) \
+              AND NOT EXISTS (SELECT 1 FROM desired_current dc WHERE dc.run_id = c.run_id)",
         waiting = desired_waiting(),
         triggers = desired_triggers(),
+        current = desired_current_runs(),
     )
 }

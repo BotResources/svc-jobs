@@ -1,8 +1,3 @@
-//! Writing the facts of Jobs: every Job a change was decided on is locked
-//! again and compared before its facts are applied, together with the
-//! follow-ups the same transaction owes — the affordances of settled Jobs and
-//! the level of Jobs back to waiting.
-
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bc_jobs::domain::actions::fleet::guard_accept_job;
@@ -23,7 +18,7 @@ use uuid::Uuid;
 use super::premise::{PriorityPremise, guard_priority_premise_still_holds};
 use super::rederive;
 use crate::app::{fingerprint, followups, integration};
-use crate::db::fleet::load;
+use crate::db::fleet::{capacity, load};
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
@@ -36,9 +31,8 @@ pub struct JobChange {
     pub metadata: Option<EventMetadata>,
     pub answers: Vec<integration::Published>,
     pub priority_premise: Option<PriorityPremise>,
-    /// The descendants a cascade over this Job was decided on. Re-read under
-    /// the write's locks: a descendant admitted since makes the write a race.
     pub descendants_premise: Option<Vec<Uuid>>,
+    pub free_capacity_of: Option<RunnerTypeKey>,
 }
 
 impl JobChange {
@@ -53,7 +47,13 @@ impl JobChange {
             answers: Vec::new(),
             priority_premise: None,
             descendants_premise: None,
+            free_capacity_of: None,
         }
+    }
+
+    pub fn requiring_free_capacity(mut self, runner_type: RunnerTypeKey) -> Self {
+        self.free_capacity_of = Some(runner_type);
+        self
     }
 
     pub fn over_descendants(mut self, descendants: impl IntoIterator<Item = JobId>) -> Self {
@@ -89,7 +89,6 @@ impl JobChange {
     }
 }
 
-/// What every Job write needs besides its changes.
 #[derive(Clone, Copy)]
 pub struct WriteContext<'a> {
     pub ids: &'a dyn IdFactory,
@@ -115,9 +114,6 @@ pub async fn commit_job_changes(
     Ok(())
 }
 
-/// The same write inside a transaction the caller owns and commits — a claim
-/// that locked its Job with the selection, a change of a user's maximum that
-/// locked the user first.
 pub async fn commit_job_changes_in(
     tx: &mut sqlx::PgConnection,
     context: WriteContext<'_>,
@@ -136,11 +132,12 @@ pub async fn commit_job_changes_in(
     if changes.is_empty() {
         return Ok(());
     }
+    for change in &changes {
+        if let Some(runner_type) = &change.free_capacity_of {
+            guard_free_capacity(&mut *tx, runner_type).await?;
+        }
+    }
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
-    // Every writer takes Job rows in one global order: the root of what it
-    // touches first, then the others by id. An admission share-locks its root
-    // then its parent; a cascade locks the Job it starts from, then its
-    // descendants.
     for change in &changes {
         guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
     }
@@ -169,8 +166,19 @@ pub async fn commit_job_changes_in(
     Ok(())
 }
 
-/// Records the facts of a change of a user's maximum inside the caller's
-/// transaction — the one that locked the user and the Jobs it recalculates.
+pub async fn guard_free_capacity(
+    tx: &mut sqlx::PgConnection,
+    runner_type: &RunnerTypeKey,
+) -> Result<(), ServiceError> {
+    let Some(capacity) = capacity::lock_and_read(tx, runner_type).await? else {
+        return Err(ServiceError::Contended);
+    };
+    capacity
+        .runner_type
+        .guard_free_capacity(capacity.current_runs)?;
+    Ok(())
+}
+
 pub async fn record_user_events_in(
     tx: &mut sqlx::PgConnection,
     ids: &dyn IdFactory,
@@ -286,10 +294,6 @@ fn guard_runner_types_still_accept_jobs(
     Ok(())
 }
 
-/// A child admission share-locks its parent until it commits, so once the
-/// cascade holds its Jobs for update, every descendant admitted under one of
-/// them is either committed and read here, or waits and then finds its parent
-/// settled.
 async fn guard_descendants_unchanged(
     tx: &mut sqlx::PgConnection,
     change: &JobChange,

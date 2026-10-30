@@ -59,6 +59,7 @@ impl JobsError {
             Self::TriggerNotStranded { .. } => "trigger_not_stranded",
             Self::RunnerTypeMismatch { .. } => "runner_type_mismatch",
             Self::RunnerTypeUnavailable { .. } => "runner_type_unavailable",
+            Self::NoFreeCapacity { .. } => "no_free_capacity",
             Self::RunnerTypeRetired { .. } => "runner_type_retired",
             Self::RunnerTypeNotActive { .. } => "runner_type_not_active",
             Self::RunnerTypeNotDeprecated { .. } => "runner_type_not_deprecated",

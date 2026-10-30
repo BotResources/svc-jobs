@@ -1,12 +1,3 @@
-//! Serving the claim of one Instance of a `CLAIM` RunnerType.
-//!
-//! The claim is held open until a Job is waiting for the type, then that Job is
-//! reserved to the Instance and its Run created in the same transaction that
-//! locked it — `FOR UPDATE SKIP LOCKED`, so the claims served by several pods
-//! never reserve one Job twice. A claim repeated under the same identity is
-//! answered with the Run already reserved to it. At the end of the wait the
-//! answer is empty.
-
 use std::time::Duration;
 
 use bc_jobs::JobsError;
@@ -30,27 +21,16 @@ use crate::db::PgStore;
 use crate::db::claim::NextClaimable;
 use crate::error::ServiceError;
 
-/// What a claim is answered with, in the service's terms; the runner
-/// transport words it for the wire.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaimAnswer {
     Served(Box<RunTrigger>),
-    /// Nothing was waiting during the wait.
     Empty,
-    /// The domain refused to serve this Instance of this type.
     Refused(JobsError),
-    /// The identity already served a Run that was started or settled.
     Spent,
-    /// The claim names no valid type, Instance or identity.
     Malformed,
-    /// The pod could not serve the claim — its store failed; nothing was
-    /// reserved for it.
     Unavailable,
 }
 
-/// The longest a reservation may start before the claim's deadline: a Run is
-/// never reserved for a claim whose reply would arrive after its Instance gave
-/// up waiting.
 const RESERVATION_MARGIN: Duration = Duration::from_millis(500);
 
 pub struct ClaimRequest {
@@ -112,9 +92,6 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
         let held = jobs.waiters.hold(&key);
         match reserve(jobs, &runner_type, &instance_key, claim_id, &passed_over).await {
             Ok(Reservation::Reserved(trigger)) => {
-                // Taking the head of a (root, level) uncovers the next Job of
-                // that pair — a claim parked because every head was held looks
-                // again.
                 drop(held);
                 jobs.waiters.wake_one(&key);
                 return Ok(ClaimAnswer::Served(trigger));
@@ -124,10 +101,6 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
                 continue;
             }
             Ok(Reservation::NothingWaiting) => {}
-            // Another claim or write moved the job between the selection and the
-            // commit; the job this pass locked and rolled back may still wait, so
-            // another held claim of the type is woken to look again. A repeat of
-            // this very claim on another pod finds its run on the next pass.
             Err(ServiceError::Contended) => {
                 jobs.waiters.wake_one(&key);
                 continue;
@@ -140,8 +113,6 @@ async fn answer(jobs: &Jobs, request: ClaimRequest) -> Result<ClaimAnswer, Servi
     }
 }
 
-/// A claim repeated under an identity that already reserved a Run: the
-/// domain decides whether that Run is handed back or the identity was spent.
 async fn recalled(
     jobs: &Jobs,
     key: &RunnerTypeKey,
@@ -172,6 +143,13 @@ async fn reserve(
     passed_over: &[Uuid],
 ) -> Result<Reservation, ServiceError> {
     let mut tx = jobs.store.begin().await?;
+    match write::guard_free_capacity(&mut tx, runner_type.key()).await {
+        Ok(()) => {}
+        Err(ServiceError::Domain(JobsError::NoFreeCapacity { .. })) => {
+            return Ok(Reservation::NothingWaiting);
+        }
+        Err(other) => return Err(other),
+    }
     let at = PgStore::now_in(&mut tx).await?;
     let job_id =
         match PgStore::lock_next_claimable(&mut tx, runner_type.key(), at, passed_over).await? {
@@ -228,11 +206,6 @@ async fn reserve(
     ))))
 }
 
-/// Parks the claim until it is woken — a Job queued for the type, the type's
-/// retry timer firing, the fleet of the type moving — or the deadline. The
-/// pod keeps one retry timer per type: the first claim parking while none is
-/// armed arms it for the next retry, by the database clock. `false` at the
-/// deadline.
 async fn wait_for_work(
     jobs: &Jobs,
     key: &RunnerTypeKey,

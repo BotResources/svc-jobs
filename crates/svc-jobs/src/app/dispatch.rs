@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bc_jobs::JobsError;
 use bc_jobs::commands::job::dispatch::DispatchRun;
 use bc_jobs::domain::fleet::RunnerType;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
@@ -71,10 +72,13 @@ async fn dispatch_one(
         },
         &jobs.limits,
     )?;
-    jobs.commit(
-        vec![JobChange::new(job.id(), Some(job.clone()), result.events)],
-        &service_metadata(),
-    )
-    .await?;
-    Ok(Outcome::Dispatched)
+    let change = JobChange::new(job.id(), Some(job.clone()), result.events)
+        .requiring_free_capacity(runner_type.key().clone());
+    match jobs.commit(vec![change], &service_metadata()).await {
+        Ok(()) => Ok(Outcome::Dispatched),
+        Err(ServiceError::Domain(JobsError::NoFreeCapacity { .. })) => {
+            Ok(Outcome::NobodyWouldTakeIt)
+        }
+        Err(other) => Err(other),
+    }
 }

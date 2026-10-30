@@ -79,7 +79,9 @@ impl JobsError {
             Self::RunnerTypeMismatch { expected, claimed } => {
                 json!({ "expected": expected, "claimed": claimed })
             }
-            Self::RunnerTypeUnavailable { runner_type } => json!({ "runnerType": runner_type }),
+            Self::RunnerTypeUnavailable { runner_type } | Self::NoFreeCapacity { runner_type } => {
+                json!({ "runnerType": runner_type })
+            }
             Self::RunnerTypeRetired { runner_type }
             | Self::NotClaimMode { runner_type }
             | Self::NotPushMode { runner_type }

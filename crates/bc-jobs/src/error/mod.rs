@@ -149,6 +149,9 @@ pub enum JobsError {
     RunnerTypeUnavailable {
         runner_type: String,
     },
+    NoFreeCapacity {
+        runner_type: String,
+    },
     RunnerTypeRetired {
         runner_type: String,
     },

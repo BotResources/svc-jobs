@@ -94,8 +94,6 @@ impl RunnerType {
         self.settings.dispatch_mode
     }
 
-    /// Since when the type is claimed from: the switch to `CLAIM`, or its
-    /// registration. `None` while it is pushed to.
     pub fn claimed_since(&self) -> Option<DateTime<Utc>> {
         match self.settings.dispatch_mode {
             DispatchMode::Claim => Some(
@@ -107,20 +105,28 @@ impl RunnerType {
         }
     }
 
-    /// The maximum set for this type, absent while it follows the service
-    /// default.
     pub fn own_max_run_duration(&self) -> Option<MaxRunDuration> {
         self.settings.max_run_duration
     }
 
-    /// The maximum duration a Run of this type is dispatched with: its own, or
-    /// `service_default`.
     pub fn max_run_duration_or(&self, service_default: MaxRunDuration) -> MaxRunDuration {
         self.settings.max_run_duration.unwrap_or(service_default)
     }
 
     pub fn instance(&self, key: &InstanceKey) -> Option<&RunnerInstance> {
         self.instances.iter().find(|live| live.key() == key)
+    }
+
+    pub fn declared_capacity(&self) -> u32 {
+        self.instances
+            .iter()
+            .filter(|live| live.accepts_new_work())
+            .map(|live| live.capacity().get())
+            .fold(0u32, u32::saturating_add)
+    }
+
+    pub fn free_capacity(&self, current_runs: u32) -> u32 {
+        self.declared_capacity().saturating_sub(current_runs)
     }
 
     pub fn is_available(&self) -> bool {
@@ -177,36 +183,29 @@ mod tests {
 
     #[test]
     fn availability_is_derived_from_presence_alone() {
-        // Given: a runner type whose instances have all gone
         let empty = RunnerType::hydrate(state(vec![])).unwrap();
-        // When: one instance reappears
         let populated = RunnerType::hydrate(state(vec![live("pod-7", 1)])).unwrap();
-        // Then: availability follows presence, never a stored flag
         assert!(!empty.is_available());
         assert!(populated.is_available());
     }
 
     #[test]
     fn a_type_whose_every_live_instance_is_draining_is_not_available() {
-        // Given: a type whose two live instances are both finishing their current work
         let draining = RunnerType::hydrate(state(vec![
             reporting("pod-7", 1, ReportedStatus::Draining),
             reporting("pod-8", 1, ReportedStatus::Draining),
         ]))
         .unwrap();
-        // Then: presence alone is not availability — nobody there would take a new run
         assert!(!draining.is_available());
     }
 
     #[test]
     fn one_ready_instance_among_draining_ones_keeps_the_type_available() {
-        // Given: a fleet mid-rollout, one instance drained and one already restarted
         let mixed = RunnerType::hydrate(state(vec![
             reporting("pod-7", 1, ReportedStatus::Draining),
             reporting("pod-8", 1, ReportedStatus::Ready),
         ]))
         .unwrap();
-        // Then: a single taker is enough — availability is not unanimity
         assert!(mixed.is_available());
     }
 
@@ -218,9 +217,6 @@ mod tests {
 
     #[test]
     fn a_type_is_published_exactly_while_it_accepts_jobs() {
-        // Given: the three lifecycles a runner type can be stored in
-        // When: each is asked what the catalog should announce
-        // Then: a retired type has no entry, and the others announce their own lifecycle
         assert_eq!(
             with_lifecycle(RunnerTypeLifecycle::Active).published_lifecycle(),
             Some(RunnerTypeLifecycle::Active)
@@ -237,9 +233,7 @@ mod tests {
 
     #[test]
     fn two_instances_sharing_a_key_cannot_be_loaded() {
-        // Given: a stored fleet with the same instance key twice
         let result = RunnerType::hydrate(state(vec![live("pod-7", 1), live("pod-7", 2)]));
-        // Then: the collision is refused at load — the key is unique within the type
         assert_eq!(
             result.err(),
             Some(JobsError::CorruptState {
@@ -250,9 +244,7 @@ mod tests {
 
     #[test]
     fn an_instance_older_than_its_runner_type_cannot_be_loaded() {
-        // Given: a stored instance that connected before the type was registered
         let result = RunnerType::hydrate(state(vec![live("pod-7", -30)]));
-        // Then: the impossible ordering is refused
         assert_eq!(
             result.err(),
             Some(JobsError::CorruptState {
