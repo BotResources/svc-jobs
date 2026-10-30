@@ -372,7 +372,7 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     fixture.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_the_queue() {
     // Given: a CLAIM type with five free slots, a user capped at 2 and an uncapped one
     let fixture = JobsFixture::start().await;

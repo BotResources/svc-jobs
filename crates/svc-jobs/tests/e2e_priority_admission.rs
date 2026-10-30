@@ -343,7 +343,7 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
     fixture.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn children_wait_at_their_parents_effective_priority_whatever_they_request() {
     // Given: a service default maximum of 5, a parent at effective priority 5 executing on its own
     // type, and a CLAIM type its children target, on which an unrelated root at 4 already waits

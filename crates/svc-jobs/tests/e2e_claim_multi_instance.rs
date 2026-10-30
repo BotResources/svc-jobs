@@ -20,7 +20,7 @@ const JOBS: usize = 24;
 const LATE_JOBS: usize = 6;
 const CLAIM_WAIT: Duration = Duration::from_secs(3);
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
     let fixture = JobsFixture::start_cluster(2, Knobs::default()).await;
     let events = EventLog::open(fixture.fabric()).await;
@@ -74,6 +74,20 @@ async fn two_jobs_pods_never_reserve_one_job_to_two_claims() {
     )
     .await;
 
+    let lapsed = durable
+        .count_like(
+            "SELECT count(*) FROM runner_presence_sessions ps \
+             JOIN runner_instances ri ON ri.id = ps.instance_id \
+             JOIN runner_types rt ON rt.id = ri.runner_type_id \
+             WHERE rt.type_key = $1 AND ps.disconnected_at IS NOT NULL",
+            &runner_type,
+        )
+        .await;
+    assert_eq!(
+        lapsed, 0,
+        "presence of an instance was lost during the first claim round, so its run was \
+         reclaimed and retried: the test heartbeats were starved, not the claim path"
+    );
     let mut reserved: BTreeMap<String, (Uuid, Uuid)> = BTreeMap::new();
     let mut empty = Vec::new();
     for (instance, answer) in instances.iter().zip(&answers) {

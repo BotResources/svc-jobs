@@ -144,8 +144,8 @@ impl<'a> FakeRunner<'a> {
                     &current,
                     current_capacity(&capacity),
                 );
-                if store.put(key.clone(), value.into()).await.is_err() {
-                    return;
+                if let Err(error) = store.put(key.clone(), value.into()).await {
+                    eprintln!("presence refresh of {key} failed: {error}");
                 }
             }
         }));

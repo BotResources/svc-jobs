@@ -148,7 +148,7 @@ async fn the_next_free_slot_runs_the_higher_priority_job_first() {
     fixture.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_alternate_between_root_jobs_of_equal_priority() {
     // Given: two roots at the same priority waiting on a type nobody serves, the first one with
     // an intermediate child of its own
