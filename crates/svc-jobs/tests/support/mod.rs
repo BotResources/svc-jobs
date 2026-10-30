@@ -19,6 +19,7 @@ pub mod fixture;
 pub mod gesture;
 pub mod gql;
 pub mod infra;
+pub mod lineage;
 pub mod priority;
 pub mod producer;
 pub mod refusal;
