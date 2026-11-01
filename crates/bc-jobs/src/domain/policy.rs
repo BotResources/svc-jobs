@@ -4,6 +4,13 @@ use crate::domain::attempts::{AttemptNumber, MaxAttempts};
 use crate::domain::priority::Priority;
 use crate::error::JobsError;
 
+mod retention;
+
+pub use retention::{
+    DEFAULT_CANCELLED_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS,
+    MIN_RETENTION_DAYS, Retention,
+};
+
 const BASIS: i64 = 10_000;
 
 pub const DEFAULT_INLINE_PAYLOAD_MAX_BYTES: usize = 524_288;
@@ -42,6 +49,7 @@ pub struct ServiceLimits {
     default_max_priority: Priority,
     inline_payload_max_bytes: usize,
     saved_state_max_bytes: usize,
+    retention: Retention,
 }
 
 impl Default for ServiceLimits {
@@ -55,6 +63,7 @@ impl Default for ServiceLimits {
             default_max_priority: Priority::DEFAULT,
             inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
             saved_state_max_bytes: DEFAULT_SAVED_STATE_MAX_BYTES,
+            retention: Retention::default(),
         }
     }
 }
@@ -77,6 +86,7 @@ impl ServiceLimits {
             default_max_priority: Priority::DEFAULT,
             inline_payload_max_bytes: DEFAULT_INLINE_PAYLOAD_MAX_BYTES,
             saved_state_max_bytes: DEFAULT_SAVED_STATE_MAX_BYTES,
+            retention: Retention::default(),
         })
     }
 
@@ -96,6 +106,24 @@ impl ServiceLimits {
     pub fn with_saved_state_max_bytes(mut self, maximum: usize) -> Self {
         self.saved_state_max_bytes = maximum;
         self
+    }
+
+    #[must_use]
+    pub fn with_retention(mut self, retention: Retention) -> Self {
+        self.retention = retention;
+        self
+    }
+
+    pub fn retention(&self) -> Retention {
+        self.retention
+    }
+
+    pub fn tree_retention(&self) -> TimeDelta {
+        self.retention.tree()
+    }
+
+    pub fn cancelled_retention(&self) -> TimeDelta {
+        self.retention.cancelled()
     }
 
     pub fn saved_state_max_bytes(&self) -> usize {

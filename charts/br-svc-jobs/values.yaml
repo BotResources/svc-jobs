@@ -84,6 +84,14 @@ claims:
 savedState:
   maxBytes: 1048576
 
+# Retention. days: how long a finished Tree is kept after its last activity
+# (1 to 395). cancelledDays: how long the request data of a cancelled Job is
+# kept after the cancel (0 to 395, 0 = erased at once, never above days). The
+# service refuses to boot outside these bounds.
+retention:
+  days: 30
+  cancelledDays: 0
+
 # Generic escape hatch: extra environment entries rendered verbatim into the
 # container (list of {name, value} or any valid Kubernetes EnvVar). Use it for
 # the optional JOBS_* tuning knobs (retry, backstop, consumer and supervision

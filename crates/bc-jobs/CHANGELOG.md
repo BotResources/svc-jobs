@@ -8,6 +8,14 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.9.0 - 2026-11-01
+
+- `domain::policy::Retention`: the days a Tree is kept after its last activity
+  (1 to 395) and the days the request data of a cancelled Job is kept (0 to
+  395, never above the first). `ServiceLimits::with_retention`,
+  `ServiceLimits::retention`, `ServiceLimits::tree_retention` and
+  `ServiceLimits::cancelled_retention` carry them; the defaults are 30 and 0.
+
 ## 0.8.2 - 2026-11-01
 
 - `domain::mail::inbox::NoticeType::JobCancelled` and

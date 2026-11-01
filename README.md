@@ -440,6 +440,8 @@ failing job by job.
 | `JOBS_CLAIM_MAX_HELD` | `1024` | Claims a pod holds open at once; a claim beyond it is answered `busy` immediately. |
 | `JOBS_PAYLOAD_INLINE_MAX_BYTES` | `524288` | The largest inline payload a creation may carry (message, attachment names, types and contents together); above it the creation is rejected with `payload_too_large`. A larger payload is kept by Jobs or sent by reference. |
 | `JOBS_SAVED_STATE_MAX_BYTES` | `1048576` (1 MiB) | The largest saved state a Run may store for one agent; above it the save is refused with `state_too_large`. The chart value is `savedState.maxBytes`. `/graphql` has no body limit of its own, so this limit and the others of the gestures are what bound a request. |
+| `JOBS_RETENTION_DAYS` | `30` | Days a Tree is kept after its last activity. From `1` to `395` (13 months); there is no off value. A value outside the bounds, or one that is not a whole number, refuses the boot and names the setting. The chart value is `retention.days`. |
+| `JOBS_CANCELLED_RETENTION_DAYS` | `0` (at once) | Days the request data of a cancelled Job is kept after the cancel. From `0` to `395`, never above `JOBS_RETENTION_DAYS`; a value outside the bounds, above `JOBS_RETENTION_DAYS`, or not a whole number refuses the boot and names the setting. The chart value is `retention.cancelledDays`. |
 | `SCOPE_DECLARATION_ENABLED` | `true` | Declares the scope `jobs:runner` at boot and gates readiness on its acceptance. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |

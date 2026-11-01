@@ -10,6 +10,17 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.7.0 - 2026-11-01
+
+### Added
+
+- `JOBS_RETENTION_DAYS` (default `30`, from `1` to `395`) and
+  `JOBS_CANCELLED_RETENTION_DAYS` (default `0`, from `0` to `395`, never above
+  `JOBS_RETENTION_DAYS`). Jobs refuses to boot, naming the setting, when a value
+  is not a whole number, is outside its bounds, or when the cancelled retention
+  is above the retention. The chart values are `retention.days` and
+  `retention.cancelledDays`.
+
 ## 0.6.2 - 2026-11-01
 
 ### Fixed

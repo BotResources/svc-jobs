@@ -73,6 +73,10 @@ spec:
               value: {{ .Values.claims.maxHeld | quote }}
             - name: JOBS_SAVED_STATE_MAX_BYTES
               value: {{ .Values.savedState.maxBytes | quote }}
+            - name: JOBS_RETENTION_DAYS
+              value: {{ .Values.retention.days | quote }}
+            - name: JOBS_CANCELLED_RETENTION_DAYS
+              value: {{ .Values.retention.cancelledDays | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -27,5 +27,10 @@ default 72h). Instances of CLAIM runner types request their runs on
 jobs.claim.{runner_type} (core NATS request/reply): the runner credentials must
 be allowed to publish there, and svc-jobs to subscribe to jobs.claim.*.
 
+Retention: a finished Tree is kept {{ .Values.retention.days }} day(s) after its last activity
+(JOBS_RETENTION_DAYS, 1 to 395); the request data of a cancelled Job is kept
+{{ .Values.retention.cancelledDays }} day(s) after the cancel (JOBS_CANCELLED_RETENTION_DAYS, 0 to 395, never
+above the first). svc-jobs refuses to boot outside these bounds.
+
 The chart does NOT create Secrets. Provision them via your secret-management
 tool (ExternalSecrets, Sealed Secrets, kubectl, etc.).

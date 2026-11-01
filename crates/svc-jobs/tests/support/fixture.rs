@@ -29,6 +29,8 @@ pub struct Knobs {
     pub task_restart_initial_backoff_milliseconds: Option<u64>,
     pub task_restart_max_backoff_seconds: Option<u64>,
     pub presence_ttl: Duration,
+    pub retention_days: Option<String>,
+    pub cancelled_retention_days: Option<String>,
 }
 
 impl Default for Knobs {
@@ -49,6 +51,8 @@ impl Default for Knobs {
             task_restart_initial_backoff_milliseconds: None,
             task_restart_max_backoff_seconds: None,
             presence_ttl: infra::STEADY_PRESENCE_TTL,
+            retention_days: None,
+            cancelled_retention_days: None,
         }
     }
 }
@@ -145,6 +149,12 @@ impl JobsFixture {
 
     pub fn member(&self) -> &Passport {
         &self.member
+    }
+
+    pub fn database(&self) -> &E2eDatabase {
+        self.db
+            .as_ref()
+            .expect("the database is live until shutdown")
     }
 
     pub fn fabric(&self) -> &FabricTestNats {
