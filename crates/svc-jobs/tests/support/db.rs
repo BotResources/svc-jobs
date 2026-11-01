@@ -25,6 +25,28 @@ impl Durable {
             .get::<i64, _>(0)
     }
 
+    pub async fn holder_of_run(&self, run_id: Uuid) -> Option<String> {
+        sqlx::query_scalar(
+            "SELECT ri.instance_key FROM run_starts rs \
+             JOIN runner_instances ri ON ri.id = rs.instance_id WHERE rs.run_id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .expect("the holder of a run reads")
+    }
+
+    pub async fn start_id_of_run(&self, run_id: Uuid) -> Option<Uuid> {
+        sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT start_id::uuid FROM run_starts WHERE run_id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .expect("the start id of a run reads")
+        .flatten()
+    }
+
     pub async fn count_like(&self, sql: &str, pattern: &str) -> i64 {
         sqlx::query(sql)
             .bind(pattern)
@@ -115,6 +137,10 @@ pub const FINISHED_AGENTS_OF_RUN: &str =
 pub const SAVED_STATES_OF_RUN: &str = "SELECT count(*) FROM saved_states WHERE run_id = $1";
 pub const SAVED_STATE_AGENTS_OF_RUN: &str =
     "SELECT count(*) FROM saved_state_agents WHERE run_id = $1";
+pub const STARTS_OF_RUN: &str = "SELECT count(*) FROM run_starts WHERE run_id = $1";
+pub const STARTS_WITHOUT_START_ID_OF_RUN: &str =
+    "SELECT count(*) FROM run_starts WHERE run_id = $1 AND start_id IS NULL";
+pub const STARTS_UNDER_START_ID: &str = "SELECT count(*) FROM run_starts WHERE start_id = $1";
 pub const TERMINALS_OF_RUN: &str = "SELECT count(*) FROM run_terminals WHERE run_id = $1";
 pub const CURRENT_RUNS_OF_RUN: &str = "SELECT count(*) FROM current_runs WHERE run_id = $1";
 pub const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \

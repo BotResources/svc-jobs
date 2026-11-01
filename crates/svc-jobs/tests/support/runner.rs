@@ -87,6 +87,10 @@ impl<'a> FakeRunner<'a> {
         .await;
     }
 
+    pub async fn send_started(&self, trigger: &Value, start_id: Uuid) -> Value {
+        super::surface::started(self.nats, self, run_id(trigger), start_id).await
+    }
+
     pub async fn start_applied(&self, fixture: &JobsFixture, trigger: &Value) {
         self.start_run(trigger).await;
         let durable = Durable::open(&fixture.app_url()).await;

@@ -238,3 +238,48 @@ async fn a_request_of_another_wire_version_or_naming_an_unreadable_run_is_malfor
     }
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_registration_right_after_a_request_hold_never_finds_the_run_not_started() {
+    const RUNS: usize = 6;
+    let fixture = JobsFixture::start().await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let producer = Producer::new(fixture.fabric(), "projects");
+    let runner_type = wire::unique_runner_type("directory-request-hold");
+    let mut instance =
+        FakeRunner::new(fixture.nats(), &runner_type, "instance-a").declaring_capacity(RUNS as u32);
+    instance.connect().await;
+    dispatch::await_live_instances(&client, admin, &runner_type, 1, LONG).await;
+    for _ in 0..RUNS {
+        producer
+            .declare_v2(&JobDeclaration::new(&runner_type))
+            .await;
+    }
+    let mut triggers = Vec::new();
+    for _ in 0..RUNS {
+        triggers.push(instance.next_trigger(LONG).await);
+    }
+
+    for trigger in &triggers {
+        let before = surface::register(
+            fixture.nats(),
+            &instance,
+            runner::run_id(trigger),
+            &[Agent::with_inbox()],
+        )
+        .await;
+        assert_eq!(surface::reason(&before), "run_not_started");
+        let held = instance.send_started(trigger, Uuid::now_v7()).await;
+        assert_eq!(held["accepted"], true, "{held}");
+        let after = surface::register(
+            fixture.nats(),
+            &instance,
+            runner::run_id(trigger),
+            &[Agent::with_inbox()],
+        )
+        .await;
+        assert_eq!(after["accepted"], true, "{after}");
+    }
+    fixture.shutdown().await;
+}
