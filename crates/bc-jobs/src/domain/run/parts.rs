@@ -256,6 +256,21 @@ mod tests {
     }
 
     #[test]
+    fn a_run_start_stored_before_the_start_id_existed_still_loads_without_one() {
+        let instance = crate::fixtures::instance();
+        let mut stored = serde_json::to_value(RunStart::new(instance.clone(), at())).unwrap();
+        assert!(stored.get("start_id").is_none());
+        let loaded: RunStart = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(loaded.start_id(), None);
+        let start = crate::fixtures::start_id();
+        stored =
+            serde_json::to_value(RunStart::new(instance, at()).with_start_id(Some(start))).unwrap();
+        assert!(stored.get("start_id").is_some());
+        let loaded: RunStart = serde_json::from_value(stored).unwrap();
+        assert_eq!(loaded.start_id(), Some(start));
+    }
+
+    #[test]
     fn a_failed_terminal_without_its_report_cannot_be_loaded() {
         let result = RunTerminal::hydrate(RunTerminalKind::Failed, at(), None, None);
         assert_eq!(

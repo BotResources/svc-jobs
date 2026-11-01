@@ -3,6 +3,7 @@ use crate::domain::ids::{RunId, StartId};
 use crate::domain::job::Job;
 use crate::domain::run::parts::RunnerInstanceReference;
 use crate::domain::run::start_refusal::StartRefusal;
+use crate::domain::run::start_standing::StartStanding;
 use crate::event::job::JobEvent;
 use crate::event::job_facts::RunStarted;
 
@@ -25,24 +26,25 @@ impl Job {
         if fact.instance.runner_type() != self.runner_type() {
             return Err(StartRefusal::RunUnknown);
         }
-        if self.is_terminal() || run.is_terminal() {
+        if self.is_terminal() {
             return Err(StartRefusal::RunNotPending);
         }
-        if let Some(start) = run.start() {
-            if start.instance() == &fact.instance && start.start_id() == Some(fact.start_id) {
-                return Ok(CommandResult::nothing_happened(
-                    CommandWarning::FactAlreadyRecorded {
-                        fact: "RunStartedRequest",
-                    },
-                ));
+        match run.start_standing() {
+            StartStanding::Ended => return Err(StartRefusal::RunNotPending),
+            StartStanding::HeldBy(start) => {
+                if start.instance() == &fact.instance && start.start_id() == Some(fact.start_id) {
+                    return Ok(CommandResult::nothing_happened(
+                        CommandWarning::FactAlreadyRecorded {
+                            fact: "RunStartedRequest",
+                        },
+                    ));
+                }
+                return Err(StartRefusal::RunHeld);
             }
-            return Err(StartRefusal::RunHeld);
-        }
-        if run
-            .reservation()
-            .is_some_and(|reservation| reservation.instance() != &fact.instance)
-        {
-            return Err(StartRefusal::RunReservedElsewhere);
+            StartStanding::ReservedFor(instance) if instance != &fact.instance => {
+                return Err(StartRefusal::RunReservedElsewhere);
+            }
+            StartStanding::ReservedFor(_) | StartStanding::Pending => {}
         }
         if !fact.instance_present {
             return Err(StartRefusal::InstanceUnknown);

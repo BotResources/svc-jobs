@@ -7,6 +7,7 @@ use crate::domain::keys::StepLabel;
 use crate::domain::run::Run;
 use crate::domain::run::parts::RunnerInstanceReference;
 use crate::domain::run::plan::{DeclarationNumber, RunPlan, RunPlanItem};
+use crate::domain::run::start_standing::StartStanding;
 use crate::domain::run::step::{Step, StepIndex};
 use crate::error::JobsError;
 use crate::event::job::JobEvent;
@@ -40,15 +41,15 @@ impl Job {
         fact: &'static str,
         run: &Run,
     ) -> Option<JobCommandResult> {
-        if run.is_terminal() {
-            return Some(CommandResult::nothing_happened(
-                CommandWarning::FactDiscardedOnTerminalRun {
-                    fact,
-                    run_status: run.status().as_db_str(),
-                },
-            ));
-        }
-        None
+        matches!(run.start_standing(), StartStanding::Ended)
+            .then(|| Self::settled_discard(fact, run))
+    }
+
+    fn settled_discard(fact: &'static str, run: &Run) -> JobCommandResult {
+        CommandResult::nothing_happened(CommandWarning::FactDiscardedOnTerminalRun {
+            fact,
+            run_status: run.status().as_db_str(),
+        })
     }
 
     pub(crate) fn discard_on_terminal_job(&self, fact: &'static str) -> Option<JobCommandResult> {
@@ -65,8 +66,9 @@ impl Job {
             return Ok(discarded);
         }
         let run = self.find_run(fact.run_id)?;
-        if let Some(discarded) = self.discard_settled("RunStarted", run) {
-            return Ok(discarded);
+        let standing = run.start_standing();
+        if matches!(standing, StartStanding::Ended) {
+            return Ok(Self::settled_discard("RunStarted", run));
         }
         if fact.instance.runner_type() != self.runner_type() {
             return Err(JobsError::RunnerTypeMismatch {
@@ -74,18 +76,18 @@ impl Job {
                 claimed: fact.instance.runner_type().as_str().to_owned(),
             });
         }
-        if run.start().is_some() {
-            return Ok(CommandResult::nothing_happened(
-                CommandWarning::FactAlreadyRecorded { fact: "RunStarted" },
-            ));
-        }
-        if run
-            .reservation()
-            .is_some_and(|reservation| reservation.instance() != &fact.instance)
-        {
-            return Ok(CommandResult::nothing_happened(
-                CommandWarning::FactDiscardedReservedElsewhere { fact: "RunStarted" },
-            ));
+        match standing {
+            StartStanding::HeldBy(_) => {
+                return Ok(CommandResult::nothing_happened(
+                    CommandWarning::FactAlreadyRecorded { fact: "RunStarted" },
+                ));
+            }
+            StartStanding::ReservedFor(instance) if instance != &fact.instance => {
+                return Ok(CommandResult::nothing_happened(
+                    CommandWarning::FactDiscardedReservedElsewhere { fact: "RunStarted" },
+                ));
+            }
+            _ => {}
         }
         Ok(CommandResult::from_event(JobEvent::RunStarted(
             RunStarted {
@@ -166,5 +168,7 @@ impl Job {
     }
 }
 
+#[cfg(test)]
+mod started_tests;
 #[cfg(test)]
 mod tests;

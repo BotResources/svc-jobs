@@ -1,3 +1,5 @@
+use crate::domain::unreadable_request::UNREADABLE_REQUEST;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartRefusal {
     RunUnknown,
@@ -29,7 +31,7 @@ impl StartRefusal {
             Self::RunHeld => "The run is held by an instance under another start.",
             Self::RunReservedElsewhere => "A claim reserved the run for another instance.",
             Self::RunNotPending => "The run has ended.",
-            Self::Malformed => "Jobs cannot read the request.",
+            Self::Malformed => UNREADABLE_REQUEST,
         }
     }
 }
