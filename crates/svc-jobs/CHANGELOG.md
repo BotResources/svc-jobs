@@ -30,7 +30,8 @@ to `## Unreleased`).
   presence yet; the same request is accepted once the presence is live, and a
   final refusal always wins over it), `run_held`, `run_reserved_elsewhere`,
   `run_not_pending` (the Run or its Job has ended, also the repeat of the start
-  id after the end).
+  id after the end), `malformed` (the request cannot be read: also a wrong
+  wire version or a start id that is not a UUIDv7).
 - The start id is stored with the hold (`run_starts.start_id`, migration
   `0010_run_start_id.sql`); a Run held by the status-stream started fact has
   none.
@@ -39,7 +40,8 @@ to `## Unreleased`).
 
 - The runner surface answers `register_agents`, `list_agents`, `mark_read` and
   `started` without waiting for a claim slot: a request that waits for its Tree
-  no longer delays the others.
+  no longer delays the others. The surface is no longer bounded in flight by
+  `JOBS_CLAIM_MAX_HELD`.
 - A started fact of the status stream for a Run that a claim reserved for
   another Instance is acknowledged and discarded; a
   started request with a start id for a Run held by that fact is refused

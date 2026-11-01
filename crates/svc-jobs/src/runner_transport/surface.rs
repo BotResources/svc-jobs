@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use bc_jobs::domain::unreadable_request::UNREADABLE_REQUEST;
 use contract_jobs::runner_surface as wire;
 use futures::StreamExt;
 use serde::Serialize;
@@ -81,17 +82,17 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
     if let Some(runner_type) = subject.strip_prefix(wire::LIST_AGENTS_PREFIX) {
         let reply = match decode::<wire::ListAgents>(payload) {
             Some(request) => directory::list_agents(jobs, runner_type, request).await?,
-            None => wire::ListAgentsReply::refused(wire::SurfaceReason::Malformed, MALFORMED_WORDS),
+            None => {
+                wire::ListAgentsReply::refused(wire::SurfaceReason::Malformed, UNREADABLE_REQUEST)
+            }
         };
         return Some(encode(&reply));
     }
     Some(encode(&malformed()))
 }
 
-const MALFORMED_WORDS: &str = "Jobs cannot read the request.";
-
 fn malformed() -> wire::SurfaceReply {
-    wire::SurfaceReply::refused(wire::SurfaceReason::Malformed, MALFORMED_WORDS)
+    wire::SurfaceReply::refused(wire::SurfaceReason::Malformed, UNREADABLE_REQUEST)
 }
 
 fn decode<T: serde::de::DeserializeOwned>(payload: &[u8]) -> Option<T> {

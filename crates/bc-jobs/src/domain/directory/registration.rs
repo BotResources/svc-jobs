@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::domain::directory::{AgentId, AgentState};
 use crate::domain::ids::{JobId, RunId};
+use crate::domain::unreadable_request::UNREADABLE_REQUEST;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunStanding {
@@ -56,7 +57,7 @@ impl RegistrationRefusal {
                 "An agent id of the request belongs to an agent of another run that has not finished."
             }
             Self::AgentNamedTwice => "The request names the same agent twice.",
-            Self::Malformed => "Jobs cannot read the request.",
+            Self::Malformed => UNREADABLE_REQUEST,
         }
     }
 }
