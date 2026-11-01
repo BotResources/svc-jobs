@@ -115,6 +115,9 @@ pub(super) fn spawn_process(
     if let Some(days) = knobs.cancelled_retention_days.as_deref() {
         env.push(("JOBS_CANCELLED_RETENTION_DAYS", days));
     }
+    for (name, value) in &knobs.chart_env {
+        env.push((name.as_str(), value.as_str()));
+    }
     if let Some(initial) = restart_initial.as_deref() {
         env.push(("JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS", initial));
     }

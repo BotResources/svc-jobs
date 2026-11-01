@@ -1,7 +1,7 @@
 mod support;
 
 use support::fixture::{JobsFixture, Knobs};
-use support::spawn::attempt_boot;
+use support::spawn::{attempt_boot, spawn_instance};
 
 fn retention(days: Option<&str>, cancelled: Option<&str>) -> Knobs {
     Knobs {
@@ -11,14 +11,10 @@ fn retention(days: Option<&str>, cancelled: Option<&str>) -> Knobs {
     }
 }
 
-async fn assert_boots(fixture: &JobsFixture, knobs: Knobs, case: &str) {
-    let attempt = attempt_boot(fixture.database(), &fixture.fabric().url(), &knobs).await;
-    assert!(
-        attempt.outcome.is_ready(),
-        "{case}: a value inside the bounds boots ({:?})\nlogs:\n{}",
-        attempt.outcome,
-        attempt.logs,
-    );
+async fn assert_boots(fixture: &JobsFixture, knobs: Knobs) {
+    let (service, _base_url) =
+        spawn_instance(fixture.database(), &fixture.fabric().url(), &knobs).await;
+    service.shutdown().await;
 }
 
 async fn assert_refused(fixture: &JobsFixture, knobs: Knobs, case: &str, key: &str, value: &str) {
@@ -42,31 +38,11 @@ async fn assert_refused(fixture: &JobsFixture, knobs: Knobs, case: &str, key: &s
 async fn the_retention_settings_have_defaults_and_bounds() {
     let fixture = JobsFixture::start().await;
 
-    assert_boots(&fixture, retention(None, None), "no retention declared").await;
-    assert_boots(
-        &fixture,
-        retention(Some("1"), Some("0")),
-        "lowest retention",
-    )
-    .await;
-    assert_boots(
-        &fixture,
-        retention(Some("1"), Some("1")),
-        "cancelled equals retention at 1",
-    )
-    .await;
-    assert_boots(
-        &fixture,
-        retention(Some("395"), Some("395")),
-        "highest retention",
-    )
-    .await;
-    assert_boots(
-        &fixture,
-        retention(None, Some("30")),
-        "cancelled equals the default retention",
-    )
-    .await;
+    assert_boots(&fixture, retention(None, None)).await;
+    assert_boots(&fixture, retention(Some("1"), Some("0"))).await;
+    assert_boots(&fixture, retention(Some("1"), Some("1"))).await;
+    assert_boots(&fixture, retention(Some("395"), Some("395"))).await;
+    assert_boots(&fixture, retention(None, Some("30"))).await;
 
     let retention_key = "JOBS_RETENTION_DAYS";
     for value in ["0", "-1", "396", "abc"] {
