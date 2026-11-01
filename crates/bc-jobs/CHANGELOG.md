@@ -15,6 +15,9 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   395, never above the first). `ServiceLimits::with_retention`,
   `ServiceLimits::retention`, `ServiceLimits::tree_retention` and
   `ServiceLimits::cancelled_retention` carry them; the defaults are 30 and 0.
+  The bounds and defaults are public as `domain::policy::MIN_RETENTION_DAYS`,
+  `MAX_RETENTION_DAYS`, `DEFAULT_RETENTION_DAYS` and
+  `DEFAULT_CANCELLED_RETENTION_DAYS`.
 
 ## 0.8.2 - 2026-11-01
 
