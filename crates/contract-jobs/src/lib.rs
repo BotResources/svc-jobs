@@ -38,6 +38,7 @@ pub const CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE: &str =
     "jobs.runner.register_agents.{runner_type}";
 pub const CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE: &str = "jobs.runner.mark_read.{runner_type}";
 pub const CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE: &str = "jobs.runner.list_agents.{runner_type}";
+pub const CMD_JOBS_RUNNER_STARTED_RUNNER_TYPE: &str = "jobs.runner.started.{runner_type}";
 
 pub const EVT_JOB_CANCELLED_V1: &str = "integration.evt.jobs.job.cancelled.v1";
 pub const EVT_JOB_COMPLETED_V1: &str = "integration.evt.jobs.job.completed.v1";
@@ -58,6 +59,7 @@ pub const EVT_JOB_QUEUED_V2: &str = "integration.evt.jobs.job.queued.v2";
 pub const EVT_JOB_STARTED_V2: &str = "integration.evt.jobs.job.started.v2";
 pub const EVT_JOB_STEP_STARTED_V2: &str = "integration.evt.jobs.job.step_started.v2";
 pub const EVT_RUN_ITEM_ARRIVED_V1: &str = "integration.evt.jobs.run.item_arrived.v1";
+pub const EVT_RUN_ITEM_ARRIVED_V2: &str = "integration.evt.jobs.run.item_arrived.v2";
 pub const EVT_JOBS_LOG_RUNNER_TYPE: &str = "jobs.log.{runner_type}";
 pub const EVT_JOBS_STATUS_RUNNER_TYPE_COMPLETED: &str = "jobs.status.{runner_type}.completed";
 pub const EVT_JOBS_STATUS_RUNNER_TYPE_FAILED: &str = "jobs.status.{runner_type}.failed";
@@ -73,6 +75,15 @@ pub const KV_JOBS_DISPATCH_MODE: &str = "jobs.dispatch_mode.{runner_type}";
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_item_arrived;
+
+#[cfg(test)]
+mod tests_offers;
+
+#[cfg(test)]
+mod tests_runner;
 
 #[cfg(test)]
 mod tests_v2_claim;
