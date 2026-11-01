@@ -5,7 +5,7 @@ use br_core_events::EventMetadata;
 use br_core_integration::IntegrationEvent;
 use br_util_nats_fabric::{OutboxRecord, stage};
 use chrono::{DateTime, Utc};
-use contract_jobs::event_v2::{EVENT_TYPE_ITEM_ARRIVED, ItemKind as WireKind, RunItemArrived};
+use contract_jobs::event_v2::{EVENT_TYPE_ITEM_ARRIVED, ItemKindV1 as WireKind, RunItemArrived};
 use contract_jobs::evt_run_item_arrived_v1_coords;
 use sqlx::PgConnection;
 use uuid::Uuid;

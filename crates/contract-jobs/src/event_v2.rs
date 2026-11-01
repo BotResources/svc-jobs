@@ -158,13 +158,21 @@ pub enum ItemKind {
     MailNotice,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ItemKindV1 {
+    Mail,
+    CcNotice,
+    Notice,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunItemArrived {
     pub run_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<Uuid>,
     pub item_id: Uuid,
-    pub item_kind: ItemKind,
+    pub item_kind: ItemKindV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

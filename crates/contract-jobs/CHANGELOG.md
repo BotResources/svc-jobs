@@ -9,17 +9,21 @@ every consumer, so each version is deliberate. Release headings are plain
 
 Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant, type or field
 of contract-jobs 0.7.0 is removed or renamed; the obsolete offers keep their constants
-and types. The only change to the type of an obsolete offer is that `RunItemArrived`
-(version 1) now reads `MAIL_NOTICE` through the shared `ItemKind`.
+and types. The only change to the type of an obsolete offer is that the item kind of
+`RunItemArrived` (version 1) is the new `event_v2::ItemKindV1`; on the wire the doorbell
+of version 1 is unchanged.
 
 - `integration.evt.jobs.run.item_arrived.v2`: `EVT_RUN_ITEM_ARRIVED_V2`,
-  `event_v2::RunItemArrivedV2` (same fields as `RunItemArrived`; the run, the item id
-  and the item kind are required) and, with the `integration` feature,
+  `event_v2::RunItemArrivedV2` (same fields as `RunItemArrived`, with the four-word `ItemKind`; the run,
+  the item id and the item kind are required) and, with the `integration` feature,
   `evt_run_item_arrived_v2_coords()` (aggregate `run`). The integration builders are now
   twelve commands and twenty events.
 - `event_v2::ItemKind` gains `MailNotice` (`MAIL_NOTICE`). The kind stays a closed set of
-  four; `RunItemArrived` (version 1) now also reads `MAIL_NOTICE`, although Jobs does not
-  announce a mail notice on version 1.
+  four, used by `RunItemArrivedV2`.
+- `event_v2::ItemKindV1` is new: the closed set of the three kinds of the doorbell of
+  version 1 (`Mail`, `CcNotice`, `Notice`; `MAIL`, `CC_NOTICE`, `NOTICE`).
+  `RunItemArrived` (version 1) carries it as `item_kind` and reads only these three words:
+  `MAIL_NOTICE` does not deserialize on version 1.
 - `jobs.runner.started.{runner_type}`: `CMD_JOBS_RUNNER_STARTED_RUNNER_TYPE`,
   `runner_surface::started_subject`, `STARTED_FILTER`, `STARTED_PREFIX` and
   `runner_surface::StartedRequest { version, run_id, instance_key, start_id }`. A missing
@@ -31,7 +35,9 @@ and types. The only change to the type of an obsolete offer is that `RunItemArri
   and `ListAgentsReply`. A reason outside the set still deserializes as an unknown word.
 - Breaking for exhaustive matches on `ItemKind` and `SurfaceReason`: a `match` on either
   needs arms for the new values (`MailNotice`; `InstanceUnknown`, `RunHeld`,
-  `RunReservedElsewhere`, `RunNotPending`). Consumers move to 0.8.0 together.
+  `RunReservedElsewhere`, `RunNotPending`). Breaking too for code that builds or reads
+  the `item_kind` of `RunItemArrived` (version 1) as an `ItemKind`: the field is now an
+  `ItemKindV1`. Consumers move to 0.8.0 together.
 
 ## 0.7.0 - 2026-10-30
 
