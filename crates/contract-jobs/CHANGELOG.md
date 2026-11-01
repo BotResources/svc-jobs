@@ -7,8 +7,8 @@ every consumer, so each version is deliberate. Release headings are plain
 
 ## 0.8.0 - 2026-11-01
 
-Implements the offers of Jobs 0.7.0 (50 offers). Every subject, payload and
-constant of contract-jobs 0.7.0 is unchanged; the obsolete offers keep their constants
+Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant or field of
+contract-jobs 0.7.0 is removed or renamed; the obsolete offers keep their constants
 and types.
 
 - `integration.evt.jobs.run.item_arrived.v2`: `EVT_RUN_ITEM_ARRIVED_V2`,

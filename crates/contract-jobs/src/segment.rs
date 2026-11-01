@@ -109,6 +109,8 @@ mod tests {
     fn a_segment_carrying_a_wildcard_is_refused() {
         assert!(SubjectSegment::runner_type("worker-*").is_err());
         assert!(SubjectSegment::runner_type(">").is_err());
+        assert!(SubjectSegment::runner_type("*").is_err());
+        assert!(SubjectSegment::runner_type("a b").is_err());
     }
 
     #[test]

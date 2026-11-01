@@ -77,6 +77,9 @@ pub const KV_JOBS_DISPATCH_MODE: &str = "jobs.dispatch_mode.{runner_type}";
 mod tests;
 
 #[cfg(test)]
+mod tests_filters;
+
+#[cfg(test)]
 mod tests_item_arrived;
 
 #[cfg(test)]

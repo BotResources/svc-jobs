@@ -88,13 +88,6 @@ fn the_four_requests_have_each_a_filter_and_a_prefix_that_match_their_subject() 
 }
 
 #[test]
-fn a_runner_type_that_could_widen_the_started_subject_is_refused_before_it_is_rendered() {
-    for text in ["a.b", "*", ">", "a b", ""] {
-        assert!(SubjectSegment::runner_type(text).is_err(), "'{text}'");
-    }
-}
-
-#[test]
 fn a_registration_without_a_declared_restart_reads_as_not_restartable() {
     let agent: AgentDeclaration = serde_json::from_value(json!({
         "agent_id": Uuid::nil().to_string(),

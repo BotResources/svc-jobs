@@ -133,11 +133,38 @@ fn the_fifty_offers_of_jobs_0_7_each_have_their_constant() {
 }
 
 #[test]
-fn the_fifty_offers_are_fifty_distinct_names() {
+fn no_two_subjects_prefixes_filters_streams_or_buckets_share_a_name() {
+    use runner::*;
+    use runner_surface::*;
     let mut names: Vec<&str> = OFFERS.iter().map(|(offer, _)| *offer).collect();
+    assert_eq!(names.len(), 50);
+    names.extend([
+        TRIGGER_FILTER,
+        CLAIM_FILTER,
+        CLAIM_V2_FILTER,
+        STATUS_FILTER,
+        LOG_FILTER,
+        REGISTER_AGENTS_FILTER,
+        MARK_READ_FILTER,
+        LIST_AGENTS_FILTER,
+        STARTED_FILTER,
+        REGISTER_AGENTS_PREFIX,
+        MARK_READ_PREFIX,
+        LIST_AGENTS_PREFIX,
+        STARTED_PREFIX,
+        dispatch_mode::DISPATCH_MODE_PREFIX,
+        catalog::RUNNER_TYPE_PREFIX,
+        TRIGGER_STREAM,
+        STATUS_STREAM,
+        LOG_STREAM,
+        CANCEL_BUCKET,
+        PRESENCE_BUCKET,
+    ]);
+    let total = names.len();
+    assert!(names.iter().all(|name| !name.is_empty()));
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 50);
+    assert_eq!(names.len(), total);
 }
 
 #[test]
@@ -148,15 +175,6 @@ fn the_dispatch_mode_offer_has_its_constant_prefix_and_key() {
         "jobs.dispatch_mode.analyst"
     );
     assert_eq!(dispatch_mode::DISPATCH_MODE_PREFIX, "jobs.dispatch_mode.");
-}
-
-#[test]
-fn the_stream_filters_keep_their_scopes() {
-    assert_eq!(runner::TRIGGER_FILTER, "jobs.trigger.>");
-    assert_eq!(runner::CLAIM_FILTER, "jobs.claim.*");
-    assert_eq!(runner::CLAIM_V2_FILTER, "jobs.claim.v2.*");
-    assert_eq!(runner::STATUS_FILTER, "jobs.status.>");
-    assert_eq!(runner::LOG_FILTER, "jobs.log.>");
 }
 
 #[test]
