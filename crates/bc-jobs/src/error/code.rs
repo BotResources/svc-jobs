@@ -59,7 +59,6 @@ impl JobsError {
             Self::RunNotStarted { .. } => "run_not_started",
             Self::RunWithinMaxDuration { .. } => "run_within_max_duration",
             Self::RunNotReserved { .. } => "run_not_reserved",
-            Self::RunReservedElsewhere { .. } => "run_reserved_elsewhere",
             Self::ReservationWithinDelay { .. } => "reservation_within_delay",
             Self::TriggerNotStranded { .. } => "trigger_not_stranded",
             Self::RunnerTypeMismatch { .. } => "runner_type_mismatch",

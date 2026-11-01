@@ -135,9 +135,6 @@ pub enum JobsError {
     RunNotReserved {
         run_id: Uuid,
     },
-    RunReservedElsewhere {
-        run_id: Uuid,
-    },
     ReservationWithinDelay {
         run_id: Uuid,
     },

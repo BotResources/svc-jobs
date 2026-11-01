@@ -81,7 +81,6 @@ impl JobsError {
             | Self::RunNotStarted { run_id }
             | Self::RunWithinMaxDuration { run_id }
             | Self::RunNotReserved { run_id }
-            | Self::RunReservedElsewhere { run_id }
             | Self::ReservationWithinDelay { run_id }
             | Self::TriggerNotStranded { run_id } => json!({ "runId": run_id }),
             Self::RunnerTypeMismatch { expected, claimed } => {

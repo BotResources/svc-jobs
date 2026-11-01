@@ -104,7 +104,6 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::NotClaimMode { .. }
         | JobsError::NotPushMode { .. }
         | JobsError::RunNotReserved { .. }
-        | JobsError::RunReservedElsewhere { .. }
         | JobsError::ReservationWithinDelay { .. }
         | JobsError::TriggerNotStranded { .. }
         | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),

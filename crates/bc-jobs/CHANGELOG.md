@@ -19,8 +19,7 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   existed).
 - `Job::record_run_started` (status-stream fact) now discards a Run reserved
   for another Instance as `CommandWarning::FactDiscardedReservedElsewhere`
-  instead of returning `JobsError::RunReservedElsewhere`, which no command
-  returns any more.
+  instead of returning an error.
 
 - `domain::policy::Retention`: the days a Tree is kept after its last activity
   (1 to 395) and the days the request data of a cancelled Job is kept (0 to
