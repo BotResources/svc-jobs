@@ -41,7 +41,7 @@ to `## Unreleased`).
   `started` without waiting for a claim slot: a request that waits for its Tree
   no longer delays the others.
 - A started fact of the status stream for a Run that a claim reserved for
-  another Instance is acknowledged and discarded without an error log; a
+  another Instance is acknowledged and discarded; a
   started request with a start id for a Run held by that fact is refused
   `run_held`.
 
