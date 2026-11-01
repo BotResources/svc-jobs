@@ -5,6 +5,7 @@ pub mod broker;
 pub mod call_notices;
 pub mod calls;
 pub mod catalog;
+pub mod chart;
 pub mod claim;
 pub mod clock;
 pub mod codes;

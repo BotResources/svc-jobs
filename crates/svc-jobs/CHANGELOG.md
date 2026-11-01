@@ -45,6 +45,14 @@ to `## Unreleased`).
   started request with a start id for a Run held by that fact is refused
   `run_held`.
 
+### Fixed
+
+- The chart renders every integer setting as a plain integer. An integer of one
+  million or more (for example `savedState.maxBytes` at its default of
+  `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
+  in exponent form, for example `1.048576e+06`, and Jobs refused to boot with
+  it.
+
 ## 0.6.2 - 2026-11-01
 
 ### Fixed

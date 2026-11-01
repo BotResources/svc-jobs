@@ -95,6 +95,9 @@ jobs:
       - name: helm template dry-run
         run: helm template ci charts/br-svc-jobs --debug > /dev/null
 
+      - name: chart integer env values render as plain integers
+        run: scripts/check-chart-env.sh
+
   supply-chain:
     name: supply chain (audit + deny + machete)
     needs: fmt

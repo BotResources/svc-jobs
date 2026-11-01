@@ -31,6 +31,7 @@ pub struct Knobs {
     pub presence_ttl: Duration,
     pub retention_days: Option<String>,
     pub cancelled_retention_days: Option<String>,
+    pub chart_env: Vec<(String, String)>,
 }
 
 impl Default for Knobs {
@@ -53,6 +54,7 @@ impl Default for Knobs {
             presence_ttl: infra::STEADY_PRESENCE_TTL,
             retention_days: None,
             cancelled_retention_days: None,
+            chart_env: Vec::new(),
         }
     }
 }

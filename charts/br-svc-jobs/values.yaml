@@ -84,10 +84,6 @@ claims:
 savedState:
   maxBytes: 1048576
 
-# Retention. days: how long a finished Tree is kept after its last activity
-# (1 to 395). cancelledDays: how long the request data of a cancelled Job is
-# kept after the cancel (0 to 395, 0 = erased at once, never above days). The
-# service refuses to boot outside these bounds.
 retention:
   days: 30
   cancelledDays: 0
