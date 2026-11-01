@@ -275,6 +275,7 @@ jobs:
               - 'crates/svc-jobs/**'
               - 'crates/infra/**'
               - 'crates/shared-kernel/**'
+              - 'charts/br-svc-jobs/**'
               - 'Cargo.toml'
               - 'scripts/provision-e2e-infra.sh'
               - '.github/workflows/ci.yml'
@@ -352,6 +353,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
 
       - name: provision e2e infra (postgres + nats-server)
         run: bash scripts/provision-e2e-infra.sh
