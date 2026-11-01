@@ -101,18 +101,27 @@ async fn the_status_stream_start_holds_the_run_without_a_start_id_and_a_request_
 
 #[tokio::test]
 async fn a_status_stream_start_not_yet_applied_holds_the_run_before_a_request_is_judged() {
+    const RUNS: usize = 12;
     let fixture = JobsFixture::start().await;
     let scene = Scene::open(&fixture, "started-catch-up").await;
-    let mut legacy = scene.instance("instance-k", 1);
+    let mut legacy = scene.instance("instance-k", RUNS as u32);
     legacy.connect().await;
     scene.live(1).await;
-    scene.declare().await;
-    let trigger = legacy.next_trigger(LONG).await;
+    for _ in 0..RUNS {
+        scene.declare().await;
+    }
+    let mut triggers = Vec::new();
+    for _ in 0..RUNS {
+        triggers.push(legacy.next_trigger(LONG).await);
+    }
 
-    legacy.start_run(&trigger).await;
-    let reply = legacy.send_started(&trigger, Uuid::now_v7()).await;
-
-    refused(&reply, "run_held", &trigger);
+    for trigger in &triggers {
+        legacy.start_run(trigger).await;
+    }
+    for trigger in triggers.iter().rev() {
+        let reply = legacy.send_started(trigger, Uuid::now_v7()).await;
+        refused(&reply, "run_held", trigger);
+    }
     fixture.shutdown().await;
 }
 

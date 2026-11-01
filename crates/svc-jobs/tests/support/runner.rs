@@ -170,11 +170,17 @@ impl<'a> FakeRunner<'a> {
 
     pub async fn publish_status(&self, fact: &str, payload: Value) {
         self.nats
-            .publish_raw(
-                &wire::status_subject(&self.runner_type, fact),
-                serde_json::to_vec(&payload).expect("a status fact serializes"),
+            .jetstream()
+            .publish(
+                wire::status_subject(&self.runner_type, fact),
+                serde_json::to_vec(&payload)
+                    .expect("a status fact serializes")
+                    .into(),
             )
-            .await;
+            .await
+            .expect("the status fact is published")
+            .await
+            .expect("the status stream acknowledges the status fact");
     }
 
     pub async fn log_line(

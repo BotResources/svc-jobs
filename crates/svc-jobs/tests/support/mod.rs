@@ -17,6 +17,7 @@ pub mod dispatch;
 pub mod docs;
 pub mod events;
 pub mod fixture;
+pub mod footprint;
 pub mod gesture;
 pub mod gql;
 pub mod infra;
