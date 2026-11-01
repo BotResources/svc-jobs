@@ -31,6 +31,10 @@ pub fn plain_message(reason_code: &str) -> String {
     words.to_owned()
 }
 
+pub fn cancelled_message(job_id: uuid::Uuid) -> String {
+    format!("Job {job_id} was cancelled, so it gives no answer.")
+}
+
 pub fn failure_message(
     job_id: uuid::Uuid,
     cause: &str,

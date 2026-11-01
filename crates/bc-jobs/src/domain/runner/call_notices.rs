@@ -12,6 +12,7 @@ pub enum NoticePlan {
     Started,
     RunCompleted { run_id: RunId },
     JobFailed,
+    JobCancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,10 +47,12 @@ impl CallNotices {
             RunInboxEffect::RunStarted if background => vec![NoticePlan::Started],
             RunInboxEffect::RunCompleted { run_id } => vec![NoticePlan::RunCompleted { run_id }],
             RunInboxEffect::JobFailed => vec![NoticePlan::JobFailed],
+            RunInboxEffect::JobCancelled if !background => vec![NoticePlan::JobCancelled],
             RunInboxEffect::Untouched
             | RunInboxEffect::JobQueued
             | RunInboxEffect::RetryScheduled
             | RunInboxEffect::RunStarted
+            | RunInboxEffect::JobCancelled
             | RunInboxEffect::RunFailed
             | RunInboxEffect::RunCancelled { .. } => vec![],
         }
@@ -61,7 +64,9 @@ mod tests {
     use super::*;
     use crate::domain::job::resolution::JobFailureCause;
     use crate::domain::keys::ReasonCode;
-    use crate::event::job_facts::{JobFailed, RunCancelled, RunCompleted, RunStarted};
+    use crate::event::job_facts::{
+        JobCancelled, JobFailed, RunCancelled, RunCompleted, RunStarted,
+    };
     use crate::event::run_inbox::samples::every_kind_of_event;
     use crate::fixtures::{instance, job_id, resolution_id, run_id};
     use uuid::Uuid;
@@ -109,6 +114,14 @@ mod tests {
         })
     }
 
+    fn job_cancelled() -> JobEvent {
+        JobEvent::JobCancelled(JobCancelled {
+            job_id: job_id(),
+            resolution_id: resolution_id(),
+            originating_job_id: None,
+        })
+    }
+
     #[test]
     fn no_event_tells_a_caller_unless_its_write_serializes_with_the_directory() {
         for (event, effect) in every_kind_of_event() {
@@ -148,6 +161,17 @@ mod tests {
     }
 
     #[test]
+    fn every_kind_of_event_tells_a_sync_caller_exactly_the_end_the_failure_and_the_cancel() {
+        let told: Vec<&str> = every_kind_of_event()
+            .into_iter()
+            .map(|(event, _)| (event.event_type(), sync().plan(&event)))
+            .filter(|(_, plan)| !plan.is_empty())
+            .map(|(kind, _)| kind)
+            .collect();
+        assert_eq!(told, ["RunCompleted", "JobFailed", "JobCancelled"]);
+    }
+
+    #[test]
     fn a_run_withdrawn_for_a_waiting_job_tells_the_queue_position_again() {
         let withdrawn = JobEvent::RunCancelled(RunCancelled {
             job_id: job_id(),
@@ -179,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sync_call_tells_its_caller_only_the_end_and_the_failure() {
+    fn a_sync_call_tells_its_caller_the_end_the_failure_and_not_the_start() {
         let call = sync();
         assert!(call.plan(&started()).is_empty());
         assert!(matches!(
@@ -187,6 +211,19 @@ mod tests {
             [NoticePlan::RunCompleted { .. }]
         ));
         assert_eq!(call.plan(&failed()), vec![NoticePlan::JobFailed]);
+    }
+
+    #[test]
+    fn a_sync_call_tells_its_caller_that_the_called_job_was_cancelled() {
+        assert_eq!(
+            sync().plan(&job_cancelled()),
+            vec![NoticePlan::JobCancelled]
+        );
+    }
+
+    #[test]
+    fn a_background_call_lists_no_cancel_notice() {
+        assert!(background().plan(&job_cancelled()).is_empty());
     }
 
     #[test]

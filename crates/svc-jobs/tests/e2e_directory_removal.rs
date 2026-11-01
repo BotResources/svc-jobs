@@ -30,7 +30,7 @@ async fn a_failed_run_takes_its_agents_their_state_and_their_unread_items_and_a_
         .await;
     let (first, a1) = started_with_agent(&fixture, &mut x).await;
     let run1 = Work::of(&x, &first);
-    create(
+    let called = create(
         &fixture,
         &run1,
         &y.runner_type,
@@ -74,6 +74,14 @@ async fn a_failed_run_takes_its_agents_their_state_and_their_unread_items_and_a_
             a.job_id,
             0,
             "A1, B1 and their Runs leave the directory",
+        )
+        .await;
+    durable
+        .await_count(
+            db::RESOLUTIONS_OF_JOB,
+            called,
+            1,
+            "the failure has cancelled the open call",
         )
         .await;
     durable

@@ -104,7 +104,16 @@ async fn a_runner_uses_only_its_own_runs_addresses_and_jobs() {
     assert_eq!(surface::reason(&marked), "item_not_yours");
     assert_eq!(
         reason_of(&save(&fixture, &x_run).await, "jobsSaveState"),
-        "job_not_of_run"
+        "instance_mismatch",
+        "the Run of X is not held by an Instance of Y's type, whatever its key"
+    );
+    assert_eq!(
+        reason_of(
+            &save(&fixture, &x_run.without_runner_type()).await,
+            "jobsSaveState"
+        ),
+        "job_not_of_run",
+        "a call that names no runner type is judged by its key and the Job it names"
     );
     let registered = surface::register_as(
         fixture.nats(),

@@ -105,7 +105,10 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   the unread items and the finish, fail and cancel of their Jobs. A cancel
   reaches restart Jobs and manual-retry successors. The Caller of a runner call
   is told by notice (accepted, queue position, started, run completed, job
-  failed). A Result is kept 7 days.
+  failed); the Caller of a sync call is also told when the called Job is
+  cancelled, whoever cancelled it, while the Caller Run is live. A Caller Run
+  that has failed or been cancelled receives no notice of any type. A Result is
+  kept 7 days.
 
 ## NATS surface
 
@@ -304,14 +307,19 @@ admins of the platform org, which the Passport carries as the same privilege as
 platform administration. No org-scoped or per-project access exists in this
 version.
 
-An active service account that holds the scope `jobs:runner` reaches the runner gestures alone (a human, a super user included, reaches none of them)
+An active service account that holds the scope `jobs:runner` reaches the
+runner gestures alone (a human, a super user included, reaches none of them)
 (`jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
 `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
 `jobsMail`, `jobsSaveState`, `jobsSavedState`), each for the Run the call
-names. A request mixing runner fields with any other field is answered
-`FORBIDDEN`. Platform administrators read no mail, Result or kept payload; they
-see the inline payload as the Job carries it. The service declares the scope
-`jobs:runner` to the identity service at boot and stays not ready until the
+names. The call names it with `jobId`, `runId` and `instanceKey`, and may add
+`runnerType`. When a call names it, an Instance of another runner type that
+runs under the same key is refused `instance_mismatch`; a call that does not
+name it is judged by the key alone. A request mixing runner fields with any
+other field is answered `FORBIDDEN`. Platform administrators read no mail,
+Result or kept payload; they see the inline payload as the Job carries it. The
+service declares the scope `jobs:runner` to the identity service at boot and
+stays not ready until the
 declaration is accepted.
 
 A runner gesture takes the lock of a Tree when it registers agents

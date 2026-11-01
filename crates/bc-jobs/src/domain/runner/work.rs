@@ -115,6 +115,7 @@ pub struct WorkNamed<'a> {
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub instance_key: &'a str,
+    pub runner_type: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

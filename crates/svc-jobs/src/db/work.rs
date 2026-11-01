@@ -25,10 +25,10 @@ pub async fn require_work(
     let (Ok(job_id), Ok(run_id)) = (JobId::new(named.job_id), RunId::new(named.run_id)) else {
         return Ok(Err(WorkRefusal::Malformed));
     };
-    let mut current = standing(tx, run_id, None, named.instance_key).await?;
+    let mut current = standing(tx, run_id, named.runner_type, named.instance_key).await?;
     if lock_the_tree && let RunStanding::Started { initial_job_id } = current {
         lock_tree(tx, initial_job_id).await?;
-        current = standing(tx, run_id, None, named.instance_key).await?;
+        current = standing(tx, run_id, named.runner_type, named.instance_key).await?;
     }
     let job_of_run: Option<Uuid> =
         sqlx::query_scalar("SELECT job_id::uuid FROM runs WHERE id = $1")

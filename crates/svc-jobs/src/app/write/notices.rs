@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::PgConnection;
 
-use crate::app::integration::message::failure_message;
+use crate::app::integration::message::{cancelled_message, failure_message};
 use crate::db::call_notices::{
     Delivering, NoticeFor, call_notices_of, insert_notice, queue_position, result_of_run,
 };
@@ -81,6 +81,10 @@ async fn build(
         NoticePlan::RunCompleted { run_id } => {
             run_completed(tx, job_id, run_id, notices, inline_max_bytes, bare).await?
         }
+        NoticePlan::JobCancelled => Notice {
+            message: Some(cancelled_message(job_id.as_uuid())),
+            ..bare(NoticeType::JobCancelled)
+        },
         NoticePlan::JobFailed => match event {
             JobEvent::JobFailed(fact) => {
                 let report = fact.report.as_ref();

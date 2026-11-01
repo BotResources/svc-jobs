@@ -8,6 +8,22 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.8.2 - 2026-11-01
+
+- `domain::mail::inbox::NoticeType::JobCancelled` and
+  `domain::runner::call_notices::NoticePlan::JobCancelled`: a sync call tells its
+  Caller's Run that the called Job was cancelled; a background call does not.
+  `event::run_inbox::RunInboxEffect::JobCancelled` classifies the event, and it
+  serializes with the Tree directory like the other events that write a notice.
+- `domain::runner::work::WorkNamed::runner_type`: the runner type the caller
+  names, when it names one; `RunStanding::StartedOnAnotherInstance` follows when
+  the Instance of the key runs another type.
+- `domain::directory::holder::standing_of` and `standing_of_started_run`: the
+  standing of a Run from its stored facts (unknown, removed, not started,
+  ended, then the holder) and the rule that tells a started Run held by the
+  named Instance from one held elsewhere. The Postgres adapter calls them; the
+  v3 acting path keeps its own typed check.
+
 ## 0.8.1 - 2026-10-30
 
 - `ports::directory::TreeDirectory::entries_of_tree`: the directory entries of
