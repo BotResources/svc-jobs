@@ -161,6 +161,17 @@ mod tests {
     }
 
     #[test]
+    fn every_kind_of_event_tells_a_sync_caller_exactly_the_end_the_failure_and_the_cancel() {
+        let told: Vec<&str> = every_kind_of_event()
+            .into_iter()
+            .map(|(event, _)| (event.event_type(), sync().plan(&event)))
+            .filter(|(_, plan)| !plan.is_empty())
+            .map(|(kind, _)| kind)
+            .collect();
+        assert_eq!(told, ["RunCompleted", "JobFailed", "JobCancelled"]);
+    }
+
+    #[test]
     fn a_run_withdrawn_for_a_waiting_job_tells_the_queue_position_again() {
         let withdrawn = JobEvent::RunCancelled(RunCancelled {
             job_id: job_id(),
@@ -192,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sync_call_tells_its_caller_only_the_end_and_the_failure() {
+    fn a_sync_call_tells_its_caller_the_end_the_failure_and_not_the_start() {
         let call = sync();
         assert!(call.plan(&started()).is_empty());
         assert!(matches!(

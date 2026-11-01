@@ -17,14 +17,17 @@ to `## Unreleased`).
 - A sync runner call whose called Job is cancelled now tells the Caller's Run:
   a notice of type `JOB_CANCELLED` with a message in plain words, whoever
   cancelled the Job (the Requester, an administrator or the runner that works
-  the Job). It stays unread until the Caller sets
-  its marker, like the other notices. Before, the Caller waited for an end that
-  never came. A background call keeps the notices it had.
-- A GraphQL runner gesture can name the runner type of the calling Instance:
-  `JobsWorkInput` takes an optional `runnerType`. An Instance of another runner
-  type that runs under the same instance key as the Instance holding the Run is
-  refused `instance_mismatch`, as on the NATS request surface. A call that names
-  no runner type is judged by its instance key as before.
+  the Job). It stays unread until the Caller sets its marker, like the other
+  notices. Before, the Caller waited for an end that never came. A background
+  call keeps the notices it had. A Caller Run that has failed or been
+  cancelled keeps no notice.
+
+### Added
+
+- `JobsWorkInput` takes an optional `runnerType`. When a caller names it, an
+  Instance of another runner type that runs under the same instance key as the
+  Instance holding the Run is refused `instance_mismatch`. A call that names no
+  runner type is judged by its instance key, as before.
 
 ### Changed
 

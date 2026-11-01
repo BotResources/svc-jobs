@@ -305,17 +305,19 @@ admins of the platform org, which the Passport carries as the same privilege as
 platform administration. No org-scoped or per-project access exists in this
 version.
 
-An active service account that holds the scope `jobs:runner` reaches the runner gestures alone (a human, a super user included, reaches none of them)
+An active service account that holds the scope `jobs:runner` reaches the
+runner gestures alone (a human, a super user included, reaches none of them)
 (`jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
 `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
 `jobsMail`, `jobsSaveState`, `jobsSavedState`), each for the Run the call
 names. The call names it with `jobId`, `runId` and `instanceKey`, and may add
-`runnerType`; when it does, an Instance of another runner type that runs under
-the same key is refused `instance_mismatch`, as on the NATS request surface,
-and without it the key alone is judged. A request mixing runner fields with any other field is answered
-`FORBIDDEN`. Platform administrators read no mail, Result or kept payload; they
-see the inline payload as the Job carries it. The service declares the scope
-`jobs:runner` to the identity service at boot and stays not ready until the
+`runnerType`. When a call names it, an Instance of another runner type that
+runs under the same key is refused `instance_mismatch`; a call that does not
+name it is judged by the key alone. A request mixing runner fields with any
+other field is answered `FORBIDDEN`. Platform administrators read no mail,
+Result or kept payload; they see the inline payload as the Job carries it. The
+service declares the scope `jobs:runner` to the identity service at boot and
+stays not ready until the
 declaration is accepted.
 
 A runner gesture takes the lock of a Tree when it registers agents

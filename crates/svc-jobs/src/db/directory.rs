@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bc_jobs::JobsError;
 use bc_jobs::domain::directory::AgentState;
+use bc_jobs::domain::directory::holder::{HeldRun, standing_of_started_run};
 use bc_jobs::domain::directory::registration::{
     AgentDeclaration, HeldAgent, RegistrationRefusal, RunStanding,
 };
@@ -55,14 +56,16 @@ pub async fn standing(
         return Ok(RunStanding::Ended);
     }
     let held_by: Option<String> = row.get("instance_key");
-    let type_matches =
-        runner_type.is_none_or(|expected| row.get::<String, _>("type_key") == expected);
-    if !type_matches || held_by.as_deref() != Some(instance_key) {
-        return Ok(RunStanding::StartedOnAnotherInstance);
-    }
-    Ok(RunStanding::Started {
-        initial_job_id: JobId::new(row.get("initial_job_id"))?,
-    })
+    let type_key: String = row.get("type_key");
+    Ok(standing_of_started_run(
+        HeldRun {
+            initial_job_id: JobId::new(row.get("initial_job_id"))?,
+            runner_type: &type_key,
+            instance_key: held_by.as_deref(),
+        },
+        runner_type,
+        instance_key,
+    ))
 }
 
 #[async_trait]

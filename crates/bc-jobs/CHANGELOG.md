@@ -18,6 +18,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `domain::runner::work::WorkNamed::runner_type`: the runner type the caller
   names, when it names one; `RunStanding::StartedOnAnotherInstance` follows when
   the Instance of the key runs another type.
+- `domain::directory::holder::standing_of_started_run`: the one decision that
+  tells a started Run held by the named Instance from one held elsewhere.
 
 ## 0.8.1 - 2026-10-30
 

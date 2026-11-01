@@ -3,11 +3,14 @@ mod support;
 use serde_json::Value;
 use support::call_notices::{notices, wait_for_job_notice};
 use support::calls::call_scene;
+use support::db::{self, Durable};
 use support::fixture::JobsFixture;
 use support::gesture::{self, Work};
 use support::lineage::act;
 use support::{LONG, gql, wire};
 use uuid::Uuid;
+
+const ITEMS_OF_RUN: &str = "SELECT count(*) FROM inbox_items WHERE run_id = $1";
 
 fn cancelled_notices(items: &[Value], job: Uuid) -> Vec<Value> {
     items
@@ -21,7 +24,7 @@ fn cancelled_notices(items: &[Value], job: Uuid) -> Vec<Value> {
 async fn a_sync_call_whose_called_job_is_cancelled_tells_the_caller_whoever_cancelled_it() {
     let fixture = JobsFixture::start().await;
     let client = fixture.gql();
-    let mut scene = call_scene(&fixture, "sync-cancel", 2).await;
+    let mut scene = call_scene(&fixture, "sync-cancel", 3).await;
 
     let by_administrator = scene.call(&fixture, "SYNC", 1).await;
     let first = scene.called.next_trigger(LONG).await;
@@ -67,6 +70,23 @@ async fn a_sync_call_whose_called_job_is_cancelled_tells_the_caller_whoever_canc
     )
     .await;
     assert_eq!(cancelled_notices(&seen, by_its_runner).len(), 1);
+
+    let by_requester = scene.call(&fixture, "SYNC", 1).await;
+    let third = scene.called.next_trigger(LONG).await;
+    scene.called.start_applied(&fixture, &third).await;
+    scene
+        .resolve(&fixture, wire::VERB_CANCEL, by_requester)
+        .await;
+    gql::wait_for_status(&client, fixture.admin(), by_requester, "CANCELLED", LONG).await;
+    let seen = wait_for_job_notice(
+        &fixture,
+        &scene.work,
+        None,
+        "JOB_CANCELLED",
+        Some(by_requester),
+    )
+    .await;
+    assert_eq!(cancelled_notices(&seen, by_requester).len(), 1);
     assert_eq!(
         cancelled_notices(&seen, by_administrator).len(),
         1,
@@ -92,5 +112,49 @@ async fn a_sync_call_whose_called_job_is_cancelled_tells_the_caller_whoever_canc
             && cancelled_notices(&after_marker, by_its_runner).len() == 1,
         "the read marker covers the notice it names and no other: {after_marker:?}"
     );
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_caller_run_that_fails_keeps_no_cancel_notice_of_the_calls_the_failure_cancels() {
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let mut scene = call_scene(&fixture, "sync-failed", 2).await;
+
+    let answered = scene.call(&fixture, "SYNC", 1).await;
+    let trigger = scene.called.next_trigger(LONG).await;
+    scene.called.start_applied(&fixture, &trigger).await;
+    scene.called.complete_run(&trigger).await;
+    durable
+        .await_count(
+            ITEMS_OF_RUN,
+            scene.work.run_id,
+            1,
+            "the end of the call waits unread for the Caller Run",
+        )
+        .await;
+
+    scene
+        .caller
+        .fail_run(&scene.trigger, "TRANSIENT", "provider_unavailable", Some(0))
+        .await;
+    gql::wait_for_status(&fixture.gql(), fixture.admin(), answered, "CANCELLED", LONG).await;
+    durable
+        .await_count(
+            db::RESOLUTIONS_OF_JOB,
+            answered,
+            1,
+            "the failure cancelled the open call",
+        )
+        .await;
+    durable
+        .assert_count(
+            ITEMS_OF_RUN,
+            scene.work.run_id,
+            0,
+            "the failed Caller Run keeps no notice",
+        )
+        .await;
+    durable.close().await;
     fixture.shutdown().await;
 }

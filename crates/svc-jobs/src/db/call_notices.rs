@@ -137,6 +137,8 @@ pub async fn insert_notice(
         "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at) \
          SELECT $1, 'NOTICE', $2, $3, $4, $5 \
          WHERE NOT EXISTS (SELECT 1 FROM directory_removed_runs d WHERE d.run_id = $3) \
+           AND NOT EXISTS (SELECT 1 FROM run_terminals t \
+                           WHERE t.run_id = $3 AND t.kind IN ('FAILED', 'CANCELLED')) \
            AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a WHERE a.agent_id = $2))",
     )
     .bind(item_id.as_uuid())
