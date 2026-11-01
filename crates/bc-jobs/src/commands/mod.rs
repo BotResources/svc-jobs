@@ -61,6 +61,9 @@ pub enum CommandWarning {
     FactAlreadyRecorded {
         fact: &'static str,
     },
+    FactDiscardedReservedElsewhere {
+        fact: &'static str,
+    },
     StepIndexNotAdvancing {
         current: u32,
         submitted: u32,
@@ -78,6 +81,7 @@ impl CommandWarning {
             Self::FactDiscardedOnTerminalJob { .. } => "fact_discarded_on_terminal_job",
             Self::FactDiscardedOnTerminalRun { .. } => "fact_discarded_on_terminal_run",
             Self::FactAlreadyRecorded { .. } => "fact_already_recorded",
+            Self::FactDiscardedReservedElsewhere { .. } => "fact_discarded_reserved_elsewhere",
             Self::StepIndexNotAdvancing { .. } => "step_index_not_advancing",
             Self::CancellationIsBestEffort => "cancellation_is_best_effort",
             Self::CancelledJobAlreadyTerminal => "cancelled_job_already_terminal",
@@ -93,7 +97,9 @@ impl CommandWarning {
             Self::FactDiscardedOnTerminalRun { fact, run_status } => {
                 json!({ "fact": fact, "runStatus": run_status })
             }
-            Self::FactAlreadyRecorded { fact } => json!({ "fact": fact }),
+            Self::FactAlreadyRecorded { fact } | Self::FactDiscardedReservedElsewhere { fact } => {
+                json!({ "fact": fact })
+            }
             Self::StepIndexNotAdvancing { current, submitted } => {
                 json!({ "current": current, "submitted": submitted })
             }
@@ -109,13 +115,11 @@ mod tests {
 
     #[test]
     fn a_discarded_fact_produces_no_event_and_says_why() {
-        // Given: a late runner fact on a job that already resolved
         let result: JobCommandResult =
             CommandResult::nothing_happened(CommandWarning::FactDiscardedOnTerminalJob {
                 fact: "RunStarted",
                 job_status: "CANCELLED",
             });
-        // When/Then: history is untouched and the caller may acknowledge the message
         assert!(result.is_empty());
         assert_eq!(
             result.warnings.first().map(CommandWarning::code),

@@ -20,6 +20,30 @@ to `## Unreleased`).
   is not a whole number, is outside its bounds, or when the cancelled retention
   is above the retention. The chart values are `retention.days` and
   `retention.cancelledDays`.
+- `jobs.runner.started.{runner_type}`: an Instance reports that it started a Run
+  as a request with one reply. The request carries a start id (a UUIDv7 the
+  runner makes for each start). Accepted, the Run is `STARTED` and held by that
+  Instance under the start id; the same start id from the holder is accepted
+  again and changes nothing while the Run has not ended. A refusal changes
+  nothing and names no Job, parent, Initial Job or Passport: `run_unknown`
+  (also an Instance of another runner type), `instance_unknown` (no live
+  presence yet; the same request is accepted once the presence is live, and a
+  final refusal always wins over it), `run_held`, `run_reserved_elsewhere`,
+  `run_not_pending` (the Run or its Job has ended, also the repeat of the start
+  id after the end).
+- The start id is stored with the hold (`run_starts.start_id`, migration
+  `0010_run_start_id.sql`); a Run held by the status-stream started fact has
+  none.
+
+### Changed
+
+- The runner surface answers `register_agents`, `list_agents`, `mark_read` and
+  `started` without waiting for a claim slot: a request that waits for its Tree
+  no longer delays the others.
+- A started fact of the status stream for a Run that a claim reserved for
+  another Instance is acknowledged and discarded without an error log; a
+  started request with a start id for a Run held by that fact is refused
+  `run_held`.
 
 ## 0.6.2 - 2026-11-01
 

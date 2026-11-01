@@ -10,6 +10,18 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-01
 
+- `Job::record_run_started_request`, `commands::job::run_start_request::StartRequestFact`
+  and `domain::run::start_refusal::StartRefusal`: the decision of the started
+  request (hold under a start id, accepted again for the same start id and
+  holder, six refusals with stable codes and plain messages). `StartId` is a
+  UUIDv7 id; `RunStart::start_id` and `RunStarted::start_id` carry it (`None`
+  for a Run held by the status-stream fact, and for events stored before it
+  existed).
+- `Job::record_run_started` (status-stream fact) now discards a Run reserved
+  for another Instance as `CommandWarning::FactDiscardedReservedElsewhere`
+  instead of returning `JobsError::RunReservedElsewhere`, which no command
+  returns any more.
+
 - `domain::policy::Retention`: the days a Tree is kept after its last activity
   (1 to 395) and the days the request data of a cancelled Job is kept (0 to
   395, never above the first). `ServiceLimits::with_retention`,

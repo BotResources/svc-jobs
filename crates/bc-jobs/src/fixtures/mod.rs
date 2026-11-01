@@ -7,7 +7,7 @@ use crate::domain::config::RunnerConfig;
 use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::ids::{
     ClaimId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
-    SourceEntityId,
+    SourceEntityId, StartId,
 };
 use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
@@ -48,6 +48,10 @@ pub fn schedule_id() -> RetryScheduleId {
 
 pub fn manual_retry_id() -> ManualRetryId {
     ManualRetryId::new(Uuid::now_v7()).expect("uuid v7")
+}
+
+pub fn start_id() -> StartId {
+    StartId::new(Uuid::now_v7()).expect("uuid v7")
 }
 
 pub fn claim_id() -> ClaimId {

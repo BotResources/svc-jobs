@@ -93,6 +93,7 @@ mod tests {
             run_id: run_id(),
             runner_type: instance().runner_type().clone(),
             instance_key: instance().instance_key().clone(),
+            start_id: None,
         })
     }
 

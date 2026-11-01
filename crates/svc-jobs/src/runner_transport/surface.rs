@@ -3,10 +3,9 @@ use std::sync::Arc;
 use contract_jobs::runner_surface as wire;
 use futures::StreamExt;
 use serde::Serialize;
-use tokio::sync::Semaphore;
 
 use super::RunnerChannels;
-use crate::app::{Jobs, directory};
+use crate::app::{Jobs, directory, started};
 use crate::error::ServiceError;
 use crate::supervision::Established;
 
@@ -18,11 +17,11 @@ pub async fn respond(
     established: Established,
 ) -> Result<(), ServiceError> {
     let client = channels.client();
-    let in_flight = Arc::new(Semaphore::new(jobs.claims.max_held));
     let mut requests = futures::stream::select_all(vec![
         subscribe(&client, wire::REGISTER_AGENTS_FILTER).await?,
         subscribe(&client, wire::LIST_AGENTS_FILTER).await?,
         subscribe(&client, wire::MARK_READ_FILTER).await?,
+        subscribe(&client, wire::STARTED_FILTER).await?,
     ]);
     established.signal();
     while let Some(message) = requests.next().await {
@@ -30,13 +29,9 @@ pub async fn respond(
             tracing::debug!(subject = %message.subject, "a surface request with no reply subject");
             continue;
         };
-        let Ok(permit) = Arc::clone(&in_flight).acquire_owned().await else {
-            continue;
-        };
         let client = client.clone();
         let jobs = Arc::clone(&jobs);
         tokio::spawn(async move {
-            let _permit = permit;
             let Some(bytes) = answer(&jobs, message.subject.as_str(), &message.payload).await
             else {
                 return;
@@ -65,6 +60,13 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
     if let Some(runner_type) = subject.strip_prefix(wire::REGISTER_AGENTS_PREFIX) {
         let reply = match decode::<wire::RegisterAgents>(payload) {
             Some(request) => directory::register_agents(jobs, runner_type, request).await?,
+            None => malformed(),
+        };
+        return Some(encode(&reply));
+    }
+    if let Some(runner_type) = subject.strip_prefix(wire::STARTED_PREFIX) {
+        let reply = match decode::<wire::StartedRequest>(payload) {
+            Some(request) => started::started(jobs, runner_type, request).await?,
             None => malformed(),
         };
         return Some(encode(&reply));

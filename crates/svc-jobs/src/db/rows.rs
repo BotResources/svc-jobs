@@ -4,7 +4,7 @@ use bc_jobs::domain::config::RunnerConfig;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{
     ClaimId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
-    SourceEntityId,
+    SourceEntityId, StartId,
 };
 use bc_jobs::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolution, JobResolutionKind};
@@ -84,9 +84,13 @@ pub fn start(row: &PgRow) -> Result<(RunId, RunStart), JobsError> {
         RunnerTypeKey::new(row.get::<String, _>("type_key"))?,
         InstanceKey::new(row.get::<String, _>("instance_key"))?,
     );
+    let start_id = row
+        .get::<Option<Uuid>, _>("start_id")
+        .map(StartId::new)
+        .transpose()?;
     Ok((
         RunId::new(row.get("run_id"))?,
-        RunStart::new(instance, row.get("started_at")),
+        RunStart::new(instance, row.get("started_at")).with_start_id(start_id),
     ))
 }
 

@@ -83,9 +83,9 @@ impl Job {
             .reservation()
             .is_some_and(|reservation| reservation.instance() != &fact.instance)
         {
-            return Err(JobsError::RunReservedElsewhere {
-                run_id: run.id().as_uuid(),
-            });
+            return Ok(CommandResult::nothing_happened(
+                CommandWarning::FactDiscardedReservedElsewhere { fact: "RunStarted" },
+            ));
         }
         Ok(CommandResult::from_event(JobEvent::RunStarted(
             RunStarted {
@@ -93,6 +93,7 @@ impl Job {
                 run_id: fact.run_id,
                 runner_type: self.runner_type().clone(),
                 instance_key: fact.instance.instance_key().clone(),
+                start_id: None,
             },
         )))
     }

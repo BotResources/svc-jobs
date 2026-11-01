@@ -103,12 +103,13 @@ pub async fn started(
     let runner_type = refs::runner_type_id(tx, &fact.runner_type).await?;
     let instance = refs::runner_instance_id(tx, runner_type, &fact.instance_key).await?;
     sqlx::query(
-        "INSERT INTO run_starts (run_id, instance_id, started_at) VALUES ($1, $2, $3) \
-         ON CONFLICT (run_id) DO NOTHING",
+        "INSERT INTO run_starts (run_id, instance_id, started_at, start_id) \
+         VALUES ($1, $2, $3, $4) ON CONFLICT (run_id) DO NOTHING",
     )
     .bind(fact.run_id.as_uuid())
     .bind(instance)
     .bind(at)
+    .bind(fact.start_id.map(|start_id| start_id.as_uuid()))
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;

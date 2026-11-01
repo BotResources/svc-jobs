@@ -135,6 +135,7 @@ pub(crate) fn samples_of(kind: Kind) -> Vec<(JobEvent, RunInboxEffect)> {
                 run_id: run,
                 runner_type: instance().runner_type().clone(),
                 instance_key: instance().instance_key().clone(),
+                start_id: None,
             }),
             RunInboxEffect::RunStarted,
         )],

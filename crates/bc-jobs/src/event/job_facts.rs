@@ -6,7 +6,7 @@ use crate::domain::config::RunnerConfig;
 use crate::domain::fleet::run_duration::MaxRunDuration;
 use crate::domain::ids::{
     ClaimId, JobId, KnownUserId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId,
-    RunId,
+    RunId, StartId,
 };
 use crate::domain::job::JobCall;
 use crate::domain::job::resolution::JobFailureCause;
@@ -87,6 +87,8 @@ pub struct RunStarted {
     pub run_id: RunId,
     pub runner_type: RunnerTypeKey,
     pub instance_key: InstanceKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_id: Option<StartId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -54,6 +54,16 @@ impl RunBuilder {
         self
     }
 
+    pub fn started_under(
+        mut self,
+        instance: RunnerInstanceReference,
+        at: DateTime<Utc>,
+        start_id: StartId,
+    ) -> Self {
+        self.state.start = Some(RunStart::new(instance, at).with_start_id(Some(start_id)));
+        self
+    }
+
     pub fn completed(mut self, at: DateTime<Utc>) -> Self {
         self.state.terminal = Some(RunTerminal::completed(at));
         self

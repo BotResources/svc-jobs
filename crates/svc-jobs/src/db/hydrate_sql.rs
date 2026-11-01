@@ -37,8 +37,8 @@ pub(super) const RESERVATIONS_SQL: &str = "SELECT rr.run_id::uuid AS run_id, rr.
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
      WHERE r.job_id = ANY($1)";
 
-pub(super) const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rt.type_key, \
-     ri.instance_key FROM run_starts rs \
+pub(super) const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rs.start_id::uuid AS start_id, \
+     rt.type_key, ri.instance_key FROM run_starts rs \
      JOIN runs r ON r.id = rs.run_id \
      JOIN runner_instances ri ON ri.id = rs.instance_id \
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
