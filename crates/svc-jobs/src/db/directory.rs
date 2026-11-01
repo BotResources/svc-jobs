@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bc_jobs::JobsError;
 use bc_jobs::domain::directory::AgentState;
-use bc_jobs::domain::directory::holder::{HeldRun, standing_of_started_run};
+use bc_jobs::domain::directory::holder::{HeldRun, RunFacts, standing_of};
 use bc_jobs::domain::directory::registration::{
     AgentDeclaration, HeldAgent, RegistrationRefusal, RunStanding,
 };
@@ -38,31 +38,27 @@ pub async fn standing(
     instance_key: &str,
 ) -> Result<RunStanding, PortError> {
     let sql = STANDING_SQL.replace("{root}", &super::lineage::root_of("j"));
-    let Some(row) = sqlx::query(&sql)
+    let row = sqlx::query(&sql)
         .bind(run_id.as_uuid())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(unavailable)?
-    else {
-        return Ok(RunStanding::Unknown);
+        .map_err(unavailable)?;
+    let Some(row) = row else {
+        return Ok(standing_of(None, runner_type, instance_key));
     };
-    if row.get::<bool, _>("removed") {
-        return Ok(RunStanding::Removed);
-    }
-    if !row.get::<bool, _>("started") {
-        return Ok(RunStanding::NotStarted);
-    }
-    if row.get::<bool, _>("ended") {
-        return Ok(RunStanding::Ended);
-    }
     let held_by: Option<String> = row.get("instance_key");
     let type_key: String = row.get("type_key");
-    Ok(standing_of_started_run(
-        HeldRun {
-            initial_job_id: JobId::new(row.get("initial_job_id"))?,
-            runner_type: &type_key,
-            instance_key: held_by.as_deref(),
-        },
+    Ok(standing_of(
+        Some(RunFacts {
+            removed: row.get("removed"),
+            started: row.get("started"),
+            ended: row.get("ended"),
+            held: HeldRun {
+                initial_job_id: JobId::new(row.get("initial_job_id"))?,
+                runner_type: &type_key,
+                instance_key: held_by.as_deref(),
+            },
+        }),
         runner_type,
         instance_key,
     ))

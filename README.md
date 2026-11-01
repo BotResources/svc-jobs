@@ -106,7 +106,9 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   reaches restart Jobs and manual-retry successors. The Caller of a runner call
   is told by notice (accepted, queue position, started, run completed, job
   failed); the Caller of a sync call is also told when the called Job is
-  cancelled, whoever cancelled it. A Result is kept 7 days.
+  cancelled, whoever cancelled it, while the Caller Run is live. A Caller Run
+  that has failed or been cancelled receives no notice of any type. A Result is
+  kept 7 days.
 
 ## NATS surface
 

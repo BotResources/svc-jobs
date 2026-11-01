@@ -18,8 +18,9 @@ form to decide whether a version ships.
   cancelled the Job (the Requester, an administrator or the runner that works
   the Job). It stays unread until the Caller sets its marker, like the other
   notices. Before, the Caller waited for an end that never came. A background
-  call keeps the notices it had. A Caller Run that has failed or been
-  cancelled keeps no notice.
+  call keeps the notices it had.
+- A Caller Run that has failed or been cancelled receives no notice of any
+  type: a notice that would arrive after its end is not written.
 
 ### Added
 

@@ -7,6 +7,32 @@ pub struct HeldRun<'a> {
     pub instance_key: Option<&'a str>,
 }
 
+pub struct RunFacts<'a> {
+    pub removed: bool,
+    pub started: bool,
+    pub ended: bool,
+    pub held: HeldRun<'a>,
+}
+
+pub fn standing_of(
+    facts: Option<RunFacts<'_>>,
+    named_runner_type: Option<&str>,
+    named_instance_key: &str,
+) -> RunStanding {
+    let Some(facts) = facts else {
+        return RunStanding::Unknown;
+    };
+    if facts.removed {
+        RunStanding::Removed
+    } else if !facts.started {
+        RunStanding::NotStarted
+    } else if facts.ended {
+        RunStanding::Ended
+    } else {
+        standing_of_started_run(facts.held, named_runner_type, named_instance_key)
+    }
+}
+
 pub fn standing_of_started_run(
     held: HeldRun<'_>,
     named_runner_type: Option<&str>,
@@ -67,5 +93,40 @@ mod tests {
                 "held {held_key:?}, named {named_type:?} {named_key}"
             );
         }
+    }
+
+    #[test]
+    fn the_standing_follows_the_precedence_unknown_removed_not_started_ended_then_the_holder() {
+        let facts = |removed, started, ended| {
+            Some(RunFacts {
+                removed,
+                started,
+                ended,
+                held: HeldRun {
+                    initial_job_id: job_id(),
+                    runner_type: "alpha",
+                    instance_key: Some("i1"),
+                },
+            })
+        };
+        let cases = [
+            (None, RunStanding::Unknown),
+            (facts(true, true, true), RunStanding::Removed),
+            (facts(true, false, false), RunStanding::Removed),
+            (facts(false, false, false), RunStanding::NotStarted),
+            (facts(false, false, true), RunStanding::NotStarted),
+            (facts(false, true, true), RunStanding::Ended),
+        ];
+        for (given, expected) in cases {
+            assert_eq!(standing_of(given, None, "i1"), expected);
+        }
+        assert!(matches!(
+            standing_of(facts(false, true, false), None, "i1"),
+            RunStanding::Started { .. }
+        ));
+        assert_eq!(
+            standing_of(facts(false, true, false), None, "i2"),
+            RunStanding::StartedOnAnotherInstance
+        );
     }
 }
