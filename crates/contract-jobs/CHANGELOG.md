@@ -7,9 +7,10 @@ every consumer, so each version is deliberate. Release headings are plain
 
 ## 0.8.0 - 2026-11-01
 
-Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant or field of
-contract-jobs 0.7.0 is removed or renamed; the obsolete offers keep their constants
-and types.
+Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant, type or field
+of contract-jobs 0.7.0 is removed or renamed; the obsolete offers keep their constants
+and types. The only change to the type of an obsolete offer is that `RunItemArrived`
+(version 1) now reads `MAIL_NOTICE` through the shared `ItemKind`.
 
 - `integration.evt.jobs.run.item_arrived.v2`: `EVT_RUN_ITEM_ARRIVED_V2`,
   `event_v2::RunItemArrivedV2` (same fields as `RunItemArrived`; the run, the item id
@@ -28,7 +29,9 @@ and types.
   `RunReservedElsewhere` and `RunNotPending` (`instance_unknown`, `run_held`,
   `run_reserved_elsewhere`, `run_not_pending`): thirteen codes, shared by `SurfaceReply`
   and `ListAgentsReply`. A reason outside the set still deserializes as an unknown word.
-- Breaking for exhaustive matches on `ItemKind` and `SurfaceReason`.
+- Breaking for exhaustive matches on `ItemKind` and `SurfaceReason`: a `match` on either
+  needs arms for the new values (`MailNotice`; `InstanceUnknown`, `RunHeld`,
+  `RunReservedElsewhere`, `RunNotPending`). Consumers move to 0.8.0 together.
 
 ## 0.7.0 - 2026-10-30
 
