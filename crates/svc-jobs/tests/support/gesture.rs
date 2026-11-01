@@ -10,6 +10,7 @@ pub struct Work {
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub instance_key: String,
+    pub runner_type: Option<String>,
 }
 
 impl Work {
@@ -18,15 +19,34 @@ impl Work {
             job_id: runner::job_id(trigger),
             run_id: runner::run_id(trigger),
             instance_key: runner.instance_key.clone(),
+            runner_type: Some(runner.runner_type.clone()),
         }
     }
 
     pub fn wire(&self) -> Value {
-        json!({
+        let mut wire = json!({
             "jobId": self.job_id.to_string(),
             "runId": self.run_id.to_string(),
             "instanceKey": self.instance_key,
-        })
+        });
+        if let Some(runner_type) = &self.runner_type {
+            wire["runnerType"] = json!(runner_type);
+        }
+        wire
+    }
+
+    pub fn as_runner_type(&self, runner_type: &str) -> Self {
+        Self {
+            runner_type: Some(runner_type.to_owned()),
+            ..self.clone()
+        }
+    }
+
+    pub fn without_runner_type(&self) -> Self {
+        Self {
+            runner_type: None,
+            ..self.clone()
+        }
     }
 
     pub fn as_instance(&self, instance_key: &str) -> Self {

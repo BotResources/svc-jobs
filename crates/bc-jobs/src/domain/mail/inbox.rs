@@ -40,6 +40,7 @@ pub enum NoticeType {
     Started,
     RunCompleted,
     JobFailed,
+    JobCancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +78,22 @@ mod tests {
         };
         let stored = serde_json::to_value(&notice).unwrap();
         assert_eq!(stored["type"], "QUEUE_POSITION");
+        assert_eq!(serde_json::from_value::<Notice>(stored).unwrap(), notice);
+    }
+
+    #[test]
+    fn a_cancel_notice_is_stored_with_its_words() {
+        let notice = Notice {
+            notice_type: NoticeType::JobCancelled,
+            job_id: job_id(),
+            position: None,
+            failure_report: None,
+            message: Some("Job was cancelled.".to_owned()),
+            answer: None,
+            result_id: None,
+        };
+        let stored = serde_json::to_value(&notice).unwrap();
+        assert_eq!(stored["type"], "JOB_CANCELLED");
         assert_eq!(serde_json::from_value::<Notice>(stored).unwrap(), notice);
     }
 

@@ -50,7 +50,8 @@ fn only_the_events_that_start_or_end_a_run_or_write_a_notice_serialize_with_the_
             "RunCancelled",
             "RunCancelled",
             "RetryScheduled",
-            "JobFailed"
+            "JobFailed",
+            "JobCancelled"
         ]
     );
 }

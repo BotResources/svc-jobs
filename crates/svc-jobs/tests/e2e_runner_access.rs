@@ -15,6 +15,7 @@ fn unknown_work() -> Work {
         job_id: Uuid::now_v7(),
         run_id: Uuid::now_v7(),
         instance_key: "instance-a".to_owned(),
+        runner_type: None,
     }
 }
 

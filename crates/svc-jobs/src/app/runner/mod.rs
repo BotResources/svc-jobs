@@ -27,6 +27,7 @@ pub struct WorkIds {
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub instance_key: String,
+    pub runner_type: Option<String>,
 }
 
 impl WorkIds {
@@ -35,6 +36,7 @@ impl WorkIds {
             job_id: self.job_id,
             run_id: self.run_id,
             instance_key: &self.instance_key,
+            runner_type: self.runner_type.as_deref(),
         }
     }
 }

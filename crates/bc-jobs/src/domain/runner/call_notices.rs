@@ -12,6 +12,7 @@ pub enum NoticePlan {
     Started,
     RunCompleted { run_id: RunId },
     JobFailed,
+    JobCancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,10 +47,12 @@ impl CallNotices {
             RunInboxEffect::RunStarted if background => vec![NoticePlan::Started],
             RunInboxEffect::RunCompleted { run_id } => vec![NoticePlan::RunCompleted { run_id }],
             RunInboxEffect::JobFailed => vec![NoticePlan::JobFailed],
+            RunInboxEffect::JobCancelled if !background => vec![NoticePlan::JobCancelled],
             RunInboxEffect::Untouched
             | RunInboxEffect::JobQueued
             | RunInboxEffect::RetryScheduled
             | RunInboxEffect::RunStarted
+            | RunInboxEffect::JobCancelled
             | RunInboxEffect::RunFailed
             | RunInboxEffect::RunCancelled { .. } => vec![],
         }
@@ -61,7 +64,9 @@ mod tests {
     use super::*;
     use crate::domain::job::resolution::JobFailureCause;
     use crate::domain::keys::ReasonCode;
-    use crate::event::job_facts::{JobFailed, RunCancelled, RunCompleted, RunStarted};
+    use crate::event::job_facts::{
+        JobCancelled, JobFailed, RunCancelled, RunCompleted, RunStarted,
+    };
     use crate::event::run_inbox::samples::every_kind_of_event;
     use crate::fixtures::{instance, job_id, resolution_id, run_id};
     use uuid::Uuid;
@@ -106,6 +111,14 @@ mod tests {
             failure_cause: JobFailureCause::DeclaredByOwner,
             caused_by_run_id: None,
             report: None,
+        })
+    }
+
+    fn job_cancelled() -> JobEvent {
+        JobEvent::JobCancelled(JobCancelled {
+            job_id: job_id(),
+            resolution_id: resolution_id(),
+            originating_job_id: None,
         })
     }
 
@@ -187,6 +200,19 @@ mod tests {
             [NoticePlan::RunCompleted { .. }]
         ));
         assert_eq!(call.plan(&failed()), vec![NoticePlan::JobFailed]);
+    }
+
+    #[test]
+    fn a_sync_call_tells_its_caller_that_the_called_job_was_cancelled() {
+        assert_eq!(
+            sync().plan(&job_cancelled()),
+            vec![NoticePlan::JobCancelled]
+        );
+    }
+
+    #[test]
+    fn a_background_call_lists_no_cancel_notice() {
+        assert!(background().plan(&job_cancelled()).is_empty());
     }
 
     #[test]

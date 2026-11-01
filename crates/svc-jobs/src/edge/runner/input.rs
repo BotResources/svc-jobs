@@ -11,6 +11,7 @@ pub struct GqlWorkInput {
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub instance_key: String,
+    pub runner_type: Option<String>,
 }
 
 impl From<GqlWorkInput> for WorkIds {
@@ -19,6 +20,7 @@ impl From<GqlWorkInput> for WorkIds {
             job_id: work.job_id,
             run_id: work.run_id,
             instance_key: work.instance_key,
+            runner_type: work.runner_type,
         }
     }
 }

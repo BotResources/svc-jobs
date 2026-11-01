@@ -105,7 +105,8 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   the unread items and the finish, fail and cancel of their Jobs. A cancel
   reaches restart Jobs and manual-retry successors. The Caller of a runner call
   is told by notice (accepted, queue position, started, run completed, job
-  failed). A Result is kept 7 days.
+  failed); the Caller of a sync call is also told when the called Job is
+  cancelled, whoever cancelled it. A Result is kept 7 days.
 
 ## NATS surface
 
@@ -308,7 +309,10 @@ An active service account that holds the scope `jobs:runner` reaches the runner 
 (`jobsUploadPayload`, `jobsPayload`, `jobsUploadResult`, `jobsReadResult`,
 `jobsUploadAttachment`, `jobsAttachment`, `jobsSendMail`, `jobsUnread`,
 `jobsMail`, `jobsSaveState`, `jobsSavedState`), each for the Run the call
-names. A request mixing runner fields with any other field is answered
+names. The call names it with `jobId`, `runId` and `instanceKey`, and may add
+`runnerType`; when it does, an Instance of another runner type that runs under
+the same key is refused `instance_mismatch`, as on the NATS request surface,
+and without it the key alone is judged. A request mixing runner fields with any other field is answered
 `FORBIDDEN`. Platform administrators read no mail, Result or kept payload; they
 see the inline payload as the Job carries it. The service declares the scope
 `jobs:runner` to the identity service at boot and stays not ready until the

@@ -8,6 +8,17 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.8.2 - 2026-11-01
+
+- `domain::mail::inbox::NoticeType::JobCancelled` and
+  `domain::runner::call_notices::NoticePlan::JobCancelled`: a sync call tells its
+  Caller's Run that the called Job was cancelled; a background call does not.
+  `event::run_inbox::RunInboxEffect::JobCancelled` classifies the event, and it
+  serializes with the Tree directory like the other events that write a notice.
+- `domain::runner::work::WorkNamed::runner_type`: the runner type the caller
+  names, when it names one; `RunStanding::StartedOnAnotherInstance` follows when
+  the Instance of the key runs another type.
+
 ## 0.8.1 - 2026-10-30
 
 - `ports::directory::TreeDirectory::entries_of_tree`: the directory entries of

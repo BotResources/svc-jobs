@@ -229,7 +229,7 @@ pub(crate) fn samples_of(kind: Kind) -> Vec<(JobEvent, RunInboxEffect)> {
                 resolution_id: resolution_id(),
                 originating_job_id: None,
             }),
-            untouched,
+            RunInboxEffect::JobCancelled,
         )],
         Kind::ManualRetryStarted => vec![(
             JobEvent::ManualRetryStarted(ManualRetryStarted {

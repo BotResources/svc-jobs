@@ -32,6 +32,7 @@ pub enum GqlNoticeType {
     Started,
     RunCompleted,
     JobFailed,
+    JobCancelled,
 }
 
 impl From<NoticeType> for GqlNoticeType {
@@ -42,6 +43,7 @@ impl From<NoticeType> for GqlNoticeType {
             NoticeType::Started => Self::Started,
             NoticeType::RunCompleted => Self::RunCompleted,
             NoticeType::JobFailed => Self::JobFailed,
+            NoticeType::JobCancelled => Self::JobCancelled,
         }
     }
 }

@@ -11,6 +11,7 @@ pub enum RunInboxEffect {
     RunFailed,
     RunCancelled { withdrawn: bool },
     JobFailed,
+    JobCancelled,
 }
 
 impl RunInboxEffect {
@@ -22,7 +23,8 @@ impl RunInboxEffect {
             | Self::RunCompleted { .. }
             | Self::RunFailed
             | Self::RunCancelled { .. }
-            | Self::JobFailed => true,
+            | Self::JobFailed
+            | Self::JobCancelled => true,
             Self::Untouched => false,
         }
     }
@@ -42,12 +44,12 @@ impl JobEvent {
                 withdrawn: fact.withdrawn_for.is_some(),
             },
             Self::JobFailed(_) => RunInboxEffect::JobFailed,
+            Self::JobCancelled(_) => RunInboxEffect::JobCancelled,
             Self::RunDispatched(_)
             | Self::RunPlanDeclared(_)
             | Self::RunStepStarted(_)
             | Self::RunCancellationRequested(_)
             | Self::JobCompleted(_)
-            | Self::JobCancelled(_)
             | Self::ManualRetryStarted(_)
             | Self::JobDeleted(_)
             | Self::JobAffordancesChanged(_)
