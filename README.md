@@ -552,8 +552,9 @@ before integrating.
   records the published image ref afterwards, which completes the registry's
   automatic implemented flip. All three address the patch by coordinates —
   the committed service UUID plus (major, minor, patch) — and need
-  `BR_REGISTRY_KEY`. Only `svc-jobs` is registry-tracked; `contract-jobs` is a
-  wire-contract crate, not a registry service, and is never gated nor recorded.
+  `BR_REGISTRY_KEY`. Only `svc-jobs` is tracked by the Services registry;
+  `contract-jobs` is a library, gated and recorded by the Libraries registry
+  (`scripts/library-gate.sh`, `scripts/library-record.sh`) under its own tag.
 
 ## License
 
