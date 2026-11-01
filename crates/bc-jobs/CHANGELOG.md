@@ -24,7 +24,12 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 - `domain::policy::Retention`: the days a Tree is kept after its last activity
   (1 to 395) and the days the request data of a cancelled Job is kept (0 to
-  395, never above the first). `ServiceLimits::with_retention`,
+  395, never above the first). `Retention::from_days` builds it and refuses
+  a value outside the bounds with `JobsError::OutOfRange`, and a cancelled
+  retention above the retention with
+  `JobsError::CancelledRetentionAboveRetention` (code
+  `cancelled_retention_above_retention`); `Retention::tree()` and
+  `Retention::cancelled()` read it. `ServiceLimits::with_retention`,
   `ServiceLimits::retention`, `ServiceLimits::tree_retention` and
   `ServiceLimits::cancelled_retention` carry them; the defaults are 30 and 0.
   The bounds and defaults are public as `domain::policy::MIN_RETENTION_DAYS`,

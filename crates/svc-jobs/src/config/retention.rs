@@ -1,6 +1,6 @@
 use bc_jobs::JobsError;
 use bc_jobs::domain::policy::{
-    DEFAULT_CANCELLED_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS, Retention,
+    DEFAULT_CANCELLED_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, Retention,
 };
 
 use super::env::parse;
@@ -34,12 +34,12 @@ pub(super) fn retention_from(
             key: RETENTION_KEY,
             value: value.to_string(),
         },
-        JobsError::OutOfRange {
-            field: "cancelled_retention_days",
-            value,
-        } if (0..=MAX_RETENTION_DAYS).contains(&value) => ServiceError::Configuration {
+        JobsError::CancelledRetentionAboveRetention {
+            cancelled,
+            retention,
+        } => ServiceError::Configuration {
             key: CANCELLED_RETENTION_KEY,
-            value: format!("{value} (must not exceed {RETENTION_KEY} = {retention_days})"),
+            value: format!("{cancelled} (must not exceed {RETENTION_KEY} = {retention})"),
         },
         JobsError::OutOfRange {
             field: "cancelled_retention_days",

@@ -62,19 +62,24 @@ fn the_cancelled_retention_accepts_zero_up_to_the_retention() {
 }
 
 #[test]
-fn the_cancelled_retention_refuses_negative_above_thirteen_months_and_above_the_retention() {
-    for (days, cancelled) in [
-        (30, -1),
-        (30, 31),
-        (1, 2),
-        (394, 395),
-        (395, 396),
-        (395, i64::MAX),
-        (395, i64::MIN),
-    ] {
+fn the_cancelled_retention_refuses_negative_and_above_thirteen_months() {
+    for (days, cancelled) in [(30, -1), (395, 396), (395, i64::MAX), (395, i64::MIN)] {
         assert_eq!(
             Retention::from_days(days, cancelled),
             Err(refused_cancelled(cancelled))
+        );
+    }
+}
+
+#[test]
+fn the_cancelled_retention_above_the_retention_is_refused_with_both_values() {
+    for (days, cancelled) in [(30, 31), (1, 2), (394, 395)] {
+        assert_eq!(
+            Retention::from_days(days, cancelled),
+            Err(JobsError::CancelledRetentionAboveRetention {
+                cancelled,
+                retention: days,
+            })
         );
     }
 }

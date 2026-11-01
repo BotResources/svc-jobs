@@ -20,6 +20,7 @@ impl JobsError {
             Self::ParentJobDeleted { .. } => "parent_job_deleted",
             Self::SelfReference { .. } => "self_reference",
             Self::MaxAttemptsAboveCeiling { .. } => "max_attempts_above_ceiling",
+            Self::CancelledRetentionAboveRetention { .. } => "cancelled_retention_above_retention",
             Self::JobAlreadyTerminal { .. } => "job_already_terminal",
             Self::JobDeleted => "job_deleted",
             Self::JobNotTerminal { .. } => "job_not_terminal",

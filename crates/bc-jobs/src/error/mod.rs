@@ -62,6 +62,10 @@ pub enum JobsError {
         requested: u32,
         ceiling: u32,
     },
+    CancelledRetentionAboveRetention {
+        cancelled: i64,
+        retention: i64,
+    },
     JobAlreadyTerminal {
         status: &'static str,
     },

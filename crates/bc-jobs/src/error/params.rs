@@ -59,6 +59,10 @@ impl JobsError {
             Self::MaxAttemptsAboveCeiling { requested, ceiling } => {
                 json!({ "requested": requested, "ceiling": ceiling })
             }
+            Self::CancelledRetentionAboveRetention {
+                cancelled,
+                retention,
+            } => json!({ "cancelled": cancelled, "retention": retention }),
             Self::JobAlreadyTerminal { status }
             | Self::JobNotTerminal { status }
             | Self::JobNotFailed { status }

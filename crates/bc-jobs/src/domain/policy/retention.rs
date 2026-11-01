@@ -30,10 +30,16 @@ impl Retention {
                 value: retention_days,
             });
         }
-        if !(0..=MAX_RETENTION_DAYS).contains(&cancelled_days) || cancelled_days > retention_days {
+        if !(0..=MAX_RETENTION_DAYS).contains(&cancelled_days) {
             return Err(JobsError::OutOfRange {
                 field: "cancelled_retention_days",
                 value: cancelled_days,
+            });
+        }
+        if cancelled_days > retention_days {
+            return Err(JobsError::CancelledRetentionAboveRetention {
+                cancelled: cancelled_days,
+                retention: retention_days,
             });
         }
         Ok(Self {

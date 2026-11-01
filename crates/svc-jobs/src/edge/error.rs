@@ -39,6 +39,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::ValueTooLong { .. }
         | JobsError::InvalidDuration { .. }
         | JobsError::OutOfRange { .. }
+        | JobsError::CancelledRetentionAboveRetention { .. }
         | JobsError::InvalidJitter
         | JobsError::InvalidRetryFactor
         | JobsError::NotAJsonObject { .. }
