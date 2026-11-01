@@ -6,13 +6,13 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 
 cat >"${workdir}/large.yaml" <<'VALUES'
-port: 8006
+port: 1000008
 runnerTypes:
   retirementQuietPeriodSeconds: 1209600
   impactSweepIntervalSeconds: 2000000
   catalogReconcileIntervalSeconds: 3000000
 priorities:
-  defaultMaxPriority: 4
+  defaultMaxPriority: 1000004
 claims:
   maxWaitSeconds: 5000000
   reservationSeconds: 6000000
@@ -20,8 +20,8 @@ claims:
 savedState:
   maxBytes: 123456789
 retention:
-  days: 395
-  cancelledDays: 10
+  days: 1000395
+  cancelledDays: 1000010
 VALUES
 
 failures=0
@@ -51,7 +51,20 @@ assert_plain_integers() {
     echo "${label}: $(wc -l <<<"${pairs}" | tr -d ' ') integer env entries checked"
 }
 
+assert_refused() {
+    local label="$1"
+    shift
+    if helm template ci "${chart}" "$@" >/dev/null 2>&1; then
+        echo "::error::${label}: the chart rendered a value that is not a whole number"
+        failures=$((failures + 1))
+        return
+    fi
+    echo "${label}: refused"
+}
+
 assert_plain_integers "default values"
 assert_plain_integers "values of one million and above" --values "${workdir}/large.yaml"
+assert_refused "cancelled retention of 7d" --set-string retention.cancelledDays=7d
+assert_refused "saved state of 1MB" --set-string savedState.maxBytes=1MB
 
 exit "$((failures > 0))"

@@ -47,11 +47,12 @@ to `## Unreleased`).
 
 ### Fixed
 
-- The chart renders every integer setting as a plain integer. An integer of one
+- The chart renders every integer environment setting as a plain integer. An integer of one
   million or more (for example `savedState.maxBytes` at its default of
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
   in exponent form, for example `1.048576e+06`, and Jobs refused to boot with
-  it.
+  it. A chart value of these settings that is not a whole number, for example
+  `retention.cancelledDays: 7d`, is refused when the chart renders.
 
 ## 0.6.2 - 2026-11-01
 
