@@ -24,20 +24,35 @@ fn words_of(item: &Value) -> String {
 async fn no_notice_text_names_a_job_of_the_run_or_carries_a_passport() {
     let fixture = JobsFixture::start().await;
     let producer = Producer::new(fixture.fabric(), "projects");
-    let (mut x, mut y, mut z) = (
+    let (mut x, mut m, mut y, mut z) = (
         live_runner(&fixture, "texts-x").await,
+        live_runner(&fixture, "texts-m").await,
         live_runner(&fixture, "texts-y").await,
         live_runner(&fixture, "texts-z").await,
     );
-    let tree_root = JobDeclaration::new(&x.runner_type).with_max_attempts(1);
+    let triggering_user = Uuid::now_v7();
+    let tree_root = JobDeclaration::new(&x.runner_type)
+        .triggered_by(triggering_user, "Ada Lovelace")
+        .with_max_attempts(1);
     producer.declare_v2(&tree_root).await;
     let (root_trigger, _) = started_with_agent(&fixture, &mut x).await;
     let root_work = Work::of(&x, &root_trigger);
-    let caller_job = create(
+    let middle_job = create(
         &fixture,
         &root_work,
-        &y.runner_type,
+        &m.runner_type,
         tree_root.job_id,
+        json!({ "mode": "SYNC", "max_attempts": 1 }),
+    )
+    .await;
+    let (middle_trigger, _) = started_with_agent(&fixture, &mut m).await;
+    assert_eq!(runner::job_id(&middle_trigger), middle_job);
+    let middle_work = Work::of(&m, &middle_trigger);
+    let caller_job = create(
+        &fixture,
+        &middle_work,
+        &y.runner_type,
+        middle_job,
         json!({ "mode": "SYNC", "max_attempts": 1 }),
     )
     .await;
@@ -152,8 +167,12 @@ async fn no_notice_text_names_a_job_of_the_run_or_carries_a_passport() {
     ] {
         assert!(kinds.contains(&wanted), "no {wanted} notice in {kinds:?}");
     }
-    let jobs_of_the_run = [tree_root.job_id, caller_job, strange_parent];
-    let passport_marks = [producer.account_id.to_string(), "passport".to_owned()];
+    let jobs_of_the_run = [tree_root.job_id, middle_job, caller_job, strange_parent];
+    let passport_marks = [
+        triggering_user.to_string(),
+        "ada lovelace".to_owned(),
+        "passport".to_owned(),
+    ];
     let mut told = 0;
     for item in &items {
         let words = words_of(item);

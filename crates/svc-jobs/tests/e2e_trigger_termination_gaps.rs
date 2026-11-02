@@ -8,6 +8,8 @@ use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
 use support::{LONG, gql, metrics, wire};
 
+const LOOKUPS_HELD_BACK: usize = 3;
+
 #[tokio::test]
 async fn a_termination_that_beats_the_ledger_insert_still_fails_the_run() {
     let fixture = JobsFixture::start().await;
@@ -39,7 +41,13 @@ async fn a_termination_that_beats_the_ledger_insert_still_fails_the_run() {
     await_the_insert_held_back(&probes, &database).await;
     let before_the_termination = clock_of(&probes).await;
     taken.terminate().await;
-    await_a_ledger_lookup_after(&probes, &database, before_the_termination).await;
+    await_ledger_lookups_after(
+        &probes,
+        &database,
+        before_the_termination,
+        LOOKUPS_HELD_BACK,
+    )
+    .await;
     held.commit().await.expect("the ledger insert is released");
 
     gql::wait_for_status(&client, admin, job_id, "FAILED", Duration::from_secs(8)).await;
@@ -156,28 +164,46 @@ async fn await_the_insert_held_back(admin: &sqlx::PgPool, database: &str) {
     panic!("the ledger insert never waited for the lock: the gap this scenario needs never opened");
 }
 
-async fn await_a_ledger_lookup_after(
-    admin: &sqlx::PgPool,
+async fn await_ledger_lookups_after(
+    probes: &sqlx::PgPool,
     database: &str,
     since: chrono::DateTime<chrono::Utc>,
+    count: usize,
 ) {
-    const PROBES: u32 = 100;
+    const PROBES: u32 = 400;
+    let mut seen = std::collections::BTreeSet::new();
     for _ in 0..PROBES {
-        let looked: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stat_activity \
+        let looked: Vec<(i32, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT pid, query_start FROM pg_stat_activity \
              WHERE datname = $2 AND pid <> pg_backend_pid() \
                AND query LIKE 'SELECT r.job_id::uuid AS job_id, r.id::uuid AS run_id FROM run_triggers%' \
                AND query_start > $1",
         )
         .bind(since)
         .bind(database)
-        .fetch_one(admin)
+        .fetch_all(probes)
         .await
         .expect("the lookup probe runs");
-        if looked > 0 {
+        seen.extend(looked.into_iter().map(|(_, started)| started));
+        if lookups_apart(&seen) >= count {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("the service never looked for the trigger in the ledger after the termination");
+    panic!(
+        "the service looked for the trigger in the ledger {} time(s) after the termination, not {count}",
+        lookups_apart(&seen)
+    );
+}
+
+fn lookups_apart(started: &std::collections::BTreeSet<chrono::DateTime<chrono::Utc>>) -> usize {
+    let mut apart = 0;
+    let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
+    for at in started {
+        if last.is_none_or(|previous| *at - previous >= chrono::Duration::milliseconds(100)) {
+            apart += 1;
+            last = Some(*at);
+        }
+    }
+    apart
 }
