@@ -100,12 +100,14 @@ impl Subscriber for Warnings {
 struct Server {
     child: Child,
     port: u16,
+    dir: std::path::PathBuf,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -138,7 +140,7 @@ fn start_server_denying_the_advisory() -> Server {
         .stderr(Stdio::null())
         .spawn()
         .expect("nats-server starts");
-    Server { child, port }
+    Server { child, port, dir }
 }
 
 async fn connect(server: &Server) -> async_nats::Client {
