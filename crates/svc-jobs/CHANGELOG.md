@@ -10,7 +10,7 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
-## 0.7.0 - 2026-11-01
+## 0.7.0 - 2026-11-02
 
 ### Added
 
@@ -258,6 +258,8 @@ to `## Unreleased`).
   request data, for a Job whose request data was erased, is absorbed without
   an answer when its other fields match, where it was refused as a reuse of
   the Job id. The command id is stored with the resolution of the Job (migration `0014`).
+- A 0.6 pod cannot read the inbox items of kind `MAIL_NOTICE`, or of notice type
+  `REFUSED`, that a 0.7 pod keeps.
 
 ### Fixed
 

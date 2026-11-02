@@ -7,9 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
-## Unreleased
-
-## 0.7.0 - 2026-11-01
+## 0.7.0 - 2026-11-02
 
 ### Added
 
@@ -39,12 +37,141 @@ form to decide whether a version ships.
   is not a whole number, is outside its bounds, or when the cancelled retention
   is above the retention. The chart values are `retention.days` and
   `retention.cancelledDays`.
-- A refused mail leaves a mail notice at the sender, a refused background call
-  leaves a refusal notice at the caller address, a cancelled background call
-  tells its Caller, and the arrival doorbell is published in versions 1 and 2
-  (a mail notice in version 2 only). A failure, cancel, refusal or mail notice
-  wakes a finished restartable agent and, left unread at the end of a
-  successful Run, starts the restart at once.
+- `jobs.runner.started.{runner_type}`: an Instance reports that it started a Run
+  as a request with one reply. The request carries a start id (a UUIDv7 the
+  runner makes for each start). Accepted, the Run is `STARTED` and held by that
+  Instance under the start id; the same start id from the holder is accepted
+  again and changes nothing while the Run has not ended. A refusal changes
+  nothing and names no Job, parent, Initial Job or Passport: `run_unknown`
+  (also an Instance of another runner type), `instance_unknown` (no live
+  presence yet; the same request is accepted once the presence is live, and a
+  final refusal always wins over it), `run_held`, `run_reserved_elsewhere`,
+  `run_not_pending` (the Run or its Job has ended, also the repeat of the start
+  id after the end), `malformed` (the request cannot be read: also a wrong
+  wire version or a start id that is not a UUIDv7).
+- The start id is stored with the hold (`run_starts.start_id`, migration
+  `0010_run_start_id.sql`); a Run held by the status-stream started fact has
+  none.
+- A mail that Jobs refuses leaves one unread mail notice at the sender
+  address (item kind `MAIL_NOTICE`, notice type `REFUSED`), only when Jobs holds
+  that address as an address of the sender's Run and the Run is held on the
+  Instance that sends. The notice names the refused mail by its id and gives
+  the reason in words; it carries no subject and names no Job. When the id
+  already belongs to an accepted mail, the reason says so. A refusal that
+  repeats the same refusal of the same mail leaves no second notice. A mail
+  refused for its author or its source conversation leaves a notice too.
+- A background call that Jobs refuses leaves one unread refusal notice
+  (notice type `REFUSED`) at the caller address, in addition to the rejected
+  outcome of the creation, only when the call names a Run that Jobs holds on
+  that Instance and an address of that Run. The notice names the Job the call
+  was to create and gives the reason in words. The same refused call sent again
+  (same command id) leaves no second notice.
+- The arrival doorbell is published as `integration.evt.jobs.run.item_arrived.v2`
+  beside version 1. Both carry the Run, the address, the item id and the kind
+  of each new item; version 1 never announces a mail notice, version 2 does
+  (kind `MAIL_NOTICE`).
+- GraphQL: the item kind `MAIL_NOTICE`, the notice type `REFUSED`; for a mail
+  notice `jobId` is null and `mailId` names the refused mail.
+- `inbox_items.source_key` and the kind `MAIL_NOTICE` (migration
+  `0011_mail_notice.sql`).
+- The removal of Runs from the agent directory, by the failure or the cancel of
+  a Run or by the cancel of a Job, erases at once the Results addressed to the
+  removed Runs and the content of a mail whose sender and every recipient are
+  removed addresses (subject, body, author, source conversation and
+  attachments; the mail keeps its id and its recipients, so a repeat of the mail
+  is refused as another mail). A mail between a removed and a live address
+  keeps its content.
+- The cancel of a Job erases the Results of that Job.
+- The request data of a cancelled Job (the payload in any form, the Passport and
+  the runner configuration, the payload kept by Jobs and the same fields in the
+  stored creation fact) is erased `JOBS_CANCELLED_RETENTION_DAYS` days after the
+  cancel: in the cancel itself with the default of 0, otherwise by the backstop
+  sweep. A Job cancelled before this version is erased by the first sweeps after
+  the upgrade (200 Jobs per sweep, the oldest cancel first), and
+  `JOBS_CANCELLED_RETENTION_DAYS` delays them as it delays any cancel; to know
+  the size of that backlog before deploying, count the rows of
+  `job_resolutions` whose `kind` is `CANCELLED`. A failed or completed Job keeps
+  its request data; a cancel of a finished Job writes no cancel and starts no
+  delay; the other Jobs of the Tree keep theirs.
+- `jobs.content_erased_at`, `mails.content_erased_at` and
+  `cancelled_request_data` (migration `0012_content_erasure.sql`). The first
+  time Jobs erased the request data of a Job is the field `contentErasedAt` of
+  the Job view, which then shows no Passport, payload or configuration; a later
+  erasure never changes it.
+- When the sweep erases the request data of a cancelled Job after the cancelled
+  retention, it records `JobContentErased` for that Job, and the Job-detail,
+  list and tree subscriptions that follow the Job receive a delta with the
+  erased view (no Passport, payload or configuration, and `contentErasedAt`).
+  The delta event is `JobsJobContentErasedEvent` (`erasedAt`) in the
+  `JobsJobEvent` interface.
+- An upload of a payload for a Job whose request data was erased, by its
+  Requester, is refused `request_data_erased` (another uploader is refused
+  `job_exists_not_yours` and learns nothing of the erasure), and an upload of an
+  attachment for a mail whose content was erased is refused
+  `mail_content_erased`.
+- The cancel of a Job erases the payload kept by Jobs for that Job and for no
+  other: the cancel of a manual retry leaves the payload kept for the failed Job
+  it retried.
+- A restart Job of a cancelled Job reads the payload kept by Jobs for that Job.
+  When the Job is cancelled after its restart Job failed, the kept payload is
+  gone, so a manual retry of that restart Job is accepted and the Run of the new
+  Job is refused `no_kept_payload` when it asks for the payload.
+- The scrub of a Tree. A Tree is scrubbed when none of its Jobs is waiting, in
+  progress or about to retry, none of its Runs is live, and
+  `JOBS_RETENTION_DAYS` have passed since its last activity. The last activity
+  is the latest of the creation of a Job, the dispatch, the start and the end of
+  a Run, the start of a Step and the resolution of a Job, each at the time Jobs
+  recorded it (never the time a runner reported). A manual retry and a restart
+  Job belong to the Tree of the Job they follow, so they put the clock back to
+  zero. The scrub erases, for every Job of the Tree: the payloads (also the
+  payloads kept by Jobs), Passports and configurations; the Results, read or
+  not; the saved states; the content, author, source conversation and
+  attachments of every mail of the Tree; the unread items and notices; the
+  labels of the Steps and of the plan items; the log messages; and the
+  parameters and the diagnostic of every failure. The same content is removed
+  from the recorded events of the Jobs and from the published events kept by
+  Jobs, and the name of the requester recorded with the creation is replaced by
+  `erased`. Everything else stays: the Jobs with their status, runner type,
+  attempt count, timestamps, parent and Initial Job, the Runs, the Steps, the
+  lifecycle events, the level, Step index and time of the log lines, and the
+  kind and reason code of a failure. Each Job of the Tree gets a
+  `JobContentErased` delta, shows no Passport, payload or configuration, and
+  shows the time of its first erasure (a Job already erased keeps its own).
+  A lowered `JOBS_RETENTION_DAYS` scrubs, from the next sweep on, the Trees it
+  now covers, 200 Trees per sweep, the oldest first; a higher value restores
+  nothing. A Tree whose scrub fails does not stop the sweep: the Trees behind
+  it are scrubbed, and the failure is counted in `jobs_scrub_failures_total`.
+- After the scrub of a Tree, a manual retry of one of its Jobs is refused
+  `tree_scrubbed`, creates no successor, and the `manual_retry` affordance of
+  the Job is blocked with the same reason code. No agent of the Tree can be
+  restarted: its saved state is erased, so the administrator's agent directory
+  of the Tree no longer lists it, and no Run of the Tree is live to send it a
+  mail. A mail to a finished agent in a Tree that is not scrubbed still starts a
+  restart.
+- A payload kept by Jobs for a Job that is never created, and an attachment
+  uploaded for a mail that is never sent, are erased `JOBS_RETENTION_DAYS`
+  after the upload. A creation that names the erased payload is rejected
+  `payload_not_uploaded`, and a send that names the erased attachment is
+  refused `attachment_not_uploaded`. The payload kept for a Job that was
+  created stays until its Tree is scrubbed.
+- `tree_scrubs` and the indexes the scrub scans, among them `jobs_initial_created`
+  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration builds
+  nine indexes without the concurrent option, one of them over the whole
+  history of published integration events: the first boot of this version takes
+  longer on a large history, and writes wait while an index is built.
+- `jobs_scrub_failures_total`: the number of Trees whose scrub failed since the
+  process started, at zero from the first scrape. A series that keeps rising
+  means a Tree cannot be scrubbed.
+- The sweep of uploads that no Job or mail uses and the creation of a Job from
+  a kept payload (or the send of a mail with attachments) no longer race: a
+  payload or an attachment is never erased while the Job or the mail that uses
+  it is being created, and a creation whose payload the sweep erased first is
+  rejected `payload_not_uploaded`.
+- The scrub does not reach the integration events already carried by the
+  stream (the stream keeps them for its own retention), nor backups, and it does
+  not rewrite the display names recorded with a manual retry, a deletion, a
+  forced priority or a cancellation request of a Run. An integration event still
+  waiting to be published when its Tree is scrubbed is published as it was.
 - A `PUSH` Run that has not started fails as permanent, with the reason
   `trigger_terminated`, when a runner terminates its trigger (`Term` on the
   trigger stream): its Job fails with that reason and no retry follows. Jobs
@@ -67,15 +194,82 @@ form to decide whether a version ships.
   The stream sequence of a trigger is stored with three attempts, and a
   termination looks for its Run for about one second before it counts the
   sequence as naming no Run.
-- A create repeated identically, and a finish, a fail or a cancel (version 3)
-  repeated with the same command id by an actor that may send it, get the event
-  of the first outcome again (`queued.v2`, `completed.v2`, `failed.v2`,
-  `cancel_accepted.v1`). A command Jobs refused is judged again.
 
 ### Changed
 
+- The schema no longer carries a description on the fields `requestedPriority`,
+  `effectivePriority` and `forcedPriority` of the Job view. The descriptions
+  were: `requestedPriority`, "The level the producer requested — for a child,
+  its parent's level."; `effectivePriority`, "The level the Job waits at.";
+  `forcedPriority`, "The level a super user forced, when one did.".
+- A cancel keeps the notice of a cancelled called Job only for a Caller that
+  stays in the agent directory. When one cancel reaches a called Job and its
+  Caller (a Job above both, or the restart Job of the Caller), the Caller gets
+  no notice, no restart is queued for its agents and no arrival doorbell is
+  published for it. A background Caller is removed when its Run or its address
+  is removed; a sync Caller is removed when its Run is removed or when a restart
+  Run that the cancel removes took every agent of its Run. A Caller whose agent
+  stays at its Run, also when a removed restart Run added another agent, keeps
+  the notice and restarts for it. A cancel of the called Job alone, or the
+  called runner cancelling itself, still tells its Caller.
+- The removal of Runs from the agent directory also deletes the queued restarts
+  of those Runs and marks a Run that had completed as removed, so a late fact
+  cannot leave a notice for it. A removed Run that had completed now answers
+  `run_removed` instead of `run_ended` on the runner surface.
+- A background call whose called Job is cancelled now tells the Caller by a
+  `JOB_CANCELLED` notice at the caller address, whoever cancelled the Job (the
+  Requester, an administrator or the runner that works the Job), as a sync call
+  already did.
+- A failure notice, a cancel notice, a refusal notice or a mail notice wakes a
+  finished restartable agent (at its address or addressed to its Run) and, left
+  unread when a Run ends with success, starts the restart at once. A cc notice
+  starts nothing.
+- The runner surface answers `register_agents`, `list_agents`, `mark_read` and
+  `started` without waiting for a claim slot: a request that waits for its Tree
+  no longer delays the others. The surface is no longer bounded in flight by
+  `JOBS_CLAIM_MAX_HELD`.
+- A started fact of the status stream for a Run that a claim reserved for
+  another Instance is acknowledged and discarded; a
+  started request with a start id for a Run held by that fact is refused
+  `run_held`.
+- A repeated command of the current version (version 3) gets the outcome of the
+  first again. A create repeated identically, also after the Job was dispatched,
+  publishes `queued.v2` again. A finish, a fail or a cancel repeated with the
+  same command id by an actor that may send it publishes `completed.v2`,
+  `failed.v2` or `cancel_accepted.v1` again, whatever the Job became since, and
+  changes nothing: each repeat has its own event id and the correlation id of
+  the repeat. The sender is checked before the repeat is answered, so an actor
+  that may not send the command gets `command_rejected` and never the first
+  outcome. A first command that Jobs refused is not remembered: the repeat is
+  judged again, for example a create refused for a retired type is accepted
+  once the type is reactivated. A cancel by the owner of a Job that has no
+  recorded Requester, on a Job that the first command cancelled, gets
+  `cancel_accepted.v1`, not `job_terminal`. A create repeated for a Job whose
+  request data was erased compares the runner type, the producer, the parent,
+  the user (by identity, not by the name shown), the initial Job, the
+  Requester, the source, the maximum attempts, the priority and the call only.
+  A create by a Run that declares another call mode or caller address than the
+  Job holds is a reuse of the Job id, whether or not the request data was
+  erased. The versions 1 and 2 of the commands keep no memory of a command id:
+  a finish, a fail or a cancel answers as before, and a create that carries
+  request data, for a Job whose request data was erased, is absorbed without
+  an answer when its other fields match, where it was refused as a reuse of
+  the Job id. The command id is stored with the resolution of the Job (migration `0014`).
 - A 0.6 pod cannot read the inbox items of kind `MAIL_NOTICE`, or of notice type
   `REFUSED`, that a 0.7 pod keeps.
+
+### Fixed
+
+- A manual retry decided before the scrub of its Tree and committed after it is
+  refused as a write race instead of putting erased content back in a Job of a
+  scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
+  A restart decided before the scrub creates no Job.
+- The chart renders every integer environment setting as a plain integer. An integer of one
+  million or more (for example `savedState.maxBytes` at its default of
+  `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
+  in exponent form, for example `1.048576e+06`, and Jobs refused to boot with
+  it. A chart value of these settings that is not a whole number, for example
+  `retention.cancelledDays: 7d`, is refused when the chart renders.
 
 ## 0.6.2 - 2026-11-01
 

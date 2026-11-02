@@ -31,8 +31,10 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   finish, a fail or a cancel (version 3) repeated with the same command id by an
   actor that may send it, get the event of the first outcome again; a command
   Jobs refused is judged again; conflicting reuse of an id is rejected.
-- **Runners** never touch the GraphQL surface. All runner ↔ jobs interaction
-  rides the NATS runner transport below, governed by NATS credentials.
+- **Runners** talk to Jobs over the NATS runner transport below, governed by
+  NATS credentials. Only the runner gestures of a service account that holds
+  the scope `jobs:runner` (payloads, Results, mail, saved states) reach the
+  GraphQL surface; a runner reaches nothing else of it.
 - **State** is written once per fact: domain events land in `domain_events`
   with optimistic concurrency, integration events go out through a
   transactional outbox, and PostgreSQL `LISTEN/NOTIFY` fans committed facts out
@@ -339,6 +341,7 @@ fix — **and the drop is counted**, on `/metrics`:
 | `jobs_runner_facts_discarded_total{fact}` | counter | facts this service could not read, or refused before they reached their job, by fact (`started`, `plan_declared`, `step_started`, `completed`, `failed`, `log`; `other` is reserved and currently unreachable — a status fact this service does not know, such as one minted by a newer runner vocabulary, is acknowledged and not counted, like the late fact above: understood, not lost). The label is the identity the consumer resolved when it dispatched the frame, drawn from the contract's own vocabulary — never a segment of the subject, so a publisher cannot mint series |
 | `jobs_nats_server_errors_total` | counter | errors the NATS server reported on the runner-transport connection (claim, surface, trigger and advisory subscriptions, publishes). A refused subscription or publish for want of a right is one of them: the call that made it succeeds, nothing is delivered, and this series and a warn line are the only trace |
 | `jobs_trigger_terminations_total{outcome}` | counter | trigger terminations and trigger stores handled, by outcome: `run_failed` (the pending run was failed), `ignored` (the run had started, was reserved or had ended), `no_run` (the sequence names no run Jobs dispatched, after the lookup window), `store_failed` (the stream sequence of a dispatched trigger could not be stored after three attempts: a termination of it will fail nothing), `unreadable` (an advisory without a readable sequence), `unsettled` (the run could not be failed: the advisory is not delivered again). `store_failed`, `unreadable` and `unsettled` are runs left pending; so is `no_run` for a trigger Jobs did dispatch. All six series exist from boot |
+| `jobs_scrub_failures_total` | counter | Trees whose scrub failed since the process started, at zero from the first scrape. A series that keeps rising means a Tree cannot be scrubbed; the sweep goes on with the Trees behind it |
 
 A fact the **domain** examined and declined — a late fact on an already-terminal
 job, the ordinary case — is *not* counted: it was understood, not lost. What
@@ -426,7 +429,15 @@ recorded is always the passport's own id.
   directory of the Tree of a Job: the running agents and the finished agents
   that can restart, as the runner listing shows them; a snapshot, with no live
   delta). Job views carry
-  `requestedPriority`, `effectivePriority` and `forcedPriority`.
+  `requestedPriority`, `effectivePriority` and `forcedPriority`, and
+  `contentErasedAt`, the time the request data of the Job was first erased
+  (empty until then). A Job whose request data was erased shows no Passport,
+  payload or configuration, and the Job subscriptions that follow it receive a
+  `JobsJobContentErasedEvent` with the erased view. `jobsUnread` lists the items
+  of a Run; an item is of kind `MAIL`, `CC_NOTICE`, `NOTICE` or `MAIL_NOTICE`
+  (no `jobId`, `mailId` names the refused mail), and a notice is of type
+  `ACCEPTED`, `QUEUE_POSITION`, `STARTED`, `RUN_COMPLETED`, `JOB_FAILED`,
+  `JOB_CANCELLED` or `REFUSED`.
 - **Mutations — ack-only** (`{ success }`; state arrives via the streams) —
   `jobsCancelJob`, `jobsManualRetryJob` (creates a successor job from a
   pinned failed resolution, even past the retry budget; for a `CLAIM` type the
@@ -503,7 +514,7 @@ failing job by job.
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |
 | `JOBS_RETRY_JITTER_BASIS_POINTS` | `2000` | Jitter span applied to each computed delay. |
 | `JOBS_MAX_ATTEMPTS_CEILING` | `10` | Service ceiling; a job's own `max_attempts` may lower, never exceed it (default per-job budget: 3). |
-| `JOBS_BACKSTOP_INTERVAL_SECONDS` | `30` | Sweep interval for the run-duration, inactivity, cancel-entry and automatic-finish backstops, the scrub of the Trees whose retention has passed (200 Trees per sweep), the erasure of the uploads that no Job or mail uses, and the erasure of the request data of cancelled Jobs. |
+| `JOBS_BACKSTOP_INTERVAL_SECONDS` | `30` | Sweep interval of the backstops, run in this order: repair of the access paths, presence sessions, runs past their maximum duration, lost claims, stranded triggers, erasure of the request data of cancelled Jobs, finish of the called Jobs that their Caller forgot to finish, inactive Jobs, expired Results, scrub of the Trees whose retention has passed, erasure of the uploads that no Job or mail uses, and the restarts that are due. The erasure of cancelled request data and the scrub take at most 200 Jobs or Trees per sweep, the oldest first. |
 | `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS` | `250` | Floor between dispatch passes. |
 | `JOBS_RETIREMENT_QUIET_PERIOD_SECONDS` | `86400` (24 h) | A deprecated runner type may only be retired this long after its latest terminal run. |
 | `JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS` | `60` | Sweep interval of the durable timer that emits `RunnerTypeBecameRetirable` once the quiet period elapses. |

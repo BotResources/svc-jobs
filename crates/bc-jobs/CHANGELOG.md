@@ -8,7 +8,7 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
-## 0.9.0 - 2026-11-01
+## 0.9.0 - 2026-11-02
 
 - `commands::job::auto_finish::AutoFinishFacts` and its `decide`: the decision
   that a called Job is finished by rule, from the facts of the Job, of its
@@ -84,7 +84,6 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   cancelled (`NoticePlan::JobCancelled`), whoever cancelled it;
   `CallNotices::refusal_address` gives the address of a refused background
   call's notice.
-
 - `domain::policy::Retention`: the days a Tree is kept after its last activity
   (1 to 395) and the days the request data of a cancelled Job is kept (0 to
   395, never above the first). `Retention::from_days` builds it and refuses

@@ -24,8 +24,11 @@ fails the boot loudly when one is absent; it never creates them. Keep the
 JOBS_CANCEL bucket's TTL at least as long as the longest maximum run duration
 any runner type is set to (a new type starts at JOBS_RUN_MAX_DURATION_SECONDS,
 default 72h). Instances of CLAIM runner types request their runs on
-jobs.claim.{runner_type} (core NATS request/reply): the runner credentials must
-be allowed to publish there, and svc-jobs to subscribe to jobs.claim.*.
+jobs.claim.v2.{runner_type}, and every runner instance sends its requests to
+jobs.runner.{started,register_agents,list_agents,mark_read}.{runner_type} (core
+NATS request/reply): the runner credentials must be allowed to publish on
+jobs.claim.v2.* and jobs.runner.*.* and to subscribe to their reply inboxes, and
+svc-jobs to subscribe to the same subjects and to publish the replies.
 svc-jobs must also be allowed to subscribe to
 $JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.> (a run whose trigger a runner
 terminates is failed from that broker advisory); runner credentials must not be

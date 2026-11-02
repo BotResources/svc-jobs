@@ -5,7 +5,7 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
-## 0.8.0 - 2026-11-01
+## 0.8.0 - 2026-11-02
 
 Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant, type or field
 of contract-jobs 0.7.0 is removed or renamed; the obsolete offers keep their constants
