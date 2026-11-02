@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use super::change::JobChange;
 use super::erasure::erase_what_a_cancel_leaves_behind;
+use super::finish_premise::guard_finish_premise_still_holds;
 use super::guards::{
     claim_source, guard_caller_addresses_still_held, guard_decision_still_holds,
     guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_kept_payloads_uploaded,
@@ -73,6 +74,7 @@ pub async fn commit_job_changes_in(
     guard_kept_payloads_uploaded(&mut *tx, &changes).await?;
     guard_caller_addresses_still_held(&mut *tx, &changes).await?;
     guard_restarts_still_due(&mut *tx, &changes).await?;
+    guard_finish_premise_still_holds(&mut *tx, &changes).await?;
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
     for change in &changes {
         guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
@@ -172,6 +174,12 @@ async fn apply_change(
         .collect::<Result<_, bc_jobs::JobsError>>()?;
     let metadata = change.metadata.as_ref().unwrap_or(metadata);
     apply::apply_job_events(tx, change.job_id, &recorded, metadata, at).await?;
+    if let Some(command_id) = change
+        .remembered_command
+        .filter(|_| change.resolves_the_job())
+    {
+        apply::command_memory::remember(tx, change.job_id, command_id).await?;
+    }
     for (event_id, event) in &recorded {
         let published =
             integration::of_event(event, change.before.as_ref(), change.note.as_deref())?;

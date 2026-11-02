@@ -14,6 +14,29 @@ to `## Unreleased`).
 
 ### Added
 
+- A called Job that its Caller got the answer of, and that the Caller did not
+  finish, is finished by Jobs once a Run that may finish it has ended with
+  success after that answer was read. The Caller got the answer when it marked
+  as read the notice that the called Run completed (a sync call), or the last
+  direct mail from the completed Run to the address it named (a background
+  call; the last earlier mail when the restart Run sent none). The Run that may
+  finish the Job is the Requester Run, or a Run acting for it through a restart.
+  The latest Run of the Job and of its restart Jobs must have completed: a
+  failed or cancelled Run of a restart Job does not count. Jobs does not finish
+  the Job while a restart Job of it waits for dispatch, waits for a retry or has
+  a live Run, nor while a restart of one of its Runs is due. It finishes the
+  Job at the end of such a Run and in every backstop sweep, before the
+  inactivity check, by the same path as a finish: a Caller Run that failed or
+  was cancelled finishes nothing, a Job the Caller already finished is not
+  finished again, a runner or a service that is not the Requester is still
+  refused, and a finish sent afterwards is refused `job_terminal`. The finish
+  also finishes the restart Jobs of the Job that are not terminal, in the same
+  transaction, and is refused as a write race when a restart Job or a due restart
+  appeared since Jobs decided. The event is attributed to the service account
+  of Jobs.
+- A restart that is refused for good (the runner type is retired, the parent Job
+  is terminal, deleted or unknown, or the Tree is scrubbed) removes its pending
+  wake, so that the Job it belongs to can be finished.
 - `JOBS_RETENTION_DAYS` (default `30`, from `1` to `395`) and
   `JOBS_CANCELLED_RETENTION_DAYS` (default `0`, from `0` to `395`, never above
   `JOBS_RETENTION_DAYS`). Jobs refuses to boot, naming the setting, when a value
@@ -155,6 +178,28 @@ to `## Unreleased`).
   not rewrite the display names recorded with a manual retry, a deletion, a
   forced priority or a cancellation request of a Run. An integration event still
   waiting to be published when its Tree is scrubbed is published as it was.
+- A `PUSH` Run that has not started fails as permanent, with the reason
+  `trigger_terminated`, when a runner terminates its trigger (`Term` on the
+  trigger stream): its Job fails with that reason and no retry follows. Jobs
+  stores the stream sequence of each trigger it publishes (table `run_triggers`)
+  and reads the broker advisory of a terminated message of the trigger stream
+  (`$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.>`, a core
+  subscription in the queue group `svc_jobs_trigger_terminated`) to find the Run.
+  A Run that started, a Run reserved by a claim and a Run that ended are left
+  unchanged. The advisory is delivered at most once: a lost advisory leaves the
+  Run pending and its Job waiting. A Run dispatched before this release has no
+  stored sequence and is not covered. The NATS user of Jobs must be allowed to
+  subscribe to the advisory subject. The listener does not take part in
+  readiness: a pod is ready whether or not the subscription is granted. The
+  server refuses a subscription for want of a right without failing the call
+  that made it, so the pod stays ready and no Run is failed by a termination;
+  the refusal is logged at warn and counted in
+  `jobs_nats_server_errors_total`. The listener subscribes again every five
+  seconds only after a subscription error or the end of the subscription.
+  Each termination is counted by outcome in `jobs_trigger_terminations_total`.
+  The stream sequence of a trigger is stored with three attempts, and a
+  termination looks for its Run for about one second before it counts the
+  sequence as naming no Run.
 
 ### Changed
 
@@ -193,6 +238,29 @@ to `## Unreleased`).
   another Instance is acknowledged and discarded; a
   started request with a start id for a Run held by that fact is refused
   `run_held`.
+- A repeated command of the current version (version 3) gets the outcome of the
+  first again. A create repeated identically, also after the Job was dispatched,
+  publishes `queued.v2` again. A finish, a fail or a cancel repeated with the
+  same command id by an actor that may send it publishes `completed.v2`,
+  `failed.v2` or `cancel_accepted.v1` again, whatever the Job became since, and
+  changes nothing: each repeat has its own event id and the correlation id of
+  the repeat. The sender is checked before the repeat is answered, so an actor
+  that may not send the command gets `command_rejected` and never the first
+  outcome. A first command that Jobs refused is not remembered: the repeat is
+  judged again, for example a create refused for a retired type is accepted
+  once the type is reactivated. A cancel by the owner of a Job that has no
+  recorded Requester, on a Job that the first command cancelled, gets
+  `cancel_accepted.v1`, not `job_terminal`. A create repeated for a Job whose
+  request data was erased compares the runner type, the producer, the parent,
+  the user (by identity, not by the name shown), the initial Job, the
+  Requester, the source, the maximum attempts, the priority and the call only.
+  A create by a Run that declares another call mode or caller address than the
+  Job holds is a reuse of the Job id, whether or not the request data was
+  erased. The versions 1 and 2 of the commands keep no memory of a command id:
+  a finish, a fail or a cancel answers as before, and a create that carries
+  request data, for a Job whose request data was erased, is absorbed without
+  an answer when its other fields match, where it was refused as a reuse of
+  the Job id. The command id is stored with the resolution of the Job (migration `0014`).
 
 ### Fixed
 

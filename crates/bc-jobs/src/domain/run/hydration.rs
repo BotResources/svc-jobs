@@ -1,5 +1,5 @@
 use crate::domain::run::RunState;
-use crate::domain::run::failure::PASSPORT_REQUIRED;
+use crate::domain::run::failure::{PASSPORT_REQUIRED, RunFailureKind, TRIGGER_TERMINATED};
 use crate::domain::run::parts::RunTerminal;
 use crate::domain::run::status::RunTerminalKind;
 use crate::error::JobsError;
@@ -51,15 +51,19 @@ pub(super) fn check_timeline(state: &RunState) -> Result<(), JobsError> {
 fn settles_unstarted(terminal: &RunTerminal, reserved: bool) -> bool {
     match terminal.kind() {
         RunTerminalKind::Cancelled => true,
-        RunTerminalKind::Failed => reserved || fails_for_missing_passport(terminal),
+        RunTerminalKind::Failed => reserved || fails_before_any_start(terminal),
         RunTerminalKind::Completed => false,
     }
 }
 
-fn fails_for_missing_passport(terminal: &RunTerminal) -> bool {
+fn fails_before_any_start(terminal: &RunTerminal) -> bool {
     terminal
         .failure()
-        .is_some_and(|report| report.reason_code().as_str() == PASSPORT_REQUIRED)
+        .is_some_and(|report| match report.reason_code().as_str() {
+            PASSPORT_REQUIRED => true,
+            TRIGGER_TERMINATED => report.kind() == RunFailureKind::Permanent,
+            _ => false,
+        })
 }
 
 pub(super) fn transiently_failed(terminal: Option<&RunTerminal>) -> bool {

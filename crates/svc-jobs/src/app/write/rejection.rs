@@ -98,7 +98,7 @@ pub async fn publish_command_rejection(
     Ok(())
 }
 
-async fn stage_in(
+pub(super) async fn stage_in(
     tx: &mut sqlx::PgConnection,
     ids: &dyn IdFactory,
     published: Vec<integration::Published>,

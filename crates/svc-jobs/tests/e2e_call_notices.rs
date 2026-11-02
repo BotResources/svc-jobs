@@ -1,6 +1,7 @@
 mod support;
 
 use serde_json::json;
+use support::auto_finish::{becomes_completed, complete, mark_the_notice, stays, sync_call};
 use support::call_notices::{background_call, caller, types, wait_for_job_notice, wait_for_notice};
 use support::db::Durable;
 use support::fixture::{JobsFixture, runner_access};
@@ -147,5 +148,20 @@ async fn a_sync_call_tells_the_callers_run_the_end_with_the_answer_or_a_referenc
             && item["failureReport"]["reason_code"] == "boom")
     );
     durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn jobs_finishes_the_job_when_the_caller_only_marked_the_notice() {
+    let fixture = JobsFixture::start().await;
+    let mut caller = caller(&fixture, "notices-marked").await;
+    let called = sync_call(&fixture, &mut caller).await;
+    complete(&caller, &called).await;
+    mark_the_notice(&fixture, &caller, &called).await;
+
+    stays(&fixture, &[called.job], "IN_PROGRESS").await;
+
+    caller.pair.parent.complete_run(&caller.trigger).await;
+    becomes_completed(&fixture, &[called.job]).await;
     fixture.shutdown().await;
 }

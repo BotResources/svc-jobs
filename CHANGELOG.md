@@ -13,6 +13,29 @@ form to decide whether a version ships.
 
 ### Added
 
+- A called Job that its Caller got the answer of, and that the Caller did not
+  finish, is finished by Jobs once a Run that may finish it has ended with
+  success after that answer was read. The Caller got the answer when it marked
+  as read the notice that the called Run completed (a sync call), or the last
+  direct mail from the completed Run to the address it named (a background
+  call; the last earlier mail when the restart Run sent none). The Run that may
+  finish the Job is the Requester Run, or a Run acting for it through a restart.
+  The latest Run of the Job and of its restart Jobs must have completed: a
+  failed or cancelled Run of a restart Job does not count. Jobs does not finish
+  the Job while a restart Job of it waits for dispatch, waits for a retry or has
+  a live Run, nor while a restart of one of its Runs is due. It finishes the
+  Job at the end of such a Run and in every backstop sweep, before the
+  inactivity check, by the same path as a finish: a Caller Run that failed or
+  was cancelled finishes nothing, a Job the Caller already finished is not
+  finished again, a runner or a service that is not the Requester is still
+  refused, and a finish sent afterwards is refused `job_terminal`. The finish
+  also finishes the restart Jobs of the Job that are not terminal, in the same
+  transaction, and is refused as a write race when a restart Job or a due restart
+  appeared since Jobs decided. The event is attributed to the service account
+  of Jobs.
+- A restart that is refused for good (the runner type is retired, the parent Job
+  is terminal, deleted or unknown, or the Tree is scrubbed) removes its pending
+  wake, so that the Job it belongs to can be finished.
 - `JOBS_RETENTION_DAYS` (default `30`, from `1` to `395`) and
   `JOBS_CANCELLED_RETENTION_DAYS` (default `0`, from `0` to `395`, never above
   `JOBS_RETENTION_DAYS`). Jobs refuses to boot, naming the setting, when a value
@@ -25,6 +48,32 @@ form to decide whether a version ships.
   (a mail notice in version 2 only). A failure, cancel, refusal or mail notice
   wakes a finished restartable agent and, left unread at the end of a
   successful Run, starts the restart at once.
+- A `PUSH` Run that has not started fails as permanent, with the reason
+  `trigger_terminated`, when a runner terminates its trigger (`Term` on the
+  trigger stream): its Job fails with that reason and no retry follows. Jobs
+  stores the stream sequence of each trigger it publishes (table `run_triggers`)
+  and reads the broker advisory of a terminated message of the trigger stream
+  (`$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.>`, a core
+  subscription in the queue group `svc_jobs_trigger_terminated`) to find the Run.
+  A Run that started, a Run reserved by a claim and a Run that ended are left
+  unchanged. The advisory is delivered at most once: a lost advisory leaves the
+  Run pending and its Job waiting. A Run dispatched before this release has no
+  stored sequence and is not covered. The NATS user of Jobs must be allowed to
+  subscribe to the advisory subject. The listener does not take part in
+  readiness: a pod is ready whether or not the subscription is granted. The
+  server refuses a subscription for want of a right without failing the call
+  that made it, so the pod stays ready and no Run is failed by a termination;
+  the refusal is logged at warn and counted in
+  `jobs_nats_server_errors_total`. The listener subscribes again every five
+  seconds only after a subscription error or the end of the subscription.
+  Each termination is counted by outcome in `jobs_trigger_terminations_total`.
+  The stream sequence of a trigger is stored with three attempts, and a
+  termination looks for its Run for about one second before it counts the
+  sequence as naming no Run.
+- A create repeated identically, and a finish, a fail or a cancel (version 3)
+  repeated with the same command id by an actor that may send it, get the event
+  of the first outcome again (`queued.v2`, `completed.v2`, `failed.v2`,
+  `cancel_accepted.v1`). A command Jobs refused is judged again.
 
 ### Changed
 

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod adversary;
+pub mod auto_finish;
 pub mod broker;
 pub mod call_notices;
 pub mod calls;
@@ -32,6 +33,7 @@ pub mod priority;
 pub mod producer;
 pub mod refusal;
 pub mod removed_address;
+pub mod repeat_scene;
 pub mod restart;
 pub mod retention;
 pub mod runner;
@@ -49,6 +51,7 @@ pub mod surface;
 pub mod tree;
 pub mod tree_hold;
 pub mod trigger_stream;
+pub mod trigger_termination;
 pub mod views;
 pub mod wire;
 

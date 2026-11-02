@@ -160,6 +160,10 @@ pub const STARTS_OF_RUN: &str = "SELECT count(*) FROM run_starts WHERE run_id = 
 pub const STARTS_WITHOUT_START_ID_OF_RUN: &str =
     "SELECT count(*) FROM run_starts WHERE run_id = $1 AND start_id IS NULL";
 pub const STARTS_UNDER_START_ID: &str = "SELECT count(*) FROM run_starts WHERE start_id = $1";
+pub const FAILURES_OF_RUN_FOR_REASON: &str = "SELECT count(*) FROM run_terminals \
+     WHERE run_id = $1 AND kind = 'FAILED' AND failure_kind = 'PERMANENT' \
+       AND reason_code = 'trigger_terminated'";
+pub const TRIGGERS_OF_RUN: &str = "SELECT count(*) FROM run_triggers WHERE run_id = $1";
 pub const TERMINALS_OF_RUN: &str = "SELECT count(*) FROM run_terminals WHERE run_id = $1";
 pub const CURRENT_RUNS_OF_RUN: &str = "SELECT count(*) FROM current_runs WHERE run_id = $1";
 pub const RINGS_FOR_RUN: &str = "SELECT count(*) FROM integration_outbox \

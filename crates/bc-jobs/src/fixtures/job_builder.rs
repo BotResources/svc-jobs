@@ -62,6 +62,11 @@ impl JobBuilder {
         self
     }
 
+    pub fn with_call(mut self, call: JobCall) -> Self {
+        self.state.call = Some(call);
+        self
+    }
+
     pub fn with_passport(mut self, passport: JobPassport) -> Self {
         self.state.passport = Some(passport);
         self

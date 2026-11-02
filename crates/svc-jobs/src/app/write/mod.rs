@@ -1,5 +1,7 @@
+mod again;
 mod change;
 mod erasure;
+mod finish_premise;
 mod fleet;
 mod guards;
 mod job_changes;
@@ -9,6 +11,7 @@ mod rederive;
 mod rejection;
 mod routing;
 
+pub use again::publish_again;
 pub use change::{CallerAddressPremise, JobChange};
 pub use fleet::{FleetChange, commit_fleet, commit_fleet_events};
 pub use guards::guard_free_capacity;

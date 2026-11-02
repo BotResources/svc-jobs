@@ -1,6 +1,7 @@
 pub mod acts_for;
 pub mod answers;
 pub mod apply;
+pub mod auto_finish;
 pub mod call_notices;
 pub mod claim;
 pub mod directory;
@@ -32,6 +33,7 @@ pub mod rows;
 pub mod saved_states;
 pub mod scrub;
 pub mod tree_lock;
+pub mod trigger_ledger;
 pub mod waiting_repair;
 pub mod work;
 

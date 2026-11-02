@@ -67,7 +67,7 @@ impl Job {
         }
         self.guard_not_deleted()?;
         self.guard_not_terminal()?;
-        command.requester.guard_may_resolve(self.requester())?;
+        command.requester.guard_may_fail(self.requester())?;
         self.resolve_asking_its_run_to_stop(JobEvent::JobFailed(JobFailed {
             job_id: self.id(),
             resolution_id: command.resolution_id,
@@ -82,7 +82,8 @@ impl Job {
 mod tests {
     use super::*;
     use crate::domain::job::resolution::JobResolution;
-    use crate::domain::ownership::{ActorRef, DeclarationClaim};
+    use crate::domain::ownership::{ActorRef, DeclarationClaim, FinishVerdict};
+    use crate::domain::requester::Requester;
     use crate::fixtures::{JobBuilder, RunBuilder, job_id, resolution_id, ts};
     use uuid::Uuid;
 
@@ -175,6 +176,18 @@ mod tests {
             result.warnings,
             vec![CommandWarning::CancellationIsBestEffort]
         );
+    }
+
+    #[test]
+    fn the_rule_may_not_declare_a_job_requested_by_a_run_failed() {
+        let job = JobBuilder::new()
+            .with_requester(Requester::Run(crate::fixtures::run_id()))
+            .build();
+        let result = job.declare_failed(FailJob {
+            resolution_id: resolution_id(),
+            requester: ResolutionRequester::Rule(FinishVerdict::granted()),
+        });
+        assert_eq!(result, Err(JobsError::NotRequester));
     }
 
     #[test]

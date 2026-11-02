@@ -138,6 +138,9 @@ pub(super) async fn lock_directory_trees(
         if let Some(restart) = &change.restart {
             trees.push(restart.tree);
         }
+        if change.finish_premise.is_some() {
+            trees.push(tree_of_change(tx, change).await?);
+        }
         if let Some(premise) = &change.caller_address {
             trees.extend(crate::db::directory::tree_of_run(tx, premise.caller).await?);
         }

@@ -1,144 +1,14 @@
-use br_core_auth::{AuthMethod, Passport, PassportClaims};
 use br_core_integration::IntegrationCommand;
 use br_test_harness::FabricTestNats;
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::wire;
 
-pub enum TriggeringUser {
-    Declared(Uuid),
-    Named(Uuid, String),
-}
+mod declaration;
+mod resolution;
 
-impl TriggeringUser {
-    pub fn id(&self) -> Uuid {
-        match self {
-            Self::Declared(id) | Self::Named(id, _) => *id,
-        }
-    }
-
-    fn wire(&self) -> Value {
-        match self {
-            Self::Declared(id) => json!(id.to_string()),
-            Self::Named(id, display_name) => json!({
-                "id": id.to_string(),
-                "display_name": display_name,
-            }),
-        }
-    }
-}
-
-pub struct JobDeclaration {
-    pub job_id: Uuid,
-    pub runner_type: String,
-    pub config: Option<Value>,
-    pub parent_job_id: Option<Uuid>,
-    pub triggered_by: Option<TriggeringUser>,
-    pub source: Option<(String, Uuid)>,
-    pub max_attempts: Option<i64>,
-    pub priority: Option<i64>,
-}
-
-impl JobDeclaration {
-    pub fn new(runner_type: &str) -> Self {
-        Self {
-            job_id: Uuid::now_v7(),
-            runner_type: runner_type.to_string(),
-            config: None,
-            parent_job_id: None,
-            triggered_by: None,
-            source: None,
-            max_attempts: None,
-            priority: None,
-        }
-    }
-
-    pub fn with_id(mut self, job_id: Uuid) -> Self {
-        self.job_id = job_id;
-        self
-    }
-
-    pub fn with_config(mut self, config: Value) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    pub fn with_parent(mut self, parent_job_id: Uuid) -> Self {
-        self.parent_job_id = Some(parent_job_id);
-        self
-    }
-
-    pub fn triggered_by_user(mut self, user_id: Uuid) -> Self {
-        self.triggered_by = Some(TriggeringUser::Declared(user_id));
-        self
-    }
-
-    pub fn triggered_by(mut self, user_id: Uuid, display_name: &str) -> Self {
-        self.triggered_by = Some(TriggeringUser::Named(user_id, display_name.to_string()));
-        self
-    }
-
-    pub fn with_source(mut self, bc: &str, entity_id: Uuid) -> Self {
-        self.source = Some((bc.to_string(), entity_id));
-        self
-    }
-
-    pub fn with_max_attempts(mut self, max_attempts: i64) -> Self {
-        self.max_attempts = Some(max_attempts);
-        self
-    }
-
-    pub fn with_priority(mut self, priority: i64) -> Self {
-        self.priority = Some(priority);
-        self
-    }
-
-    fn passport(&self) -> Value {
-        let passport = match &self.triggered_by {
-            Some(user) => Passport::human(
-                user.id(),
-                false,
-                true,
-                AuthMethod::Jwt,
-                None,
-                PassportClaims::new(),
-            ),
-            None => Passport::service(Uuid::from_u128(0x7e57), PassportClaims::new()),
-        };
-        serde_json::to_value(passport).expect("a passport serializes")
-    }
-
-    pub fn payload(&self, producer: &str) -> Value {
-        let mut fields = Map::new();
-        fields.insert("job_id".to_owned(), json!(self.job_id.to_string()));
-        fields.insert("runner_type".to_owned(), json!(self.runner_type));
-        fields.insert("config".to_owned(), json!(self.config));
-        fields.insert(
-            "parent_job_id".to_owned(),
-            json!(self.parent_job_id.map(|id| id.to_string())),
-        );
-        fields.insert(
-            "triggered_by".to_owned(),
-            self.triggered_by
-                .as_ref()
-                .map_or(Value::Null, TriggeringUser::wire),
-        );
-        fields.insert("max_attempts".to_owned(), json!(self.max_attempts));
-        fields.insert("producer".to_owned(), json!(producer));
-        if let Some((bc, entity_id)) = &self.source {
-            fields.insert("source_bc".to_owned(), json!(bc));
-            fields.insert("source_entity_id".to_owned(), json!(entity_id.to_string()));
-        }
-        if let Some(priority) = self.priority {
-            fields.insert("priority".to_owned(), json!(priority));
-        }
-        if self.parent_job_id.is_none() {
-            fields.insert("passport".to_owned(), self.passport());
-        }
-        Value::Object(fields)
-    }
-}
+pub use declaration::JobDeclaration;
 
 pub struct Producer<'a> {
     fabric: &'a FabricTestNats,
@@ -208,6 +78,25 @@ impl<'a> Producer<'a> {
         command
     }
 
+    pub async fn send_v3_as(
+        &self,
+        command_id: Uuid,
+        correlation_id: Uuid,
+        verb: &str,
+        payload: Value,
+    ) -> IntegrationCommand<Value> {
+        let command = wire::command_envelope_at(
+            command_id,
+            verb,
+            wire::CONTRACT_V3,
+            correlation_id,
+            self.account_id,
+            payload,
+        );
+        self.send_at(verb, wire::CONTRACT_V3, &command).await;
+        command
+    }
+
     pub async fn send_v1(&self, verb: &str, payload: Value) -> IntegrationCommand<Value> {
         let command = wire::command_envelope_at(
             Uuid::now_v7(),
@@ -247,119 +136,4 @@ impl<'a> Producer<'a> {
         self.send(wire::VERB_CREATE, &conflicting).await;
         conflicting
     }
-
-    pub async fn cancel(&self, job_id: Uuid) {
-        self.cancel_as(Uuid::now_v7(), job_id).await;
-    }
-
-    pub async fn cancel_v2(&self, job_id: Uuid) {
-        self.cancel_v2_as(Uuid::now_v7(), job_id).await;
-    }
-
-    pub async fn cancel_as(&self, command_id: Uuid, job_id: Uuid) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_CANCEL,
-            wire::CONTRACT_V1,
-            resolution_payload(job_id),
-        )
-        .await;
-    }
-
-    pub async fn cancel_v2_as(&self, command_id: Uuid, job_id: Uuid) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_CANCEL,
-            wire::CONTRACT_V2,
-            resolution_payload(job_id),
-        )
-        .await;
-    }
-
-    pub async fn finish(&self, job_id: Uuid) {
-        self.finish_as(Uuid::now_v7(), job_id).await;
-    }
-
-    pub async fn finish_v2(&self, job_id: Uuid) {
-        self.finish_v2_as(Uuid::now_v7(), job_id).await;
-    }
-
-    pub async fn finish_as(&self, command_id: Uuid, job_id: Uuid) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_FINISH,
-            wire::CONTRACT_V1,
-            resolution_payload(job_id),
-        )
-        .await;
-    }
-
-    pub async fn finish_v2_as(&self, command_id: Uuid, job_id: Uuid) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_FINISH,
-            wire::CONTRACT_V2,
-            resolution_payload(job_id),
-        )
-        .await;
-    }
-
-    pub async fn fail(&self, job_id: Uuid, note: Option<&str>) {
-        self.fail_as(Uuid::now_v7(), job_id, note).await;
-    }
-
-    pub async fn fail_v2(&self, job_id: Uuid, note: Option<&str>) {
-        self.fail_v2_as(Uuid::now_v7(), job_id, note).await;
-    }
-
-    pub async fn fail_as(&self, command_id: Uuid, job_id: Uuid, note: Option<&str>) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_FAIL,
-            wire::CONTRACT_V1,
-            failure_payload(job_id, note),
-        )
-        .await;
-    }
-
-    pub async fn fail_v2_as(&self, command_id: Uuid, job_id: Uuid, note: Option<&str>) {
-        self.send_resolution_at_as(
-            command_id,
-            wire::VERB_FAIL,
-            wire::CONTRACT_V2,
-            failure_payload(job_id, note),
-        )
-        .await;
-    }
-
-    async fn send_resolution_at_as(
-        &self,
-        command_id: Uuid,
-        verb: &str,
-        version: u8,
-        payload: Value,
-    ) {
-        let command = wire::command_envelope_at(
-            command_id,
-            verb,
-            version,
-            Uuid::now_v7(),
-            self.account_id,
-            payload,
-        );
-        self.send_at(verb, version, &command).await;
-    }
-}
-
-fn resolution_payload(job_id: Uuid) -> Value {
-    json!({ "job_id": job_id.to_string() })
-}
-
-fn failure_payload(job_id: Uuid, note: Option<&str>) -> Value {
-    let mut payload = Map::new();
-    payload.insert("job_id".to_owned(), json!(job_id.to_string()));
-    if let Some(note) = note {
-        payload.insert("note".to_owned(), json!(note));
-    }
-    Value::Object(payload)
 }

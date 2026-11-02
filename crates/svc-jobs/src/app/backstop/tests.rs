@@ -52,6 +52,17 @@ fn the_request_data_of_cancelled_jobs_is_erased_before_the_inactivity_check() {
 }
 
 #[test]
+fn a_called_job_is_finished_by_rule_before_the_inactivity_check_can_fail_it() {
+    let position = |wanted: Backstop| {
+        Backstop::SWEEP
+            .iter()
+            .position(|backstop| *backstop == wanted)
+            .expect("the backstop is in the sweep")
+    };
+    assert!(position(Backstop::AutoFinish) < position(Backstop::InactiveJobs));
+}
+
+#[test]
 fn no_backstop_runs_twice_in_the_sweep() {
     for backstop in Backstop::SWEEP {
         let occurrences = Backstop::SWEEP

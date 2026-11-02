@@ -1,4 +1,5 @@
-use bc_jobs::domain::ids::{JobId, RunId};
+use bc_jobs::domain::auto_finish::FinishPremise;
+use bc_jobs::domain::ids::{CommandId, JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::payload::CallMode;
@@ -9,7 +10,7 @@ use br_core_events::EventMetadata;
 use uuid::Uuid;
 
 use super::premise::PriorityPremise;
-use crate::app::integration;
+use crate::app::{followups, integration};
 
 pub struct JobChange {
     pub job_id: JobId,
@@ -26,6 +27,8 @@ pub struct JobChange {
     pub restart: Option<RestartPremise>,
     pub caller_address: Option<CallerAddressPremise>,
     pub kept_payload: Option<Requester>,
+    pub remembered_command: Option<CommandId>,
+    pub finish_premise: Option<FinishPremise>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,11 +61,27 @@ impl JobChange {
             restart: None,
             caller_address: None,
             kept_payload: None,
+            remembered_command: None,
+            finish_premise: None,
         }
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.events.is_empty() && self.answers.is_empty() && !self.removes_directory
+    }
+
+    pub(super) fn resolves_the_job(&self) -> bool {
+        self.events.iter().any(followups::settles_job)
+    }
+
+    pub fn remembering(mut self, command_id: Option<CommandId>) -> Self {
+        self.remembered_command = command_id;
+        self
+    }
+
+    pub fn finishing_by_rule(mut self, premise: FinishPremise) -> Self {
+        self.finish_premise = Some(premise);
+        self
     }
 
     pub fn restarting(mut self, origin_run: Uuid, tree: JobId) -> Self {

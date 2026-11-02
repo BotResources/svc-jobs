@@ -149,3 +149,36 @@ fn a_manual_retry_successor_of_a_restart_job_is_a_restart_of_the_same_run() {
     };
     assert_eq!(queued(plan.successor).restart_of_run_id, Some(run));
 }
+
+#[test]
+fn a_restart_that_is_refused_for_good_ends_its_wake_and_any_other_error_keeps_it() {
+    let parent = job_id().as_uuid();
+    let ends = [
+        JobsError::RunnerTypeRetired {
+            runner_type: "analyst".to_owned(),
+        },
+        JobsError::ParentJobTerminal {
+            parent_job_id: parent,
+        },
+        JobsError::ParentJobDeleted {
+            parent_job_id: parent,
+        },
+        JobsError::ParentJobUnknown {
+            parent_job_id: parent,
+        },
+        JobsError::TreeScrubbed,
+    ];
+    for refusal in ends {
+        assert!(refusal_ends_the_wake(&refusal), "{refusal:?}");
+    }
+    let keeps = [
+        JobsError::JobDeleted,
+        JobsError::NotRequester,
+        JobsError::SelfReference {
+            field: "restart_job_id",
+        },
+    ];
+    for refusal in keeps {
+        assert!(!refusal_ends_the_wake(&refusal), "{refusal:?}");
+    }
+}

@@ -10,6 +10,18 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-01
 
+- `commands::job::auto_finish::AutoFinishFacts` and its `decide`: the decision
+  that a called Job is finished by rule, from the facts of the Job, of its
+  restart Jobs, of the answers its Caller read and of the Caller Runs. It
+  returns `FinishByRule` (the Job, the restart Jobs to finish and the premise
+  the commit must still find true) or an `AutoFinishWait` with a stable
+  reason. `ResolutionRequester::Rule(FinishVerdict)` lets `Job::finish` accept
+  that decision and no other actor: the verdict can only be made by `decide`.
+- `ports::auto_finish::AutoFinishReader`: the facts of a Job, the Jobs a
+  sweep considers (paged by Job id), the Jobs called by given Runs and the
+  Jobs called from the Tree of a given restart Job.
+- `commands::job::restart::refusal_ends_the_wake`: whether a refused restart
+  leaves no wake behind.
 - `Job::content_erased_at`, `Job::has_request_data_erased` and
   `Job::request_data_erasure_due(Retention, now)`: the decision that the request
   data of a cancelled Job is due (never for a Job that is not cancelled, for a
@@ -86,6 +98,31 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   The bounds and defaults are public as `domain::policy::MIN_RETENTION_DAYS`,
   `MAX_RETENTION_DAYS`, `DEFAULT_RETENTION_DAYS` and
   `DEFAULT_CANCELLED_RETENTION_DAYS`.
+- `Job::fail_run_for_terminated_trigger(ReclaimRun, &RetryPolicy, &ServiceLimits)`:
+  a Run that has not started and is not reserved fails as permanent with the
+  reason `trigger_terminated` (`domain::run::failure::TRIGGER_TERMINATED`), which
+  ends its Job with no retry; a Run that started, a Run reserved by a claim and a
+  Run that ended produce no event and a warning (`CommandWarning::
+  TriggerTerminationIgnored`, code `trigger_termination_ignored`, or the existing
+  `fact_discarded_on_terminal_run`). A pushed Run that failed with that reason
+  without ever starting loads.
+- `ports::transport::TriggerSequence` (the stream sequence the broker gives a
+  published trigger, never zero) and `ports::trigger_ledger::TriggerLedger` (store
+  the sequence of a Run's trigger; find the Run a sequence belongs to).
+  **Breaking for an implementor of `RunnerTransport`:** `dispatch` returns the
+  `TriggerSequence`.
+- `Job::repeat_of_finish`, `Job::repeat_of_fail` and `Job::repeat_of_cancel`:
+  the decision that a command repeats the command that resolved the Job. The
+  sender is checked first (`NotRequester`, `NotOwner` or
+  `RunnerNotWorkingTheJob` as for the command itself), then the answer is the
+  event of the first resolution, rebuilt from what the Job stored. A command
+  id that resolved nothing, or resolved the Job another way, is no repeat.
+  `JobResolution::command_id` and `JobResolution::remembering` carry the
+  command id (`CommandId`, a UUID of any version) stored with a resolution.
+- `CreateJob::is_the_same_declaration_as` is public. For a Job whose request
+  data was erased it compares the runner type, the producer, the parent, the
+  identity of the user, the Requester, the source, the maximum attempts and the
+  priority, and ignores the configuration, the Passport and the payload.
 
 ## 0.8.2 - 2026-11-01
 

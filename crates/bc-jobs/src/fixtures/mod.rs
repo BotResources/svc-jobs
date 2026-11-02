@@ -11,7 +11,7 @@ use crate::domain::ids::{
 };
 use crate::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use crate::domain::job::resolution::JobResolution;
-use crate::domain::job::{Job, JobState};
+use crate::domain::job::{Job, JobCall, JobState};
 use crate::domain::keys::{DisplayName, InstanceKey, ProducerKey, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
 use crate::domain::passport::{JobPassport, PassportSubject};

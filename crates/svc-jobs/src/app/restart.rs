@@ -1,5 +1,5 @@
 use bc_jobs::JobsError;
-use bc_jobs::commands::job::restart::{RestartJob, restart_job};
+use bc_jobs::commands::job::restart::{RestartJob, refusal_ends_the_wake, restart_job};
 use bc_jobs::domain::ids::{JobId, KnownUserId, RunId};
 use bc_jobs::domain::job::parenting::ParentContext;
 use bc_jobs::domain::priority::PriorityBasis;
@@ -75,19 +75,14 @@ async fn refused(
     origin_run_id: RunId,
     refusal: &JobsError,
 ) -> Result<(), ServiceError> {
-    match refusal {
-        JobsError::RunnerTypeRetired { .. }
-        | JobsError::ParentJobTerminal { .. }
-        | JobsError::ParentJobDeleted { .. }
-        | JobsError::ParentJobUnknown { .. }
-        | JobsError::TreeScrubbed => {
-            tracing::info!(
-                run_id = %origin_run_id.as_uuid(),
-                code = refusal.code(),
-                "a restart was refused; the mail or notice stays unread"
-            );
-            Ok(RestartWakes::drop_wake(&jobs.store, origin_run_id).await?)
-        }
-        other => Err(other.clone().into()),
+    if refusal_ends_the_wake(refusal) {
+        tracing::info!(
+            run_id = %origin_run_id.as_uuid(),
+            code = refusal.code(),
+            "a restart was refused; the mail or notice stays unread"
+        );
+        Ok(RestartWakes::drop_wake(&jobs.store, origin_run_id).await?)
+    } else {
+        Err(refusal.clone().into())
     }
 }

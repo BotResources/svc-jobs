@@ -1,11 +1,13 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use bc_jobs::domain::ids::CommandId;
 use br_core_integration::{CommandCoords, EventMetadata, MessageOutcome};
 use br_util_nats_fabric::Fabric;
 use contract_jobs::command_v3::{CancelJobV3, CreateJobV3, FailJobV3, FinishJobV3};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use uuid::Uuid;
 
 use super::{acknowledge, declared_job_id, settle};
 use crate::app::{Jobs, create, resolve_v3};
@@ -78,7 +80,7 @@ async fn consume_creations(
         contract_jobs::cmd_job_create_v3_coords()?,
         CREATE_DURABLE,
         established,
-        |payload: Value, metadata| {
+        |payload: Value, _command_id, metadata| {
             let jobs = Arc::clone(&jobs);
             async move { create_outcome(&jobs, payload, &metadata).await }
         },
@@ -110,9 +112,14 @@ async fn consume_cancellations(
         contract_jobs::cmd_job_cancel_v3_coords()?,
         CANCEL_DURABLE,
         established,
-        |payload: CancelJobV3, metadata| {
+        |payload: CancelJobV3, command_id, metadata| {
             let jobs = Arc::clone(&jobs);
-            async move { settle(resolve_v3::cancel(&jobs, &payload, &metadata).await) }
+            async move {
+                settle(
+                    resolve_v3::cancel(&jobs, &payload, CommandId::new(command_id), &metadata)
+                        .await,
+                )
+            }
         },
     )
     .await
@@ -128,9 +135,14 @@ async fn consume_completions(
         contract_jobs::cmd_job_finish_v3_coords()?,
         FINISH_DURABLE,
         established,
-        |payload: FinishJobV3, metadata| {
+        |payload: FinishJobV3, command_id, metadata| {
             let jobs = Arc::clone(&jobs);
-            async move { settle(resolve_v3::finish(&jobs, &payload, &metadata).await) }
+            async move {
+                settle(
+                    resolve_v3::finish(&jobs, &payload, CommandId::new(command_id), &metadata)
+                        .await,
+                )
+            }
         },
     )
     .await
@@ -146,9 +158,13 @@ async fn consume_failures(
         contract_jobs::cmd_job_fail_v3_coords()?,
         FAIL_DURABLE,
         established,
-        |payload: FailJobV3, metadata| {
+        |payload: FailJobV3, command_id, metadata| {
             let jobs = Arc::clone(&jobs);
-            async move { settle(resolve_v3::fail(&jobs, &payload, &metadata).await) }
+            async move {
+                settle(
+                    resolve_v3::fail(&jobs, &payload, CommandId::new(command_id), &metadata).await,
+                )
+            }
         },
     )
     .await
@@ -159,7 +175,7 @@ async fn run<T, Fut>(
     coords: CommandCoords,
     durable: &'static str,
     established: Established,
-    handle: impl Fn(T, EventMetadata) -> Fut,
+    handle: impl Fn(T, Uuid, EventMetadata) -> Fut,
 ) -> Result<(), ServiceError>
 where
     T: DeserializeOwned + Clone,
@@ -174,7 +190,7 @@ where
             Err(_) => MessageOutcome::Term,
             Ok(command) => {
                 let metadata = command.metadata.clone().with_causation(command.command_id);
-                handle(command.payload.clone(), metadata).await
+                handle(command.payload.clone(), command.command_id, metadata).await
             }
         };
         acknowledge(delivery, outcome).await;

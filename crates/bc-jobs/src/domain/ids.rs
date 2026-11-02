@@ -95,6 +95,7 @@ macro_rules! any_uuid_id {
 any_uuid_id!(AgentId);
 any_uuid_id!(MailId);
 any_uuid_id!(AttachmentId);
+any_uuid_id!(CommandId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "Uuid", into = "Uuid")]

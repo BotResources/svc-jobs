@@ -14,9 +14,11 @@ use contract_jobs::command_v3::{CallMode, CreateJobV3};
 
 mod declare;
 mod refusal;
+mod repeat;
 
 pub use refusal::reject_malformed;
 use refusal::{caller_of, reject};
+use repeat::queued_again;
 
 use super::write::{CallerAddressPremise, PriorityPremise};
 use super::{Jobs, acting, write};
@@ -27,7 +29,7 @@ pub async fn handle(
     wire: &WireV1,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    admit(jobs, declare::from_v1(wire), metadata).await
+    admit(jobs, declare::from_v1(wire), Repeats::Unanswered, metadata).await
 }
 
 pub async fn handle_v2(
@@ -35,7 +37,7 @@ pub async fn handle_v2(
     wire: &CreateJobV2,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    admit(jobs, declare::from_v2(wire), metadata).await
+    admit(jobs, declare::from_v2(wire), Repeats::Unanswered, metadata).await
 }
 
 pub async fn handle_v3(
@@ -43,12 +45,19 @@ pub async fn handle_v3(
     wire: &CreateJobV3,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    admit(jobs, wire.clone(), metadata).await
+    admit(jobs, wire.clone(), Repeats::Answered, metadata).await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Repeats {
+    Answered,
+    Unanswered,
 }
 
 async fn admit(
     jobs: &Jobs,
     wire: CreateJobV3,
+    repeats: Repeats,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let acting = match acting::named(
@@ -76,7 +85,7 @@ async fn admit(
         .and_then(|requested| declare::build(&wire, requested, requester));
     match built {
         Err(refusal) => reject(jobs, &wire, &refusal, metadata, named_run).await,
-        Ok(command) => decide(jobs, &wire, command, metadata).await,
+        Ok(command) => decide(jobs, &wire, command, repeats, metadata).await,
     }
 }
 
@@ -136,15 +145,23 @@ async fn decide(
     jobs: &Jobs,
     wire: &CreateJobV3,
     command: CreateJob,
+    repeats: Repeats,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let caller = caller_of(&command.requester);
+    let existing = JobReader::load(&jobs.store, command.id).await?;
+    if repeats == Repeats::Answered
+        && let Some(first) = existing
+            .as_ref()
+            .filter(|first| command.is_the_same_declaration_as(first))
+    {
+        return queued_again(jobs, first, metadata).await;
+    }
     if let Some(runner_type) = FleetReader::load(&jobs.store, &command.runner_type).await?
         && let Err(refusal) = runner_type.guard_accept_job()
     {
         return reject(jobs, wire, &refusal, metadata, caller).await;
     }
-    let existing = JobReader::load(&jobs.store, command.id).await?;
     let parent = match command.parent_job_id {
         Some(parent) => JobReader::load(&jobs.store, parent).await?,
         None => None,
