@@ -134,13 +134,19 @@ to `## Unreleased`).
   that may not send the command gets `command_rejected` and never the first
   outcome. A first command that Jobs refused is not remembered: the repeat is
   judged again, for example a create refused for a retired type is accepted
-  once the type is reactivated. A cancel by the owner or a declarant service on
-  a Job that the first command cancelled gets `cancel_accepted.v1`, not
-  `job_terminal`. A create repeated for a Job whose request data was erased
-  compares the runner type, the producer, the parent, the user, the Requester,
-  the source, the maximum attempts and the priority only. The versions 1 and 2
-  of the commands keep no memory of a command id and answer as before. The
-  command id is stored with the resolution of the Job (migration `0014`).
+  once the type is reactivated. A cancel by the owner of a Job that has no
+  recorded Requester, on a Job that the first command cancelled, gets
+  `cancel_accepted.v1`, not `job_terminal`. A create repeated for a Job whose
+  request data was erased compares the runner type, the producer, the parent,
+  the user (by identity, not by the name shown), the initial Job, the
+  Requester, the source, the maximum attempts, the priority and the call only.
+  A create by a Run that declares another call mode or caller address than the
+  Job holds is a reuse of the Job id, whether or not the request data was
+  erased. The versions 1 and 2 of the commands keep no memory of a command id:
+  a finish, a fail or a cancel answers as before, and a create that carries
+  request data, for a Job whose request data was erased, is absorbed without
+  an answer when its other fields match, where it was refused as a reuse of
+  the Job id. The command id is stored with the resolution of the Job (migration `0014`).
 
 ### Fixed
 
