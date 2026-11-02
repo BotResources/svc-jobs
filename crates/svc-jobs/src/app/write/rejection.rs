@@ -1,5 +1,4 @@
-use bc_jobs::domain::ids::{AgentId, RunId};
-use bc_jobs::domain::mail::inbox::Notice;
+use bc_jobs::domain::runner::refusal_notice::RefusalNotice as Told;
 use bc_jobs::ports::environment::IdFactory;
 use br_core_events::EventMetadata;
 use br_util_nats_fabric::stage;
@@ -9,14 +8,14 @@ use uuid::Uuid;
 use crate::app::integration;
 use crate::db::PgStore;
 use crate::db::call_notices::{Delivering, NoticeFor, insert_notice};
+use crate::db::directory::{address_holder_in, tree_of_run};
 use crate::db::restart::wake_run;
+use crate::db::tree_lock::lock_tree;
 use crate::error::ServiceError;
 
 pub struct RefusalNotice {
-    pub caller_run: RunId,
-    pub address: AgentId,
+    pub told: Told,
     pub source_key: Option<String>,
-    pub notice: Notice,
 }
 
 pub struct CreationRefusal<'a> {
@@ -41,23 +40,44 @@ pub async fn publish_rejection(
         refusal.params,
     )?;
     let mut tx = store.begin().await?;
+    let refused = match refusal.notice {
+        Some(refused) => told_under_lock(&mut tx, refused).await?,
+        None => None,
+    };
     stage_in(&mut tx, ids, published, metadata, at).await?;
     let mut woke = false;
-    if let Some(refused) = refusal.notice {
+    if let Some(refused) = refused {
+        let caller_run = refused.told.caller_run;
         let written = insert_notice(
             &mut tx,
-            NoticeFor::refusal(refused.caller_run, refused.address, refused.source_key),
-            &refused.notice,
+            NoticeFor::refusal(caller_run, refused.told.address, refused.source_key),
+            &refused.told.notice,
             Delivering { ids, metadata, at },
         )
         .await?;
         if written.is_some() {
-            wake_run(&mut tx, refused.caller_run.as_uuid(), at).await?;
+            wake_run(&mut tx, caller_run.as_uuid(), at).await?;
             woke = true;
         }
     }
     tx.commit().await?;
     Ok(woke)
+}
+
+async fn told_under_lock(
+    tx: &mut sqlx::PgConnection,
+    refused: RefusalNotice,
+) -> Result<Option<RefusalNotice>, ServiceError> {
+    let Some(tree) = tree_of_run(tx, refused.told.caller_run).await? else {
+        return Ok(None);
+    };
+    lock_tree(tx, tree).await?;
+    let holder = address_holder_in(tx, refused.told.address.as_uuid()).await?;
+    Ok(refused
+        .told
+        .guard_address_held(holder)
+        .is_ok()
+        .then_some(refused))
 }
 
 pub async fn publish_command_rejection(

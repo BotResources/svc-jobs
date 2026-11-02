@@ -1,6 +1,5 @@
 use bc_jobs::JobsError;
-use bc_jobs::domain::ids::{JobId, RunId};
-use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
+use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::call_notices::CallNotices;
 use br_core_events::EventMetadata;
@@ -81,15 +80,11 @@ fn refusal_notice(
 ) -> Option<RefusalNotice> {
     let caller_run = caller?;
     let call = wire.mode.map(|mode| declare::call(wire, mode));
-    let address = CallNotices::of(&Requester::Run(caller_run), call.as_ref())?.refusal_address()?;
+    let told = CallNotices::of(&Requester::Run(caller_run), call.as_ref())?
+        .refusal_notice(wire.job_id, refusal_words(wire.job_id, reason_code))?;
     Some(RefusalNotice {
-        caller_run,
-        address,
+        told,
         source_key: metadata.causation_id.map(|command| command.to_string()),
-        notice: Notice {
-            message: Some(refusal_words(wire.job_id, reason_code)),
-            ..Notice::new(NoticeType::Refused, JobId::new(wire.job_id).ok())
-        },
     })
 }
 

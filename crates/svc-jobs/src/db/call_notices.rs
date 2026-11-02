@@ -117,7 +117,6 @@ pub struct NoticeFor {
     pub address: Option<AgentId>,
     pub kind: ItemKind,
     pub source_key: Option<String>,
-    pub address_held_by_run: bool,
 }
 
 impl NoticeFor {
@@ -127,7 +126,6 @@ impl NoticeFor {
             address,
             kind: ItemKind::Notice,
             source_key: None,
-            address_held_by_run: false,
         }
     }
 
@@ -137,7 +135,6 @@ impl NoticeFor {
             address: Some(address),
             kind: ItemKind::Notice,
             source_key,
-            address_held_by_run: true,
         }
     }
 
@@ -147,7 +144,6 @@ impl NoticeFor {
             address: Some(address),
             kind: ItemKind::MailNotice,
             source_key: Some(source_key),
-            address_held_by_run: true,
         }
     }
 }
@@ -175,7 +171,7 @@ pub async fn insert_notice(
            AND NOT EXISTS (SELECT 1 FROM run_terminals t \
                            WHERE t.run_id = $3 AND t.kind IN ('FAILED', 'CANCELLED')) \
            AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a \
-                WHERE a.agent_id = $2 AND (NOT $8::boolean OR a.run_id = $3))) \
+                WHERE a.agent_id = $2)) \
          ON CONFLICT (address, source_key) WHERE source_key IS NOT NULL DO NOTHING",
     )
     .bind(item_id.as_uuid())
@@ -185,7 +181,6 @@ pub async fn insert_notice(
     .bind(delivering.at)
     .bind(target.kind.as_db_str())
     .bind(target.source_key)
-    .bind(target.address_held_by_run)
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
