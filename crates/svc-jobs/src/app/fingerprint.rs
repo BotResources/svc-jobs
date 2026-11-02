@@ -3,6 +3,7 @@ use bc_jobs::domain::fleet::instance::RunnerInstance;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::run::Run;
 use bc_jobs::domain::run::status::RunTerminalKind;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -11,6 +12,8 @@ pub struct JobFingerprint {
     resolution_id: Option<Uuid>,
     is_deleted: bool,
     manual_retry_successor_id: Option<Uuid>,
+    tree_scrubbed: bool,
+    content_erased_at: Option<DateTime<Utc>>,
     runs: Vec<RunFingerprint>,
 }
 
@@ -40,6 +43,8 @@ pub fn of_job(job: &Job) -> JobFingerprint {
         manual_retry_successor_id: job
             .manual_retry()
             .map(|retry| retry.successor_job_id().as_uuid()),
+        tree_scrubbed: job.tree_scrubbed(),
+        content_erased_at: job.content_erased_at(),
         runs: job.runs().iter().map(of_run).collect(),
     }
 }
@@ -105,5 +110,34 @@ fn of_instance(instance: &RunnerInstance) -> InstanceFingerprint {
         version: instance.version().as_str().to_owned(),
         reported_status: instance.reported_status().as_str().to_owned(),
         status_change_number: instance.status_change_number(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bc_jobs::fixtures::{JobBuilder, ts};
+
+    use super::*;
+
+    #[test]
+    fn a_job_of_a_scrubbed_tree_differs_from_the_same_job_before_the_scrub() {
+        let before = JobBuilder::new().build();
+        let after = JobBuilder::new().in_a_scrubbed_tree(ts(900)).build();
+        assert_ne!(of_job(&before), of_job(&after));
+    }
+
+    #[test]
+    fn a_job_whose_request_data_was_erased_differs_from_the_same_job_before_the_erasure() {
+        let before = JobBuilder::new().build();
+        let after = JobBuilder::new().with_request_data_erased(ts(900)).build();
+        assert_ne!(of_job(&before), of_job(&after));
+    }
+
+    #[test]
+    fn a_job_read_twice_has_the_same_fingerprint() {
+        assert_eq!(
+            of_job(&JobBuilder::new().build()),
+            of_job(&JobBuilder::new().build())
+        );
     }
 }
