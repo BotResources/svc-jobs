@@ -74,8 +74,23 @@ pub enum CommandWarning {
         command: &'static str,
     },
     TriggerTerminationIgnored {
-        run_standing: &'static str,
+        run_standing: IgnoredRunStanding,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IgnoredRunStanding {
+    Started,
+    Reserved,
+}
+
+impl IgnoredRunStanding {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Reserved => "reserved",
+        }
+    }
 }
 
 impl CommandWarning {
@@ -110,7 +125,7 @@ impl CommandWarning {
             Self::CancellationIsBestEffort | Self::CancelledJobAlreadyTerminal => json!({}),
             Self::CommandAlreadyApplied { command } => json!({ "command": command }),
             Self::TriggerTerminationIgnored { run_standing } => {
-                json!({ "runStanding": run_standing })
+                json!({ "runStanding": run_standing.code() })
             }
         }
     }
@@ -132,5 +147,19 @@ mod tests {
             result.warnings.first().map(CommandWarning::code),
             Some("fact_discarded_on_terminal_job")
         );
+    }
+
+    #[test]
+    fn the_ignored_termination_of_a_trigger_names_the_standing_of_the_run_in_the_same_words() {
+        for (standing, word) in [
+            (IgnoredRunStanding::Started, "started"),
+            (IgnoredRunStanding::Reserved, "reserved"),
+        ] {
+            let warning = CommandWarning::TriggerTerminationIgnored {
+                run_standing: standing,
+            };
+            assert_eq!(warning.code(), "trigger_termination_ignored");
+            assert_eq!(warning.params(), json!({ "runStanding": word }));
+        }
     }
 }

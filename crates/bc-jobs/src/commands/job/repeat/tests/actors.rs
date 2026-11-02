@@ -90,3 +90,37 @@ fn the_service_that_requested_a_job_repeating_a_resolution_gets_the_first_outcom
         Err(JobsError::NotRequester)
     );
 }
+
+#[test]
+fn the_rule_that_finishes_a_called_job_gets_the_first_finish_again_but_never_a_first_failure() {
+    use crate::domain::ownership::FinishVerdict;
+
+    let first = command();
+    let requesting = run_id();
+    let rule = ResolutionRequester::Rule(FinishVerdict::granted());
+    let completed = JobBuilder::new()
+        .with_requester(Requester::Run(requesting))
+        .with_resolution(JobResolution::completed(resolution_id(), ts(30)).remembering(Some(first)))
+        .build();
+    assert!(matches!(
+        completed.repeat_of_finish(first, &rule),
+        Ok(Some(JobEvent::JobCompleted(_)))
+    ));
+    let failed = JobBuilder::new()
+        .with_requester(Requester::Run(requesting))
+        .with_resolution(
+            JobResolution::failed(
+                resolution_id(),
+                ts(30),
+                JobFailureCause::DeclaredByOwner,
+                None,
+            )
+            .unwrap()
+            .remembering(Some(first)),
+        )
+        .build();
+    assert_eq!(
+        failed.repeat_of_fail(first, &rule),
+        Err(JobsError::NotRequester)
+    );
+}

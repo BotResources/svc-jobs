@@ -57,6 +57,11 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
   retry, a restart, and the affordance for the manual retry, are refused in a
   scrubbed Tree.
+- `JobsError::RequestDataErased` (`request_data_erased`): a restart of a Job
+  whose request data was erased is refused, and the refusal ends the wake of that
+  restart (`commands::job::restart::refusal_ends_the_wake`). A Job that is not
+  resolved cannot carry `content_erased_at` or a scrubbed Tree: it fails to load
+  with the reason `erased_job_not_resolved`.
 - `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
   without an agent because a removed restart Run took them, and the mail
   addresses that one cancel removes from the agent directory, and
@@ -106,7 +111,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   reason `trigger_terminated` (`domain::run::failure::TRIGGER_TERMINATED`), which
   ends its Job with no retry; a Run that started, a Run reserved by a claim and a
   Run that ended produce no event and a warning (`CommandWarning::
-  TriggerTerminationIgnored`, code `trigger_termination_ignored`, or the existing
+  TriggerTerminationIgnored { run_standing: IgnoredRunStanding }` (`started` or
+  `reserved`), code `trigger_termination_ignored`, or the existing
   `fact_discarded_on_terminal_run`). A pushed Run that failed with that reason
   without ever starting loads.
 - `ports::transport::TriggerSequence` (the stream sequence the broker gives a

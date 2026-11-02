@@ -42,7 +42,7 @@ impl Job {
         else {
             return Ok(None);
         };
-        requester.guard_may_resolve(self.requester())?;
+        requester.guard_may_fail(self.requester())?;
         let failure_cause = resolution.failure_cause().ok_or(JobsError::CorruptState {
             reason_code: "failed_job_without_cause",
         })?;

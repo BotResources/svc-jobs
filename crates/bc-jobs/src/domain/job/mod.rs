@@ -1,7 +1,8 @@
 mod accessors;
 pub mod claim;
 pub mod derived;
-pub mod erasure;
+#[cfg(test)]
+mod erasure;
 pub mod parenting;
 pub mod parts;
 pub mod resolution;
@@ -154,6 +155,10 @@ impl Job {
             && (state.config.is_some() || state.passport.is_some() || state.payload.is_some())
         {
             return Err(corrupt("erased_job_holds_request_data"));
+        }
+        if (state.content_erased_at.is_some() || state.tree_scrubbed) && state.resolution.is_none()
+        {
+            return Err(corrupt("erased_job_not_resolved"));
         }
         if state.deletion.is_some() && state.resolution.is_none() {
             return Err(corrupt("deleted_job_without_resolution"));

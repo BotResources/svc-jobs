@@ -46,6 +46,37 @@ fn a_job_marked_erased_that_still_holds_request_data_cannot_be_loaded() {
 }
 
 #[test]
+fn a_job_that_is_not_resolved_cannot_carry_an_erasure_mark() {
+    let unresolved = JobBuilder::new().state();
+    let erased = JobState {
+        content_erased_at: Some(ts(100)),
+        config: None,
+        passport: None,
+        payload: None,
+        ..unresolved.clone()
+    };
+    let scrubbed = JobState {
+        tree_scrubbed: true,
+        ..unresolved
+    };
+    for state in [erased, scrubbed] {
+        assert_eq!(
+            Job::hydrate(state).err(),
+            Some(JobsError::CorruptState {
+                reason_code: "erased_job_not_resolved"
+            })
+        );
+    }
+}
+
+#[test]
+fn a_resolved_job_of_a_scrubbed_tree_loads() {
+    let job = cancelled_at(ts(100)).in_a_scrubbed_tree(ts(200)).build();
+    assert!(job.tree_scrubbed());
+    assert_eq!(job.content_erased_at(), Some(ts(200)));
+}
+
+#[test]
 fn a_stored_job_queued_body_without_its_request_data_still_reads_back() {
     use crate::event::job::JobEvent;
     use crate::event::job_facts::JobQueued;

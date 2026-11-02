@@ -91,7 +91,9 @@ impl ResolutionRequester {
     pub fn guard_may_fail(&self, job_requester: &Requester) -> Result<(), JobsError> {
         match self {
             Self::Rule(_) => Err(JobsError::NotRequester),
-            other => other.guard_may_resolve(job_requester),
+            Self::LegacyOwner(_) | Self::Declarant | Self::Caller { .. } => {
+                self.guard_may_resolve(job_requester)
+            }
         }
     }
 }

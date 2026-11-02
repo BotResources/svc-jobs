@@ -26,6 +26,7 @@ pub fn refusal_ends_the_wake(refusal: &JobsError) -> bool {
             | JobsError::ParentJobDeleted { .. }
             | JobsError::ParentJobUnknown { .. }
             | JobsError::TreeScrubbed
+            | JobsError::RequestDataErased
     )
 }
 
@@ -41,6 +42,9 @@ pub fn restart_job(
     }
     if origin.tree_scrubbed() {
         return Err(JobsError::TreeScrubbed);
+    }
+    if origin.content_erased_at().is_some() {
+        return Err(JobsError::RequestDataErased);
     }
     origin.find_run(command.origin_run_id)?;
     let parent = parent.resolve(origin.parent_job_id())?;

@@ -42,7 +42,9 @@ impl ItemKind {
             (Self::MailNotice, Some(notice)) => {
                 notice.notice_type == NoticeType::Refused && notice.mail_id().is_some()
             }
-            _ => false,
+            (Self::Mail | Self::CcNotice, Some(_)) | (Self::Notice | Self::MailNotice, None) => {
+                false
+            }
         };
         if fits {
             Ok(())

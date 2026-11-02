@@ -26,6 +26,7 @@ impl JobsError {
             Self::JobNotTerminal { .. } => "job_not_terminal",
             Self::JobAlreadyDeleted => "job_already_deleted",
             Self::TreeScrubbed => "tree_scrubbed",
+            Self::RequestDataErased => "request_data_erased",
             Self::JobNotFailed { .. } => "job_not_failed",
             Self::JobNotInProgress { .. } => "job_not_in_progress",
             Self::NotOwner => "not_owner",

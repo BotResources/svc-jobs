@@ -1,5 +1,5 @@
 use crate::commands::job::backstop::ReclaimRun;
-use crate::commands::{CommandResult, CommandWarning, JobCommandResult};
+use crate::commands::{CommandResult, CommandWarning, IgnoredRunStanding, JobCommandResult};
 use crate::domain::job::Job;
 use crate::domain::policy::{RetryPolicy, ServiceLimits};
 use crate::domain::run::failure::{RunFailureKind, RunFailureReport, TRIGGER_TERMINATED};
@@ -18,12 +18,12 @@ impl Job {
             StartStanding::Ended => Ok(Self::settled_discard("RunFailed", run)),
             StartStanding::HeldBy(_) => Ok(CommandResult::nothing_happened(
                 CommandWarning::TriggerTerminationIgnored {
-                    run_standing: "started",
+                    run_standing: IgnoredRunStanding::Started,
                 },
             )),
             StartStanding::ReservedFor(_) => Ok(CommandResult::nothing_happened(
                 CommandWarning::TriggerTerminationIgnored {
-                    run_standing: "reserved",
+                    run_standing: IgnoredRunStanding::Reserved,
                 },
             )),
             StartStanding::Pending => {

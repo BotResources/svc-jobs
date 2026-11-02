@@ -77,7 +77,10 @@ fn a_failed_job_that_could_not_be_retried_before_gets_no_affordance_fact() {
 
 #[test]
 fn a_job_already_erased_by_the_cancel_sweep_keeps_its_first_erasure_time() {
-    let erased = JobBuilder::new().with_request_data_erased(ts(400)).build();
+    let erased = JobBuilder::new()
+        .with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
+        .with_request_data_erased(ts(400))
+        .build();
     let fresh = completed();
     let events = events_of_a_scrub(&[erased, fresh], ts(900));
     let times: Vec<_> = events

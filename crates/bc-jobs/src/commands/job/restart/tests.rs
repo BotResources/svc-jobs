@@ -30,11 +30,27 @@ fn an_origin_of_a_scrubbed_tree_cannot_be_restarted() {
     let run_id = run.id();
     let origin = JobBuilder::new()
         .with_run(run)
+        .with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
         .in_a_scrubbed_tree(ts(900))
         .build();
     assert_eq!(
         restart_job(&origin, ParentContext::Root, command(run_id)),
         Err(JobsError::TreeScrubbed)
+    );
+}
+
+#[test]
+fn an_origin_whose_request_data_was_erased_cannot_be_restarted() {
+    let run = RunBuilder::new(1).started(ts(5)).cancelled(ts(10)).build();
+    let run_id = run.id();
+    let origin = JobBuilder::new()
+        .with_run(run)
+        .with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
+        .with_request_data_erased(ts(400))
+        .build();
+    assert_eq!(
+        restart_job(&origin, ParentContext::Root, command(run_id)),
+        Err(JobsError::RequestDataErased)
     );
 }
 
@@ -167,6 +183,7 @@ fn a_restart_that_is_refused_for_good_ends_its_wake_and_any_other_error_keeps_it
             parent_job_id: parent,
         },
         JobsError::TreeScrubbed,
+        JobsError::RequestDataErased,
     ];
     for refusal in ends {
         assert!(refusal_ends_the_wake(&refusal), "{refusal:?}");

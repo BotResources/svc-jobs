@@ -24,6 +24,7 @@ impl JobsError {
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
             | Self::TreeScrubbed
+            | Self::RequestDataErased
             | Self::NotOwner
             | Self::NotRequester
             | Self::RunnerNotWorkingTheJob

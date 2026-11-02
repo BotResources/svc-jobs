@@ -87,7 +87,7 @@ impl Job {
                     CommandWarning::FactDiscardedReservedElsewhere { fact: "RunStarted" },
                 ));
             }
-            _ => {}
+            StartStanding::Ended | StartStanding::Pending | StartStanding::ReservedFor(_) => {}
         }
         Ok(CommandResult::from_event(JobEvent::RunStarted(
             RunStarted {

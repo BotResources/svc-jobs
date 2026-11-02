@@ -77,6 +77,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::JobNotInProgress { .. }
         | JobsError::JobDeleted
         | JobsError::TreeScrubbed
+        | JobsError::RequestDataErased
         | JobsError::JobStillActive
         | JobsError::InactivityTimeoutNotReached { .. }
         | JobsError::ParentJobTerminal { .. }

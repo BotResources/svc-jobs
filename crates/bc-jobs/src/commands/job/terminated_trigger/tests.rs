@@ -56,7 +56,7 @@ fn a_run_that_started_before_the_termination_is_left_alone() {
     assert_eq!(
         result.warnings,
         vec![CommandWarning::TriggerTerminationIgnored {
-            run_standing: "started"
+            run_standing: IgnoredRunStanding::Started
         }]
     );
 }
@@ -73,7 +73,7 @@ fn a_run_reserved_by_a_claim_is_left_to_the_claim_backstop() {
     assert_eq!(
         result.warnings,
         vec![CommandWarning::TriggerTerminationIgnored {
-            run_standing: "reserved"
+            run_standing: IgnoredRunStanding::Reserved
         }]
     );
 }
