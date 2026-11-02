@@ -160,7 +160,7 @@ form to decide whether a version ships.
   the column `jobs.tree_scrubbed_at` and builds ten indexes in one transaction,
   one of them over the whole history of published integration events: the first
   boot of this version takes longer on a large history, and the pods still
-  running read and write `jobs` only after the migration ends.
+  running wait on `jobs` only during the last statements of the migration.
 - The Initial Job of a scrubbed Tree is marked (`jobs.tree_scrubbed_at`, migration
   `0013_tree_scrub.sql`) in the transaction of the scrub, and `jobs_initial_created`
   holds only the Trees not yet scrubbed, so a sweep reads only those.
