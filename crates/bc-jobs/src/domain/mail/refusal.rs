@@ -6,7 +6,6 @@ pub enum BadAddressReason {
     RecipientUnknown,
     RecipientRemoved,
     RecipientCannotRestart,
-    RecipientTreeScrubbed,
 }
 
 impl BadAddressReason {
@@ -16,7 +15,6 @@ impl BadAddressReason {
             Self::RecipientUnknown => "recipient_unknown",
             Self::RecipientRemoved => "recipient_removed",
             Self::RecipientCannotRestart => "recipient_cannot_restart",
-            Self::RecipientTreeScrubbed => "recipient_tree_scrubbed",
         }
     }
 
@@ -27,9 +25,6 @@ impl BadAddressReason {
             Self::RecipientRemoved => "The address was removed with its Run.",
             Self::RecipientCannotRestart => {
                 "The agent of the address is finished and a restart of it cannot start."
-            }
-            Self::RecipientTreeScrubbed => {
-                "Jobs scrubbed the Tree of the address, and an agent of a scrubbed Tree cannot restart."
             }
         }
     }

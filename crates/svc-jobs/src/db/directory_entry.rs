@@ -16,9 +16,6 @@ const RESTART_JOB_LIVE: &str = "EXISTS (SELECT 1 FROM restart_origins ro \
                JOIN run_terminals rt2 ON rt2.run_id = rr.id AND rt2.kind = 'COMPLETED' \
                WHERE rr.job_id = rj.id))";
 
-const TREE_SCRUBBED: &str =
-    "EXISTS (SELECT 1 FROM tree_scrubs ts WHERE ts.initial_job_id = d.initial_job_id)";
-
 const HOLDS_SAVED_STATE: &str =
     "EXISTS (SELECT 1 FROM saved_state_agents s WHERE s.agent_id = d.agent_id)";
 
@@ -27,8 +24,7 @@ pub fn entry_columns() -> String {
         "d.agent_id::uuid AS agent_id, d.run_id::uuid AS run_id, rt.type_key, d.state, \
          d.has_inbox, d.declares_restart, {HOLDS_SAVED_STATE} AS holds_saved_state, \
          coalesce(reg.lifecycle = 'RETIRED', false) AS retired, \
-         {PARENT_TERMINAL} AS parent_terminal, {RESTART_JOB_LIVE} AS restart_job_live, \
-         {TREE_SCRUBBED} AS tree_scrubbed"
+         {PARENT_TERMINAL} AS parent_terminal, {RESTART_JOB_LIVE} AS restart_job_live"
     )
 }
 
@@ -54,7 +50,6 @@ pub fn entry_of(
         runner_type_retired: row.get("retired"),
         parent_job_terminal: row.get("parent_terminal"),
         restart_job_live: row.get("restart_job_live"),
-        tree_scrubbed: row.get("tree_scrubbed"),
     };
     Ok((entry, obstacles))
 }

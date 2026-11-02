@@ -18,13 +18,11 @@ pub struct RestartObstacles {
     pub runner_type_retired: bool,
     pub parent_job_terminal: bool,
     pub restart_job_live: bool,
-    pub tree_scrubbed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartStanding {
     Running,
-    TreeScrubbed,
     NoSavedState,
     ParentJobTerminal,
     RestartInFlight,
@@ -57,7 +55,6 @@ impl DirectoryEntry {
     pub fn restart_standing(&self, obstacles: RestartObstacles) -> RestartStanding {
         match self.state {
             AgentState::Running => RestartStanding::Running,
-            AgentState::Finished if obstacles.tree_scrubbed => RestartStanding::TreeScrubbed,
             AgentState::Finished if !self.can_restart() => RestartStanding::NoSavedState,
             AgentState::Finished if obstacles.parent_job_terminal => {
                 RestartStanding::ParentJobTerminal
@@ -98,7 +95,6 @@ mod tests {
         runner_type_retired: false,
         parent_job_terminal: false,
         restart_job_live: false,
-        tree_scrubbed: false,
     };
 
     #[test]
@@ -162,25 +158,20 @@ mod tests {
     }
 
     #[test]
-    fn a_scrubbed_tree_stands_before_a_missing_saved_state_and_before_every_other_obstacle() {
-        let scrubbed = RestartObstacles {
-            tree_scrubbed: true,
+    fn a_missing_saved_state_stands_before_every_other_obstacle() {
+        let everything = RestartObstacles {
             runner_type_retired: true,
             parent_job_terminal: true,
             restart_job_live: true,
         };
         let without_saved_state = entry(AgentState::Finished, true, false);
         assert_eq!(
-            without_saved_state.restart_standing(scrubbed),
-            RestartStanding::TreeScrubbed
+            without_saved_state.restart_standing(everything),
+            RestartStanding::NoSavedState
         );
         assert_eq!(
             without_saved_state.restart_standing(CLEAR),
             RestartStanding::NoSavedState
-        );
-        assert_eq!(
-            entry(AgentState::Finished, true, true).restartable_now(scrubbed),
-            Some(false)
         );
     }
 

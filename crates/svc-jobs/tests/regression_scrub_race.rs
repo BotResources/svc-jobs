@@ -4,50 +4,17 @@ use bc_jobs::JobsError;
 use bc_jobs::commands::job::manual_retry::{
     ManualRetryJob, ManualRetryOutcome, SuccessorDispatch, manual_retry,
 };
-use bc_jobs::commands::job::resolution::FailJob;
-use bc_jobs::domain::ids::{JobId, ManualRetryId, ResolutionId};
+use bc_jobs::domain::ids::{JobId, ManualRetryId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::job::parenting::ParentContext;
-use bc_jobs::domain::ownership::ResolutionRequester;
-use bc_jobs::domain::policy::Retention;
 use bc_jobs::domain::priority::Priority;
 use bc_jobs::fixtures::user;
-use bc_jobs::ports::job::JobReader;
-use bc_jobs::ports::scrub::{ScrubOutcome, TreeScrub, TreeScrubs};
-use chrono::TimeDelta;
+use bc_jobs::ports::scrub::ScrubOutcome;
 use svc_jobs::app::write::JobChange;
 use uuid::Uuid;
 
-use support::clock;
-use support::contention::{Fixture, a_queued_job, commit, ids, metadata};
-
-async fn a_failed_job(fixture: &Fixture) -> Job {
-    let queued = a_queued_job(fixture, "archivist").await;
-    let failed = queued
-        .declare_failed(FailJob {
-            resolution_id: ResolutionId::new(Uuid::now_v7()).expect("a v7 resolution id"),
-            requester: ResolutionRequester::Declarant,
-        })
-        .expect("a queued job fails");
-    commit(
-        fixture,
-        vec![JobChange::new(
-            queued.id(),
-            Some(queued.clone()),
-            failed.events,
-        )],
-    )
-    .await
-    .expect("the failure lands");
-    reload(fixture, queued.id()).await
-}
-
-async fn reload(fixture: &Fixture, job_id: JobId) -> Job {
-    JobReader::load(&fixture.store, job_id)
-        .await
-        .expect("the job loads")
-        .expect("the job exists")
-}
+use support::contention::{Fixture, commit};
+use support::scrub_race::{a_failed_job, reload, scrub};
 
 fn retry_of(predecessor: &Job, successor: JobId) -> Result<ManualRetryOutcome, JobsError> {
     manual_retry(
@@ -66,22 +33,6 @@ fn retry_of(predecessor: &Job, successor: JobId) -> Result<ManualRetryOutcome, J
             applicable_maximum: Priority::DEFAULT,
         },
     )
-}
-
-async fn scrub(fixture: &Fixture, tree: JobId) -> ScrubOutcome {
-    fixture
-        .store
-        .scrub_tree(
-            tree,
-            TreeScrub {
-                retention: Retention::default(),
-                at: clock::now() + TimeDelta::days(40),
-                ids: &ids(),
-                metadata: &metadata(),
-            },
-        )
-        .await
-        .expect("the scrub runs")
 }
 
 #[tokio::test]

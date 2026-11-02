@@ -36,10 +36,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   and a `JobAffordancesChanged` for each Job whose manual retry was available.
 - `ports::scrub::{TreeScrubs, TreeScrub, ScrubOutcome, OrphanUploads}`.
 - `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
-  retry, and the affordance for it, are refused in a scrubbed Tree.
-  `RestartObstacles::tree_scrubbed`, `RestartStanding::TreeScrubbed` and
-  `BadAddressReason::RecipientTreeScrubbed` (`recipient_tree_scrubbed`) make a
-  finished agent of a scrubbed Tree not restartable.
+  retry, a restart, and the affordance for the manual retry, are refused in a
+  scrubbed Tree.
 - `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
   without an agent because a removed restart Run took them, and the mail
   addresses that one cancel removes from the agent directory, and
