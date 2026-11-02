@@ -87,6 +87,13 @@ impl ResolutionRequester {
             Self::Rule(_) => guard_run_requested(job_requester),
         }
     }
+
+    pub fn guard_may_fail(&self, job_requester: &Requester) -> Result<(), JobsError> {
+        match self {
+            Self::Rule(_) => Err(JobsError::NotRequester),
+            other => other.guard_may_resolve(job_requester),
+        }
+    }
 }
 
 fn guard_run_requested(job_requester: &Requester) -> Result<(), JobsError> {
@@ -184,6 +191,19 @@ mod tests {
         assert_eq!(
             by_rule.guard_may_resolve(&Requester::Service(Some(actor()))),
             Err(JobsError::NotRequester)
+        );
+    }
+
+    #[test]
+    fn the_rule_never_declares_a_job_failed() {
+        let by_rule = ResolutionRequester::Rule(FinishVerdict::granted());
+        assert_eq!(
+            by_rule.guard_may_fail(&Requester::Run(crate::fixtures::run_id())),
+            Err(JobsError::NotRequester)
+        );
+        assert_eq!(
+            ResolutionRequester::Declarant.guard_may_fail(&Requester::Service(None)),
+            Ok(())
         );
     }
 
