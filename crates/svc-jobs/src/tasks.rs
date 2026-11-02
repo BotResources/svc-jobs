@@ -60,6 +60,7 @@ fn spawn_durable_fanout(supervisor: &Supervisor, pool: sqlx::PgPool, fabric: Fab
 
 fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>, hub: Hub) {
     runner_transport::observability::describe();
+    runner_transport::server_errors::describe();
     crate::app::claim_observability::describe();
     crate::db::tree_lock::describe();
 

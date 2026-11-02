@@ -37,9 +37,12 @@ form to decide whether a version ships.
   Run pending and its Job waiting. A Run dispatched before this release has no
   stored sequence and is not covered. The NATS user of Jobs must be allowed to
   subscribe to the advisory subject. The listener does not take part in
-  readiness: a pod is ready whether or not the subscription is granted, the
-  listener subscribes again every five seconds after a failure or an end, and
-  without the right no Run is failed by a termination.
+  readiness: a pod is ready whether or not the subscription is granted. The
+  server refuses a subscription for want of a right without failing the call
+  that made it, so the pod stays ready and no Run is failed by a termination;
+  the refusal is logged at warn and counted in
+  `jobs_nats_server_errors_total`. The listener subscribes again every five
+  seconds only after a subscription error or the end of the subscription.
 
 ### Changed
 
