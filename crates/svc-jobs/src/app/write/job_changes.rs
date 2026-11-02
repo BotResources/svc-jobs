@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use bc_jobs::domain::directory::removal::DirectoryRemoval;
 use bc_jobs::domain::ids::{EventId, JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::policy::ServiceLimits;
@@ -22,6 +23,7 @@ use super::premise::guard_priority_premise_still_holds;
 use super::rederive;
 use super::routing::resolve_runner_type_routes;
 use crate::app::{followups, integration};
+use crate::db::removal::removed_with_jobs;
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
 
@@ -84,16 +86,17 @@ pub async fn commit_job_changes_in(
     for change in &changes {
         guard_descendants_unchanged(&mut *tx, change).await?;
     }
+    let removal = removal_of(&mut *tx, &changes).await?;
     let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
     for change in &changes {
-        apply_change(&mut *tx, ids, change, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, change, metadata, at, limits, &removal).await?;
     }
     for followup in followups::of_settled_jobs(&mut *tx, &changes, &held).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits, &removal).await?;
     }
     for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits, &removal).await?;
     }
     for change in changes.iter().filter(|change| change.removes_directory) {
         apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
@@ -135,6 +138,18 @@ async fn lock_root_first(
     Ok(hydrate::load_map(tx, &held).await?)
 }
 
+async fn removal_of(
+    tx: &mut sqlx::PgConnection,
+    changes: &[JobChange],
+) -> Result<DirectoryRemoval, ServiceError> {
+    let roots: Vec<Uuid> = changes
+        .iter()
+        .filter(|change| change.removes_directory)
+        .map(|change| change.job_id.as_uuid())
+        .collect();
+    Ok(removed_with_jobs(tx, &roots).await?)
+}
+
 async fn apply_change(
     tx: &mut sqlx::PgConnection,
     ids: &dyn IdFactory,
@@ -142,6 +157,7 @@ async fn apply_change(
     metadata: &EventMetadata,
     at: DateTime<Utc>,
     limits: &ServiceLimits,
+    removal: &DirectoryRemoval,
 ) -> Result<(), ServiceError> {
     if let Some(source) = &change.claimed_source {
         claim_source(tx, change.job_id, source).await?;
@@ -181,6 +197,7 @@ async fn apply_change(
         metadata,
         at,
         limits.inline_payload_max_bytes(),
+        removal,
     )
     .await?;
     Ok(())

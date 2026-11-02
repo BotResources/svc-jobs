@@ -1,3 +1,4 @@
+use bc_jobs::domain::directory::removal::DirectoryRemoval;
 use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
 use bc_jobs::domain::runner::answer::InlineAnswer;
@@ -23,12 +24,16 @@ pub async fn tell_callers(
     metadata: &EventMetadata,
     at: DateTime<Utc>,
     inline_max_bytes: usize,
+    removal: &DirectoryRemoval,
 ) -> Result<(), ServiceError> {
     for event in events {
         let job_id = event.job_id();
         let Some(notices) = call_notices_of(&mut *tx, job_id).await? else {
             continue;
         };
+        if removal.removes_the_caller_of(&notices) {
+            continue;
+        }
         for plan in notices.plan(event) {
             let Some(notice) =
                 build(&mut *tx, plan, event, job_id, &notices, inline_max_bytes).await?
@@ -36,14 +41,14 @@ pub async fn tell_callers(
                 continue;
             };
             let wakes = notice.starts_a_restart();
-            insert_notice(
+            let inserted = insert_notice(
                 &mut *tx,
                 NoticeFor::call(notices.caller_run, notices.address),
                 &notice,
                 Delivering { ids, metadata, at },
             )
             .await?;
-            if wakes {
+            if wakes && inserted.is_some() {
                 wake_run(&mut *tx, notices.caller_run.as_uuid(), at).await?;
             }
         }

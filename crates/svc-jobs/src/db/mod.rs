@@ -24,6 +24,7 @@ pub mod notify;
 pub mod partitions;
 pub mod priority;
 pub mod reach;
+pub mod removal;
 pub mod restart;
 pub mod rows;
 pub mod saved_states;

@@ -57,7 +57,8 @@ const REMOVE_TREE: &str = "\
     marked AS ( \
         INSERT INTO directory_removed_runs (run_id, removed_at) \
         SELECT t.run_id, $2 FROM tree t \
-        WHERE NOT EXISTS (SELECT 1 FROM run_terminals rt WHERE rt.run_id = t.run_id) \
+        WHERE NOT EXISTS (SELECT 1 FROM run_terminals rt \
+                          WHERE rt.run_id = t.run_id AND rt.kind IN ('FAILED', 'CANCELLED')) \
         ON CONFLICT (run_id) DO NOTHING), \
      tombstones AS ( \
         INSERT INTO directory_removed_addresses (agent_id, removed_at) \
@@ -67,6 +68,8 @@ const REMOVE_TREE: &str = "\
      notices AS ( \
         DELETE FROM inbox_items \
         WHERE kind = 'NOTICE' AND run_id IN (SELECT run_id FROM tree)), \
+     wakes AS ( \
+        DELETE FROM restart_wakes WHERE run_id IN (SELECT run_id FROM tree)), \
      states AS ( \
         DELETE FROM saved_states WHERE run_id IN (SELECT run_id FROM tree)) \
      DELETE FROM directory_agents WHERE run_id IN (SELECT run_id FROM tree)";
@@ -93,18 +96,21 @@ pub async fn remove_run_subtree(
     Ok(())
 }
 
+pub fn job_subtree_head() -> String {
+    format!(
+        "WITH RECURSIVE {reach}, \
+         tree(run_id) AS ( \
+            SELECT r.id FROM runs r WHERE r.job_id IN (SELECT id FROM reach WHERE kind = 'job'))",
+        reach = crate::db::reach::REACH_CTE
+    )
+}
+
 pub async fn remove_job_subtree(
     tx: &mut PgConnection,
     job_id: Uuid,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
-    let sql = format!(
-        "WITH RECURSIVE {reach}, \
-         tree(run_id) AS ( \
-            SELECT r.id FROM runs r WHERE r.job_id IN (SELECT id FROM reach WHERE kind = 'job')), \
-         {REMOVE_TREE}",
-        reach = crate::db::reach::REACH_CTE
-    );
+    let sql = format!("{head}, {REMOVE_TREE}", head = job_subtree_head());
     sqlx::query(&sql)
         .bind(vec![job_id])
         .bind(at)

@@ -4,6 +4,7 @@ pub mod adversary;
 pub mod broker;
 pub mod call_notices;
 pub mod calls;
+pub mod cancel_chain;
 pub mod catalog;
 pub mod chart;
 pub mod claim;

@@ -60,6 +60,16 @@ to `## Unreleased`).
 
 ### Changed
 
+- A cancel keeps the notice of a cancelled called Job only for a Caller that
+  stays in the agent directory. When one cancel reaches a called Job and its
+  Caller (a Job above both, or the restart Job of the Caller), the Caller gets
+  no notice, no restart is queued for its agents and no arrival doorbell is
+  published for it. A cancel of the called Job alone, or the called runner
+  cancelling itself, still tells its Caller.
+- The removal of Runs from the agent directory also deletes the queued restarts
+  of those Runs, and marks a Run that had completed as removed, so a late fact
+  cannot leave a notice for it. A removed Run that had completed now answers
+  `run_removed` instead of `run_ended` on the runner surface.
 - A background call whose called Job is cancelled now tells the Caller by a
   `JOB_CANCELLED` notice at the caller address, whoever cancelled the Job (the
   Requester, an administrator or the runner that works the Job), as a sync call
