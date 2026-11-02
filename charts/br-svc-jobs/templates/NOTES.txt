@@ -2,7 +2,8 @@ br-svc-jobs {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace
 
 Service: {{ include "br-svc-jobs.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.port }}
 
-Endpoints (in-cluster; the GraphQL surface is platform-administrator only):
+Endpoints (in-cluster; the GraphQL surface is platform-administrator only, except
+the runner gestures of a service account that holds the scope jobs:runner):
   POST   http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql
   GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql   (playground)
   GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/sdl
