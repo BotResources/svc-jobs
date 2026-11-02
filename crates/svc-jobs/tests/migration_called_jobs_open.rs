@@ -6,6 +6,7 @@ use br_test_harness::E2eDatabase;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
+use support::clock;
 use support::fixture::{APP_PASSWORD, APP_ROLE, require_provisioned_infrastructure};
 use uuid::Uuid;
 
@@ -98,7 +99,7 @@ async fn the_called_jobs_already_resolved_are_settled_and_the_open_ones_stay_in_
         .execute(&pool)
         .await
         .expect("the producer inserts");
-    let resolved_at = Utc::now() - chrono::TimeDelta::days(3);
+    let resolved_at = clock::now() - chrono::TimeDelta::days(3);
     let resolved_called = called_job(&pool, runner_type_id, producer_id, true).await;
     resolve(&pool, resolved_called, resolved_at).await;
     let open_called = called_job(&pool, runner_type_id, producer_id, true).await;
