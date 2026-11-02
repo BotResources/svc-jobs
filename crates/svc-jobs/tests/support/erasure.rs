@@ -35,8 +35,6 @@ pub const MAIL_ITEMS_AT: &str =
     "SELECT count(*) FROM inbox_items WHERE address = $1 AND kind = 'MAIL'";
 pub const ITEMS_FOR_RUN: &str = "SELECT count(*) FROM inbox_items WHERE run_id = $1 \
      OR address IN (SELECT agent_id FROM directory_agents WHERE run_id = $1)";
-pub const NOTICES_FOR_RUN: &str =
-    "SELECT count(*) FROM inbox_items WHERE run_id = $1 AND kind = 'NOTICE'";
 pub const MAIL_WITH_CONTENT: &str = "SELECT count(*) FROM mails WHERE mail_id = $1 \
      AND subject <> '' AND body <> '' AND author <> 'erased' AND content_erased_at IS NULL";
 pub const MAIL_ERASED: &str = "SELECT count(*) FROM mails WHERE mail_id = $1 \

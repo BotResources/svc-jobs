@@ -1,6 +1,7 @@
 mod support;
 
 use serde_json::Value;
+use support::call_notices::wait_for_mail_notices;
 use support::db::Durable;
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail};
@@ -107,6 +108,21 @@ async fn a_mail_with_a_removed_an_unknown_and_an_unrestartable_address_is_refuse
         expected,
         "each bad address is named with its reason and its words"
     );
+    let seen = wait_for_mail_notices(&fixture, &tree.parent_work, Some(tree.sender), 1).await;
+    let words = seen[0]["message"].as_str().unwrap_or_default();
+    for (address, sentence) in [
+        (removed, "The address was removed with its Run."),
+        (never_held, "Jobs holds no mail address like this one."),
+        (
+            unrestartable,
+            "The agent of the address is finished and a restart of it cannot start.",
+        ),
+    ] {
+        assert!(
+            words.contains(&format!("{address} ({sentence})")),
+            "the mail notice names {address} with its reason: {words}"
+        );
+    }
     let unread = || async {
         gesture::items(&gesture::unread(&gql, &runner, &tree.child_work, Some(tree.receiver)).await)
     };

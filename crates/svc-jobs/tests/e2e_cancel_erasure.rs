@@ -1,10 +1,11 @@
 mod support;
 
+use serde_json::json;
+use support::call_notices::wait_for_job_notice;
 use support::db::{self, Durable};
 use support::erasure::{
     ATTACHMENTS_OF_MAIL, ITEMS_AT, ITEMS_FOR_RUN, MAIL_ERASED, MAIL_ITEMS_AT, MAIL_WITH_CONTENT,
-    NOTICES_FOR_RUN, RECIPIENT_ROWS_OF_MAIL, RESULTS_OF_JOB, assert_request_data_erased,
-    assert_request_data_held,
+    RECIPIENT_ROWS_OF_MAIL, RESULTS_OF_JOB, assert_request_data_erased, assert_request_data_held,
 };
 use support::erasure_scene::{Scene, build};
 use support::fixture::{JobsFixture, runner_access};
@@ -73,16 +74,28 @@ async fn a_cancel_erases_the_working_state_of_the_cancelled_job_and_nothing_a_li
         .assert_count(RESULTS_OF_JOB, s.e, 1, "E left a Result for Run 1")
         .await;
 
+    let before = gql::job(&fixture.gql(), fixture.admin(), s.b).await;
+
     cancel(&fixture, s.b).await;
 
     assert_working_state_of_b_erased(&fixture, &durable, &s).await;
+    let after = gql::job(&fixture.gql(), fixture.admin(), s.b).await;
+    assert_eq!(after["status"], "CANCELLED", "{after}");
+    assert_eq!(after["attemptCount"], before["attemptCount"], "{after}");
+    assert_eq!(after["parentJobId"], json!(s.a.to_string()), "{after}");
+    assert_eq!(after["createdAt"], before["createdAt"], "{after}");
+    assert_eq!(after["resolution"]["kind"], "CANCELLED", "{after}");
+    assert!(after["resolution"]["occurredAt"].is_string(), "{after}");
+    assert_eq!(after["runs"][0]["id"], before["runs"][0]["id"], "{after}");
+    assert_eq!(
+        after["runs"][0]["startedAt"], before["runs"][0]["startedAt"],
+        "{after}"
+    );
+    assert!(after["runs"][0]["finishedAt"].is_string(), "{after}");
     durable
         .assert_count(RESULTS_OF_JOB, s.e, 1, "the Result of E stays")
         .await;
-    assert!(
-        durable.count(NOTICES_FOR_RUN, s.a_work.run_id).await > 0,
-        "Run 1 keeps its own unread notices, among them the cancel notice of B"
-    );
+    wait_for_job_notice(&fixture, &s.a_work, None, "JOB_CANCELLED", Some(s.b)).await;
     for (mail, what) in [
         (s.mail_p_s, "between P and S"),
         (s.mail_to_q, "from P to the removed Q"),
