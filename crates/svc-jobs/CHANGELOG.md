@@ -160,10 +160,10 @@ to `## Unreleased`).
   created stays until its Tree is scrubbed.
 - `tree_scrubs` and the indexes the scrub scans, among them `jobs_initial_created`
   over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration adds
-  the column `jobs.tree_scrubbed_at` and builds ten indexes without the
-  concurrent option, one of them over the whole history of published integration
-  events: the first boot of this version takes longer on a large history, and
-  writes wait while an index is built.
+  the column `jobs.tree_scrubbed_at` and builds ten indexes in one transaction,
+  one of them over the whole history of published integration events: the first
+  boot of this version takes longer on a large history, and the pods still
+  running read and write `jobs` only after the migration ends.
 - The Initial Job of a scrubbed Tree is marked (`jobs.tree_scrubbed_at`, migration
   `0013_tree_scrub.sql`) in the transaction of the scrub, and `jobs_initial_created`
   holds only the Trees not yet scrubbed, so a sweep reads only those.
