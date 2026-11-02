@@ -6,7 +6,7 @@ use super::fixture::{JobsFixture, runner_access};
 use super::gesture::{self, Work};
 use super::lineage::{create, live_runner};
 use super::producer::{JobDeclaration, Producer};
-use super::restart::{FINISHED_OF_RUN, save_state};
+use super::restart::{FINISHED_OF_RUN, RESTARTS_OF_RUN, save_state};
 use super::runner::{self, FakeRunner};
 use super::surface::{self, Agent};
 use super::{LONG, gql};
@@ -36,6 +36,15 @@ pub struct Chain<'a> {
 }
 
 pub async fn chain<'a>(fixture: &'a JobsFixture, label: &str, c_mode: &str) -> Chain<'a> {
+    chain_between(fixture, label, "BACKGROUND", c_mode).await
+}
+
+pub async fn chain_between<'a>(
+    fixture: &'a JobsFixture,
+    label: &str,
+    b_mode: &str,
+    c_mode: &str,
+) -> Chain<'a> {
     let (mut a, mut b, mut c) = (
         live_runner(fixture, &format!("{label}-a")).await,
         live_runner(fixture, &format!("{label}-b")).await,
@@ -51,15 +60,13 @@ pub async fn chain<'a>(fixture: &'a JobsFixture, label: &str, c_mode: &str) -> C
     let a_address = a_agent.agent_id;
     surface::register(fixture.nats(), &a, runner::run_id(&a_trigger), &[a_agent]).await;
     let a_work = Work::of(&a, &a_trigger);
+    save_state(fixture, &a_work, json!({ "turn": 1 })).await;
 
-    let b_job = create(
-        fixture,
-        &a_work,
-        &b.runner_type,
-        declared.job_id,
-        json!({ "mode": "BACKGROUND", "caller_address": a_address.to_string(), "max_attempts": 1 }),
-    )
-    .await;
+    let mut b_extra = json!({ "mode": b_mode, "max_attempts": 1 });
+    if b_mode == "BACKGROUND" {
+        b_extra["caller_address"] = json!(a_address.to_string());
+    }
+    let b_job = create(fixture, &a_work, &b.runner_type, declared.job_id, b_extra).await;
     let b_trigger = b.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&b_trigger), b_job);
     b.start_applied(fixture, &b_trigger).await;
@@ -122,6 +129,15 @@ impl Chain<'_> {
     }
 
     pub async fn restart_b(&mut self, fixture: &JobsFixture) -> Value {
+        let taken_over = Agent::with_inbox().with_id(self.b_address);
+        self.restart_b_registering(fixture, vec![taken_over]).await
+    }
+
+    pub async fn restart_b_registering(
+        &mut self,
+        fixture: &JobsFixture,
+        agents: Vec<Agent>,
+    ) -> Value {
         let messenger = Agent::with_inbox();
         let messenger_id = messenger.agent_id;
         surface::register(fixture.nats(), &self.c, self.c_work.run_id, &[messenger]).await;
@@ -132,15 +148,26 @@ impl Chain<'_> {
         );
         let restart = self.b.next_trigger(LONG).await;
         self.b.start_applied(fixture, &restart).await;
-        let registered = surface::register(
-            fixture.nats(),
-            &self.b,
-            runner::run_id(&restart),
-            &[Agent::with_inbox().with_id(self.b_address)],
-        )
-        .await;
-        assert_eq!(registered["accepted"], true, "{registered}");
+        if !agents.is_empty() {
+            let registered =
+                surface::register(fixture.nats(), &self.b, runner::run_id(&restart), &agents).await;
+            assert_eq!(registered["accepted"], true, "{registered}");
+        }
         restart
+    }
+
+    pub async fn assert_no_restart_beyond(&self, durable: &Durable, run: Uuid, restarts: i64) {
+        durable
+            .assert_count(
+                RESTARTS_OF_RUN,
+                run,
+                restarts,
+                "no restart Job is created for the Run",
+            )
+            .await;
+        durable
+            .assert_count(WAKES_OF_RUN, run, 0, "no restart is queued for the Run")
+            .await;
     }
 
     pub async fn cancel_as_administrator(&self, fixture: &JobsFixture, job: Uuid) {
