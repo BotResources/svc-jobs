@@ -18,6 +18,17 @@ pub struct RestartJob {
     pub applicable_maximum: Priority,
 }
 
+pub fn refusal_ends_the_wake(refusal: &JobsError) -> bool {
+    matches!(
+        refusal,
+        JobsError::RunnerTypeRetired { .. }
+            | JobsError::ParentJobTerminal { .. }
+            | JobsError::ParentJobDeleted { .. }
+            | JobsError::ParentJobUnknown { .. }
+            | JobsError::TreeScrubbed
+    )
+}
+
 pub fn restart_job(
     origin: &Job,
     parent: ParentContext<'_>,
