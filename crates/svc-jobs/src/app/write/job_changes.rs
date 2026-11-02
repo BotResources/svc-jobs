@@ -19,6 +19,7 @@ use super::guards::{
     claim_source, guard_caller_addresses_still_held, guard_decision_still_holds,
     guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_kept_payloads_uploaded,
     guard_restarts_still_due, guard_runner_types_still_accept_jobs, lock_directory_trees,
+    lock_kept_payloads,
 };
 use super::notices::tell_callers;
 use super::premise::guard_priority_premise_still_holds;
@@ -70,6 +71,7 @@ pub async fn commit_job_changes_in(
         return Ok(());
     }
     guard_free_capacity_of_every_type(&mut *tx, &changes).await?;
+    lock_kept_payloads(&mut *tx, &changes).await?;
     guard_kept_payloads_uploaded(&mut *tx, &changes).await?;
     lock_directory_trees(&mut *tx, &changes).await?;
     guard_caller_addresses_still_held(&mut *tx, &changes).await?;
