@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::policy::Retention;
+use bc_jobs::ports::PortError;
 use bc_jobs::ports::job::DUE_WORK_BATCH;
 use bc_jobs::ports::scrub::{ScrubOutcome, TreeScrub, TreeScrubs};
 use chrono::{DateTime, Utc};
@@ -58,7 +59,7 @@ async fn scrub_one(
     done: &AtomicUsize,
 ) -> Result<(), ServiceError> {
     let metadata = service_metadata();
-    let outcome = jobs
+    let outcome = match jobs
         .store
         .scrub_tree(
             initial_job_id,
@@ -69,7 +70,17 @@ async fn scrub_one(
                 metadata: &metadata,
             },
         )
-        .await?;
+        .await
+    {
+        Err(PortError::TreeLockTimeout) => {
+            tracing::info!(
+                initial_job_id = %initial_job_id.as_uuid(),
+                "a Tree is held by another writer; the next sweep looks again"
+            );
+            return Ok(());
+        }
+        other => other?,
+    };
     match outcome {
         ScrubOutcome::Scrubbed { jobs: scrubbed } => {
             done.fetch_add(1, Ordering::Relaxed);

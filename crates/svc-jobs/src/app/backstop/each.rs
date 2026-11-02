@@ -1,21 +1,48 @@
 use std::future::Future;
 
 use bc_jobs::domain::ids::JobId;
+use bc_jobs::domain::job::Job;
 
 use crate::error::ServiceError;
 
 pub(super) async fn each_job<F, Fut>(
     jobs: Vec<JobId>,
     what: &'static str,
-    mut work: F,
+    work: F,
 ) -> Result<(), ServiceError>
 where
     F: FnMut(JobId) -> Fut,
     Fut: Future<Output = Result<(), ServiceError>>,
 {
+    each_entry(jobs, |job_id| *job_id, what, work).await
+}
+
+pub(super) async fn each_loaded_job<F, Fut>(
+    jobs: Vec<Job>,
+    what: &'static str,
+    work: F,
+) -> Result<(), ServiceError>
+where
+    F: FnMut(Job) -> Fut,
+    Fut: Future<Output = Result<(), ServiceError>>,
+{
+    each_entry(jobs, Job::id, what, work).await
+}
+
+async fn each_entry<T, F, Fut>(
+    entries: Vec<T>,
+    id_of: impl Fn(&T) -> JobId,
+    what: &'static str,
+    mut work: F,
+) -> Result<(), ServiceError>
+where
+    F: FnMut(T) -> Fut,
+    Fut: Future<Output = Result<(), ServiceError>>,
+{
     let mut first_failure = None;
-    for job_id in jobs {
-        if let Err(error) = work(job_id).await {
+    for entry in entries {
+        let job_id = id_of(&entry);
+        if let Err(error) = work(entry).await {
             tracing::warn!(
                 job_id = %job_id.as_uuid(),
                 error = %error,
@@ -70,5 +97,30 @@ mod tests {
         assert!(
             matches!(outcome, Err(ServiceError::Infra(reason)) if reason == job(1).as_uuid().to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn a_loaded_job_that_fails_does_not_stop_the_jobs_behind_it() {
+        use bc_jobs::fixtures::JobBuilder;
+
+        let jobs: Vec<Job> = (0..3).map(|_| JobBuilder::new().build()).collect();
+        let poisoned = jobs[1].id();
+        let expected = vec![jobs[0].id(), jobs[2].id()];
+        let done = Mutex::new(Vec::new());
+
+        let outcome = each_loaded_job(jobs, "test", |loaded| {
+            let done = &done;
+            async move {
+                if loaded.id() == poisoned {
+                    return Err(ServiceError::Infra("poisoned".to_owned()));
+                }
+                done.lock().unwrap().push(loaded.id());
+                Ok(())
+            }
+        })
+        .await;
+
+        assert_eq!(*done.lock().unwrap(), expected);
+        assert!(matches!(outcome, Err(ServiceError::Infra(reason)) if reason == "poisoned"));
     }
 }
