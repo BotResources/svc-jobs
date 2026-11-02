@@ -3,6 +3,7 @@ use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::payload::CallMode;
 use bc_jobs::domain::references::SourceReference;
+use bc_jobs::domain::requester::Requester;
 use bc_jobs::event::job::JobEvent;
 use br_core_events::EventMetadata;
 use uuid::Uuid;
@@ -24,6 +25,7 @@ pub struct JobChange {
     pub removes_directory: bool,
     pub restart: Option<RestartPremise>,
     pub caller_address: Option<CallerAddressPremise>,
+    pub kept_payload: Option<Requester>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +57,7 @@ impl JobChange {
             removes_directory: false,
             restart: None,
             caller_address: None,
+            kept_payload: None,
         }
     }
 
@@ -64,6 +67,11 @@ impl JobChange {
 
     pub fn restarting(mut self, origin_run: Uuid, tree: JobId) -> Self {
         self.restart = Some(RestartPremise { origin_run, tree });
+        self
+    }
+
+    pub fn creating_from_kept_payload(mut self, creator: Requester) -> Self {
+        self.kept_payload = Some(creator);
         self
     }
 

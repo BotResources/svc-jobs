@@ -5,10 +5,8 @@ use bc_jobs::domain::ids::{KnownUserId, RunId};
 use bc_jobs::domain::ownership::ActorRef;
 use bc_jobs::domain::priority::PriorityBasis;
 use bc_jobs::domain::requester::Requester;
-use bc_jobs::domain::runner::kept_payload::guard_kept_payload_uploaded;
 use bc_jobs::ports::fleet::FleetReader;
 use bc_jobs::ports::job::JobReader;
-use bc_jobs::ports::kept_payload::KeptPayloads;
 use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::EventMetadata;
 use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};
@@ -146,9 +144,6 @@ async fn decide(
     {
         return reject(jobs, wire, &refusal, metadata, caller).await;
     }
-    if let Some(refusal) = kept_payload_refusal(jobs, &command).await? {
-        return reject(jobs, wire, &refusal, metadata, caller).await;
-    }
     let existing = JobReader::load(&jobs.store, command.id).await?;
     let parent = match command.parent_job_id {
         Some(parent) => JobReader::load(&jobs.store, parent).await?,
@@ -185,10 +180,17 @@ async fn decide(
                 Requester::Run(run_id) => caller_address_premise(wire, run_id),
                 Requester::Service(_) => None,
             };
-            let change = write::JobChange::new(command.id, None, result.events)
+            let mut change = write::JobChange::new(command.id, None, result.events)
                 .claiming_source(command.source())
                 .holding_caller_address(caller_premise)
                 .on_priority_premise(premise);
+            if command
+                .payload
+                .as_ref()
+                .is_some_and(|payload| payload.is_kept())
+            {
+                change = change.creating_from_kept_payload(command.requester.clone());
+            }
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
                     refusal @ (JobsError::SourceAlreadyActive { .. }
@@ -197,26 +199,13 @@ async fn decide(
                     | JobsError::ParentJobDeleted { .. }
                     | JobsError::ParentJobUnknown { .. }
                     | JobsError::CallerAddressNotHeld
-                    | JobsError::CallerAddressNotOfRun),
+                    | JobsError::CallerAddressNotOfRun
+                    | JobsError::PayloadNotUploaded
+                    | JobsError::PayloadUploaderMismatch),
                 )) => reject(jobs, wire, &refusal, metadata, caller).await,
                 settled => settled,
             }
         }
         Err(refusal) => reject(jobs, wire, &refusal, metadata, caller).await,
     }
-}
-
-async fn kept_payload_refusal(
-    jobs: &Jobs,
-    command: &CreateJob,
-) -> Result<Option<JobsError>, ServiceError> {
-    if !command
-        .payload
-        .as_ref()
-        .is_some_and(|payload| payload.is_kept())
-    {
-        return Ok(None);
-    }
-    let stored = jobs.store.stored_payload(command.id.as_uuid()).await?;
-    Ok(guard_kept_payload_uploaded(&command.requester, stored.as_ref()).err())
 }

@@ -4,6 +4,7 @@ use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::references::SourceReference;
+use bc_jobs::domain::runner::kept_payload::guard_kept_payload_uploaded;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::event::queued::QueuedTree;
 
@@ -164,6 +165,22 @@ pub(super) async fn guard_restarts_still_due(
             return Err(ServiceError::RestartNotDue);
         }
         crate::db::restart::consume_wake(tx, restart.origin_run).await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn guard_kept_payloads_uploaded(
+    tx: &mut sqlx::PgConnection,
+    changes: &[JobChange],
+) -> Result<(), ServiceError> {
+    for change in changes {
+        let Some(creator) = &change.kept_payload else {
+            continue;
+        };
+        let job_id = change.job_id.as_uuid();
+        crate::db::kept_payloads::lock_kept_payload(tx, job_id).await?;
+        let stored = crate::db::kept_payloads::stored(tx, job_id).await?;
+        guard_kept_payload_uploaded(creator, stored.as_ref())?;
     }
     Ok(())
 }

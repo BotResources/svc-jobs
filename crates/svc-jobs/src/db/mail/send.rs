@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::checks::{guard_attachments, guard_sender, recipients_of};
 use super::live::live_run_of;
 use super::load::load_mail;
+use super::locks::lock_mail_attachments;
 use super::refused::note_refusal;
 use super::rows::{insert_item, insert_mail};
 use crate::db::PgStore;
@@ -46,6 +47,9 @@ impl MailSender for PgStore {
             }
             Ok(SendAdmission::New) => {}
             Err(refusal) => return Ok(Err(refusal.into())),
+        }
+        if !content.attachments.is_empty() {
+            lock_mail_attachments(&mut tx, content.mail_id.as_uuid()).await?;
         }
         if let Err(refusal) = guard_attachments(&mut tx, &content).await? {
             return Ok(Err(refusal.into()));

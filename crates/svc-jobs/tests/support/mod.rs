@@ -26,6 +26,7 @@ pub mod gql;
 pub mod infra;
 pub mod lineage;
 pub mod metrics;
+pub mod orphan_race;
 pub mod passports;
 pub mod priority;
 pub mod producer;

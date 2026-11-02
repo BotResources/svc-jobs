@@ -37,13 +37,24 @@ pub async fn lock_kept_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<()
     Ok(())
 }
 
+pub async fn try_lock_kept_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<bool, PortError> {
+    sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kept_payload:{job_id}"))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(unavailable)
+}
+
 fn corrupt(error: serde_json::Error) -> PortError {
     PortError::Unavailable {
         detail: error.to_string(),
     }
 }
 
-async fn stored(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<StoredPayload>, PortError> {
+pub(crate) async fn stored(
+    tx: &mut PgConnection,
+    job_id: Uuid,
+) -> Result<Option<StoredPayload>, PortError> {
     let Some(row) =
         sqlx::query("SELECT uploader, message, attachments FROM kept_payloads WHERE job_id = $1")
             .bind(job_id)
