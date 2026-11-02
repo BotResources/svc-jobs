@@ -5,6 +5,7 @@ pub mod deletion;
 pub mod dispatch;
 pub mod manual_retry;
 pub mod priority;
+pub mod repeat;
 pub mod resolution;
 pub mod restart;
 pub mod run_outcome;

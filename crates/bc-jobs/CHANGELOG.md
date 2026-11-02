@@ -96,6 +96,18 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   the sequence of a Run's trigger; find the Run a sequence belongs to).
   **Breaking for an implementor of `RunnerTransport`:** `dispatch` returns the
   `TriggerSequence`.
+- `Job::repeat_of_finish`, `Job::repeat_of_fail` and `Job::repeat_of_cancel`:
+  the decision that a command repeats the command that resolved the Job. The
+  sender is checked first (`NotRequester`, `NotOwner` or
+  `RunnerNotWorkingTheJob` as for the command itself), then the answer is the
+  event of the first resolution, rebuilt from what the Job stored. A command
+  id that resolved nothing, or resolved the Job another way, is no repeat.
+  `JobResolution::command_id` and `JobResolution::remembering` carry the
+  command id (`CommandId`, a UUID of any version) stored with a resolution.
+- `CreateJob::is_the_same_declaration_as` is public. For a Job whose request
+  data was erased it compares the runner type, the producer, the parent, the
+  identity of the user, the Requester, the source, the maximum attempts and the
+  priority, and ignores the configuration, the Passport and the payload.
 
 ## 0.8.2 - 2026-11-01
 

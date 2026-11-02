@@ -171,6 +171,12 @@ async fn apply_change(
         .collect::<Result<_, bc_jobs::JobsError>>()?;
     let metadata = change.metadata.as_ref().unwrap_or(metadata);
     apply::apply_job_events(tx, change.job_id, &recorded, metadata, at).await?;
+    if let Some(command_id) = change
+        .remembered_command
+        .filter(|_| change.resolves_the_job())
+    {
+        apply::command_memory::remember(tx, change.job_id, command_id).await?;
+    }
     for (event_id, event) in &recorded {
         let published =
             integration::of_event(event, change.before.as_ref(), change.note.as_deref())?;

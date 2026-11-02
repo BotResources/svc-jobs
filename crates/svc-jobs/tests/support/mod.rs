@@ -31,6 +31,7 @@ pub mod priority;
 pub mod producer;
 pub mod refusal;
 pub mod removed_address;
+pub mod repeat_scene;
 pub mod restart;
 pub mod runner;
 pub mod runner_cancel;

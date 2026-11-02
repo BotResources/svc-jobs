@@ -3,8 +3,8 @@ use bc_jobs::domain::attempts::{AttemptNumber, MaxAttempts};
 use bc_jobs::domain::config::RunnerConfig;
 use bc_jobs::domain::fleet::run_duration::MaxRunDuration;
 use bc_jobs::domain::ids::{
-    ClaimId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId, RunId,
-    SourceEntityId, StartId,
+    ClaimId, CommandId, JobId, ManualRetryId, PlanDeclarationId, ResolutionId, RetryScheduleId,
+    RunId, SourceEntityId, StartId,
 };
 use bc_jobs::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolution, JobResolutionKind};
@@ -238,7 +238,8 @@ pub fn resolution(row: &PgRow) -> Result<(JobId, JobResolution), JobsError> {
             row.get("occurred_at"),
             cause,
             caused_by,
-        )?,
+        )?
+        .remembering(row.get::<Option<Uuid>, _>("command_id").map(CommandId::new)),
     ))
 }
 

@@ -1,6 +1,6 @@
 use bc_jobs::JobsError;
 use bc_jobs::commands::job::resolution::{FailJob, FinishJob};
-use bc_jobs::domain::ids::{JobId, ResolutionId};
+use bc_jobs::domain::ids::{CommandId, JobId, ResolutionId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::ownership::{ActorRef, CancelRequester, ResolutionRequester};
 use bc_jobs::domain::requester::{ActsFor, Caller, Requester};
@@ -15,12 +15,15 @@ use super::write::{self, JobChange};
 use super::{Jobs, resolve};
 use crate::error::ServiceError;
 
+mod repeat;
+
 pub async fn finish(
     jobs: &Jobs,
     wire: &FinishJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let outcome = try_finish(jobs, wire, metadata).await;
+    let outcome = try_finish(jobs, wire, command_id, metadata).await;
     answered(
         jobs,
         wire::COMMAND_TYPE_REJECTED_FINISH,
@@ -34,9 +37,10 @@ pub async fn finish(
 pub async fn fail(
     jobs: &Jobs,
     wire: &FailJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let outcome = try_fail(jobs, wire, metadata).await;
+    let outcome = try_fail(jobs, wire, command_id, metadata).await;
     answered(
         jobs,
         wire::COMMAND_TYPE_REJECTED_FAIL,
@@ -50,9 +54,10 @@ pub async fn fail(
 pub async fn cancel(
     jobs: &Jobs,
     wire: &CancelJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let outcome = try_cancel(jobs, wire, metadata).await;
+    let outcome = try_cancel(jobs, wire, command_id, metadata).await;
     answered(
         jobs,
         wire::COMMAND_TYPE_REJECTED_CANCEL,
@@ -66,33 +71,48 @@ pub async fn cancel(
 async fn try_finish(
     jobs: &Jobs,
     wire: &FinishJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(JobId::new(wire.job_id)?).await?;
     let requester = resolution_requester(jobs, &job, wire.acting(), metadata).await?;
+    if let Some(first) = job.repeat_of_finish(command_id, &requester)? {
+        return repeat::resolution_again(jobs, &first, &job, None, metadata).await;
+    }
     let result = job.finish(FinishJob {
         resolution_id: ResolutionId::new(jobs.ids.next())?,
         requester,
     })?;
     let id = job.id();
-    jobs.commit(vec![JobChange::new(id, Some(job), result.events)], metadata)
-        .await
+    jobs.commit(
+        vec![JobChange::new(id, Some(job), result.events).remembering(Some(command_id))],
+        metadata,
+    )
+    .await
 }
 
 async fn try_fail(
     jobs: &Jobs,
     wire: &FailJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(JobId::new(wire.job_id)?).await?;
     let requester = resolution_requester(jobs, &job, wire.acting(), metadata).await?;
+    if let Some(first) = job.repeat_of_fail(command_id, &requester)? {
+        return repeat::resolution_again(jobs, &first, &job, wire.note.as_deref(), metadata).await;
+    }
     let result = job.declare_failed(FailJob {
         resolution_id: ResolutionId::new(jobs.ids.next())?,
         requester,
     })?;
     let id = job.id();
     jobs.commit(
-        vec![JobChange::new(id, Some(job), result.events).with_note(wire.note.clone())],
+        vec![
+            JobChange::new(id, Some(job), result.events)
+                .with_note(wire.note.clone())
+                .remembering(Some(command_id)),
+        ],
         metadata,
     )
     .await
@@ -101,6 +121,7 @@ async fn try_fail(
 async fn try_cancel(
     jobs: &Jobs,
     wire: &CancelJobV3,
+    command_id: CommandId,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job_id = JobId::new(wire.job_id)?;
@@ -126,7 +147,10 @@ async fn try_cancel(
         job_id,
         ResolutionId::new(jobs.ids.next())?,
         requester,
-        accepted,
+        resolve::CancelAnswer {
+            accepted,
+            command_id: Some(command_id),
+        },
         metadata,
     )
     .await

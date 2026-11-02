@@ -76,7 +76,7 @@ pub(super) const CANCELLATIONS_SQL: &str = "SELECT c.run_id::uuid AS run_id, c.r
 
 pub(super) const RESOLUTIONS_SQL: &str = "SELECT DISTINCT ON (job_id) job_id::uuid AS job_id, id::uuid AS id, \
      kind::text AS kind, occurred_at, failure_cause::text AS failure_cause, \
-     caused_by_run_id::uuid AS caused_by_run_id \
+     caused_by_run_id::uuid AS caused_by_run_id, command_id \
      FROM job_resolutions WHERE job_id = ANY($1) ORDER BY job_id, occurred_at DESC, id DESC";
 
 pub(super) const DELETIONS_SQL: &str = "SELECT d.job_id::uuid AS job_id, d.deleted_by_id::uuid AS deleted_by_id, \

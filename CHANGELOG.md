@@ -47,6 +47,10 @@ form to decide whether a version ships.
   The stream sequence of a trigger is stored with three attempts, and a
   termination looks for its Run for about one second before it counts the
   sequence as naming no Run.
+- A create repeated identically, and a finish, a fail or a cancel (version 3)
+  repeated with the same command id by an actor that may send it, get the event
+  of the first outcome again (`queued.v2`, `completed.v2`, `failed.v2`,
+  `cancel_accepted.v1`). A command Jobs refused is judged again.
 
 ### Changed
 
