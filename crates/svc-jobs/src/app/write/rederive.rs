@@ -20,7 +20,7 @@ use bc_jobs::domain::priority::{PriorityBasis, UserMaxPriority};
 use bc_jobs::event::job::JobEvent;
 use uuid::Uuid;
 
-use super::job_changes::JobChange;
+use super::change::JobChange;
 use crate::db::{PgStore, hydrate};
 use crate::error::ServiceError;
 

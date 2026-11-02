@@ -5,7 +5,7 @@ use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::environment::IdFactory;
 
-use super::job_changes::JobChange;
+use super::change::JobChange;
 use crate::db::fleet::load;
 use crate::error::ServiceError;
 

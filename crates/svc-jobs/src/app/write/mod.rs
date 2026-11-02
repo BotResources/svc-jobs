@@ -1,3 +1,4 @@
+mod change;
 mod fleet;
 mod guards;
 mod job_changes;
@@ -7,11 +8,11 @@ mod rederive;
 mod rejection;
 mod routing;
 
+pub use change::{CallerAddressPremise, JobChange};
 pub use fleet::{FleetChange, commit_fleet, commit_fleet_events};
 pub use guards::guard_free_capacity;
 pub use job_changes::{
-    CallerAddressPremise, JobChange, WriteContext, commit_job_changes, commit_job_changes_in,
-    record_user_events_in,
+    WriteContext, commit_job_changes, commit_job_changes_in, record_user_events_in,
 };
 pub use premise::PriorityPremise;
 pub use rejection::{CreationRefusal, RefusalNotice, publish_command_rejection, publish_rejection};

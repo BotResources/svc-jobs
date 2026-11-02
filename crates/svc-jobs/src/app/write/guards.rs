@@ -7,7 +7,7 @@ use bc_jobs::domain::references::SourceReference;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::event::queued::QueuedTree;
 
-use super::job_changes::JobChange;
+use super::change::JobChange;
 use super::routing::RoutedRunnerType;
 use crate::app::fingerprint;
 use crate::db::fleet::capacity;
