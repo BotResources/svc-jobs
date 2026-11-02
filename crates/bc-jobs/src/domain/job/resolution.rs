@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{ResolutionId, RunId};
+use crate::domain::ids::{CommandId, ResolutionId, RunId};
 use crate::domain::job::status::JobStatus;
 use crate::domain::wire::db_string_serde;
 use crate::error::JobsError;
@@ -81,6 +81,8 @@ pub struct JobResolution {
     occurred_at: DateTime<Utc>,
     failure_cause: Option<JobFailureCause>,
     caused_by_run_id: Option<RunId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command_id: Option<CommandId>,
 }
 
 impl JobResolution {
@@ -91,6 +93,7 @@ impl JobResolution {
             occurred_at,
             failure_cause: None,
             caused_by_run_id: None,
+            command_id: None,
         }
     }
 
@@ -101,6 +104,7 @@ impl JobResolution {
             occurred_at,
             failure_cause: None,
             caused_by_run_id: None,
+            command_id: None,
         }
     }
 
@@ -121,6 +125,7 @@ impl JobResolution {
             occurred_at,
             failure_cause: Some(failure_cause),
             caused_by_run_id,
+            command_id: None,
         })
     }
 
@@ -144,6 +149,15 @@ impl JobResolution {
             (JobResolutionKind::Completed, None) => Ok(Self::completed(id, occurred_at)),
             (JobResolutionKind::Cancelled, None) => Ok(Self::cancelled(id, occurred_at)),
         }
+    }
+
+    pub fn remembering(mut self, command_id: Option<CommandId>) -> Self {
+        self.command_id = command_id;
+        self
+    }
+
+    pub fn command_id(&self) -> Option<CommandId> {
+        self.command_id
     }
 
     pub fn id(&self) -> ResolutionId {
@@ -190,14 +204,12 @@ mod tests {
 
     #[test]
     fn a_run_caused_failure_must_name_the_run_that_caused_it() {
-        // Given: a failure attributed to a terminal run
         let result = JobResolution::failed(
             resolution_id(),
             at(),
             JobFailureCause::TerminalRunFailure,
             None,
         );
-        // Then: the resolution is refused without the causing run
         assert_eq!(
             result,
             Err(JobsError::CorruptState {
@@ -208,7 +220,6 @@ mod tests {
 
     #[test]
     fn an_owner_declared_failure_needs_no_run() {
-        // Given: an owner judging the work unrecoverable
         let resolution = JobResolution::failed(
             resolution_id(),
             at(),
@@ -216,7 +227,6 @@ mod tests {
             None,
         )
         .unwrap();
-        // Then: the cause is recorded and the job reads as failed
         assert_eq!(
             resolution.failure_cause(),
             Some(JobFailureCause::DeclaredByOwner)
@@ -226,7 +236,6 @@ mod tests {
 
     #[test]
     fn a_cancelled_resolution_carrying_a_failure_cause_cannot_be_loaded() {
-        // Given: a stored CANCELLED resolution that also names a failure cause
         let result = JobResolution::hydrate(
             resolution_id(),
             JobResolutionKind::Cancelled,
@@ -234,7 +243,6 @@ mod tests {
             Some(JobFailureCause::DeclaredByOwner),
             None,
         );
-        // Then: the contradiction is refused at load
         assert_eq!(
             result,
             Err(JobsError::CorruptState {
@@ -245,10 +253,8 @@ mod tests {
 
     #[test]
     fn a_failed_resolution_without_a_cause_cannot_be_loaded() {
-        // Given: a stored FAILED resolution with no cause
         let result =
             JobResolution::hydrate(resolution_id(), JobResolutionKind::Failed, at(), None, None);
-        // Then: it is refused — every failed job records exactly one cause
         assert_eq!(
             result,
             Err(JobsError::CorruptState {

@@ -42,10 +42,6 @@ pub enum CreateOutcome {
     AlreadyQueued,
 }
 
-fn unless_given_or_equal<T: PartialEq>(given: Option<&T>, stored: Option<&T>) -> bool {
-    given.is_none() || given == stored
-}
-
 impl CreateJob {
     pub fn source(&self) -> Option<SourceReference> {
         self.source_entity_id
@@ -62,25 +58,6 @@ impl CreateJob {
             (None, Some(passport)) => passport.known_user(),
             (None, None) => Ok(None),
         }
-    }
-
-    fn is_the_same_declaration_as(&self, existing: &Job) -> bool {
-        existing.runner_type() == &self.runner_type
-            && existing.producer() == &self.producer
-            && existing.config() == self.config.as_ref()
-            && existing.parent_job_id() == self.parent_job_id
-            && unless_given_or_equal(self.triggered_by.as_ref(), existing.triggered_by())
-            && unless_given_or_equal(self.passport.as_ref(), existing.passport())
-            && unless_given_or_equal(
-                self.initial_job_id.as_ref(),
-                Some(&existing.initial_job_id()),
-            )
-            && existing.payload() == self.payload.as_ref()
-            && existing.requester() == &self.requester
-            && existing.source_entity_id() == self.source_entity_id
-            && existing.max_attempts() == self.max_attempts
-            && (self.parent_job_id.is_some()
-                || existing.priority().requested() == self.requested_priority)
     }
 }
 
@@ -229,6 +206,8 @@ fn resolve_owner<'a>(
         Some(parent),
     ))
 }
+
+mod repeat;
 
 #[cfg(test)]
 mod tests;
