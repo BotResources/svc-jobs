@@ -93,13 +93,9 @@ async fn a_restart_job_that_fails_for_good_or_is_cancelled_alone_does_not_hold_t
     );
     stays(&fixture, &[cancelled.called.job], "IN_PROGRESS").await;
 
-    let cancelled_answer = gql::cancel_job(
-        &fixture.gql(),
-        fixture.admin(),
-        Uuid::now_v7(),
-        cancelled_job,
-    )
-    .await;
+    let cancelling = Uuid::now_v7();
+    let cancelled_answer =
+        gql::cancel_job(&fixture.gql(), fixture.admin(), cancelling, cancelled_job).await;
     assert!(
         cancelled_answer["errors"].is_null(),
         "the administrator cancels the restart job alone: {cancelled_answer}"
@@ -110,6 +106,20 @@ async fn a_restart_job_that_fails_for_good_or_is_cancelled_alone_does_not_hold_t
         "CANCELLED"
     );
     one_completion_each(&durable, &[failing.called.job, cancelled.called.job]).await;
+    let metadata = durable
+        .metadata_of_event("JobCompleted", cancelled.called.job)
+        .await;
+    assert_eq!(
+        (
+            metadata["actor_kind"].as_str(),
+            metadata["actor_id"].as_str()
+        ),
+        (
+            Some("service"),
+            Some(svc_jobs::app::SERVICE_ACTOR.to_string().as_str())
+        ),
+        "the finish is attributed to the service account of Jobs, not to the administrator who cancelled"
+    );
     durable.close().await;
     fixture.shutdown().await;
 }

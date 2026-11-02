@@ -25,6 +25,17 @@ impl Durable {
             .get::<i64, _>(0)
     }
 
+    pub async fn metadata_of_event(&self, event_type: &str, aggregate: Uuid) -> serde_json::Value {
+        sqlx::query_scalar(
+            "SELECT metadata FROM domain_events WHERE event_type = $1 AND aggregate_id = $2",
+        )
+        .bind(event_type)
+        .bind(aggregate)
+        .fetch_one(&self.pool)
+        .await
+        .expect("the metadata of the event reads")
+    }
+
     pub async fn holder_of_run(&self, run_id: Uuid) -> Option<String> {
         sqlx::query_scalar(
             "SELECT ri.instance_key FROM run_starts rs \
