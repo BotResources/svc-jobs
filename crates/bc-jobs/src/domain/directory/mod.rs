@@ -2,6 +2,7 @@ pub mod caller_address;
 pub mod holder;
 pub mod listing;
 pub mod registration;
+pub mod removal;
 pub mod restart;
 
 pub use crate::domain::ids::AgentId;
