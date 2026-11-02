@@ -25,6 +25,16 @@ impl RunBuilder {
         }
     }
 
+    pub fn dispatched_at(mut self, at: DateTime<Utc>) -> Self {
+        self.state.dispatched_at = at;
+        self
+    }
+
+    pub fn with_id(mut self, id: RunId) -> Self {
+        self.state.id = id;
+        self
+    }
+
     pub fn retry_of_schedule(mut self, id: RetryScheduleId) -> Self {
         self.state.automatic_retry_schedule_id = Some(id);
         self
@@ -51,6 +61,16 @@ impl RunBuilder {
 
     pub fn started_on(mut self, instance: RunnerInstanceReference, at: DateTime<Utc>) -> Self {
         self.state.start = Some(RunStart::new(instance, at));
+        self
+    }
+
+    pub fn started_under(
+        mut self,
+        instance: RunnerInstanceReference,
+        at: DateTime<Utc>,
+        start_id: StartId,
+    ) -> Self {
+        self.state.start = Some(RunStart::new(instance, at).with_start_id(Some(start_id)));
         self
     }
 

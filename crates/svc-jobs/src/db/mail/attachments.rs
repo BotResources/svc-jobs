@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
-use super::send::guard_sender;
+use super::checks::guard_sender;
 use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
 use crate::db::work::{addresses_of_run, require_work};
@@ -55,6 +55,16 @@ impl AttachmentStore for PgStore {
         };
         if let Err(refusal) = guard_sender(&mut tx, request.from, context.run_id).await? {
             return Ok(Err(refusal.into()));
+        }
+        let erased: Option<bool> = sqlx::query_scalar(
+            "SELECT content_erased_at IS NOT NULL FROM mails WHERE mail_id = $1 FOR SHARE",
+        )
+        .bind(request.mail_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        if erased == Some(true) {
+            return Ok(Err(MailRefusal::MailContentErased.into()));
         }
         let incoming = AttachmentBody {
             name: request.name.clone(),

@@ -61,6 +61,9 @@ pub enum CommandWarning {
     FactAlreadyRecorded {
         fact: &'static str,
     },
+    FactDiscardedReservedElsewhere {
+        fact: &'static str,
+    },
     StepIndexNotAdvancing {
         current: u32,
         submitted: u32,
@@ -70,6 +73,24 @@ pub enum CommandWarning {
     CommandAlreadyApplied {
         command: &'static str,
     },
+    TriggerTerminationIgnored {
+        run_standing: IgnoredRunStanding,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IgnoredRunStanding {
+    Started,
+    Reserved,
+}
+
+impl IgnoredRunStanding {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Reserved => "reserved",
+        }
+    }
 }
 
 impl CommandWarning {
@@ -78,10 +99,12 @@ impl CommandWarning {
             Self::FactDiscardedOnTerminalJob { .. } => "fact_discarded_on_terminal_job",
             Self::FactDiscardedOnTerminalRun { .. } => "fact_discarded_on_terminal_run",
             Self::FactAlreadyRecorded { .. } => "fact_already_recorded",
+            Self::FactDiscardedReservedElsewhere { .. } => "fact_discarded_reserved_elsewhere",
             Self::StepIndexNotAdvancing { .. } => "step_index_not_advancing",
             Self::CancellationIsBestEffort => "cancellation_is_best_effort",
             Self::CancelledJobAlreadyTerminal => "cancelled_job_already_terminal",
             Self::CommandAlreadyApplied { .. } => "command_already_applied",
+            Self::TriggerTerminationIgnored { .. } => "trigger_termination_ignored",
         }
     }
 
@@ -93,12 +116,17 @@ impl CommandWarning {
             Self::FactDiscardedOnTerminalRun { fact, run_status } => {
                 json!({ "fact": fact, "runStatus": run_status })
             }
-            Self::FactAlreadyRecorded { fact } => json!({ "fact": fact }),
+            Self::FactAlreadyRecorded { fact } | Self::FactDiscardedReservedElsewhere { fact } => {
+                json!({ "fact": fact })
+            }
             Self::StepIndexNotAdvancing { current, submitted } => {
                 json!({ "current": current, "submitted": submitted })
             }
             Self::CancellationIsBestEffort | Self::CancelledJobAlreadyTerminal => json!({}),
             Self::CommandAlreadyApplied { command } => json!({ "command": command }),
+            Self::TriggerTerminationIgnored { run_standing } => {
+                json!({ "runStanding": run_standing.code() })
+            }
         }
     }
 }
@@ -109,17 +137,29 @@ mod tests {
 
     #[test]
     fn a_discarded_fact_produces_no_event_and_says_why() {
-        // Given: a late runner fact on a job that already resolved
         let result: JobCommandResult =
             CommandResult::nothing_happened(CommandWarning::FactDiscardedOnTerminalJob {
                 fact: "RunStarted",
                 job_status: "CANCELLED",
             });
-        // When/Then: history is untouched and the caller may acknowledge the message
         assert!(result.is_empty());
         assert_eq!(
             result.warnings.first().map(CommandWarning::code),
             Some("fact_discarded_on_terminal_job")
         );
+    }
+
+    #[test]
+    fn the_ignored_termination_of_a_trigger_names_the_standing_of_the_run_in_the_same_words() {
+        for (standing, word) in [
+            (IgnoredRunStanding::Started, "started"),
+            (IgnoredRunStanding::Reserved, "reserved"),
+        ] {
+            let warning = CommandWarning::TriggerTerminationIgnored {
+                run_standing: standing,
+            };
+            assert_eq!(warning.code(), "trigger_termination_ignored");
+            assert_eq!(warning.params(), json!({ "runStanding": word }));
+        }
     }
 }

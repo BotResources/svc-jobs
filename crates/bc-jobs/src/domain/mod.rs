@@ -1,8 +1,10 @@
 pub mod access;
 pub mod actions;
 pub mod attempts;
+pub mod auto_finish;
 pub mod config;
 pub mod directory;
+pub mod erasure;
 pub mod fleet;
 pub mod ids;
 pub mod job;
@@ -18,4 +20,5 @@ pub mod references;
 pub mod requester;
 pub mod run;
 pub mod runner;
+pub mod unreadable_request;
 mod wire;

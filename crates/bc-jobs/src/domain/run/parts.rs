@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::ids::{ClaimId, JobId, RetryScheduleId};
+use crate::domain::ids::{ClaimId, JobId, RetryScheduleId, StartId};
 use crate::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use crate::domain::references::KnownUser;
 use crate::domain::run::failure::RunFailureReport;
@@ -35,6 +35,8 @@ impl RunnerInstanceReference {
 pub struct RunStart {
     instance: RunnerInstanceReference,
     started_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_id: Option<StartId>,
 }
 
 impl RunStart {
@@ -42,7 +44,17 @@ impl RunStart {
         Self {
             instance,
             started_at,
+            start_id: None,
         }
+    }
+
+    pub fn with_start_id(mut self, start_id: Option<StartId>) -> Self {
+        self.start_id = start_id;
+        self
+    }
+
+    pub fn start_id(&self) -> Option<StartId> {
+        self.start_id
     }
 
     pub fn instance(&self) -> &RunnerInstanceReference {
@@ -53,10 +65,6 @@ impl RunStart {
         self.started_at
     }
 }
-
-/// A Run handed to the Instance that claimed it. The Run is created reserved:
-/// no other Instance may start it, and it fails with `claim_lost` when its
-/// Instance never starts it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReservation {
     instance: RunnerInstanceReference,
@@ -95,8 +103,6 @@ pub struct RunTerminal {
     kind: RunTerminalKind,
     occurred_at: DateTime<Utc>,
     failure: Option<RunFailureReport>,
-    /// Set on a Run cancelled without counting as an attempt — its trigger was
-    /// stranded by a switch to `CLAIM` and nobody ever took it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     withdrawal: Option<ReasonCode>,
 }
@@ -119,8 +125,6 @@ impl RunTerminal {
             withdrawal: None,
         }
     }
-
-    /// Cancelled without counting as an attempt, for `reason`.
     pub fn withdrawn(occurred_at: DateTime<Utc>, reason: ReasonCode) -> Self {
         Self {
             kind: RunTerminalKind::Cancelled,
@@ -252,10 +256,23 @@ mod tests {
     }
 
     #[test]
+    fn a_run_start_stored_before_the_start_id_existed_still_loads_without_one() {
+        let instance = crate::fixtures::instance();
+        let mut stored = serde_json::to_value(RunStart::new(instance.clone(), at())).unwrap();
+        assert!(stored.get("start_id").is_none());
+        let loaded: RunStart = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(loaded.start_id(), None);
+        let start = crate::fixtures::start_id();
+        stored =
+            serde_json::to_value(RunStart::new(instance, at()).with_start_id(Some(start))).unwrap();
+        assert!(stored.get("start_id").is_some());
+        let loaded: RunStart = serde_json::from_value(stored).unwrap();
+        assert_eq!(loaded.start_id(), Some(start));
+    }
+
+    #[test]
     fn a_failed_terminal_without_its_report_cannot_be_loaded() {
-        // Given: a stored FAILED run whose report row is missing
         let result = RunTerminal::hydrate(RunTerminalKind::Failed, at(), None, None);
-        // Then: the run refuses to load rather than serving a reportless failure
         assert_eq!(
             result,
             Err(JobsError::CorruptState {
@@ -266,14 +283,12 @@ mod tests {
 
     #[test]
     fn a_completed_terminal_carrying_a_failure_report_cannot_be_loaded() {
-        // Given: a stored COMPLETED run that somehow carries a failure report
         let report = RunFailureReport::platform(
             crate::domain::run::failure::RunFailureKind::Transient,
             "instance_lost",
         )
         .unwrap();
         let result = RunTerminal::hydrate(RunTerminalKind::Completed, at(), Some(report), None);
-        // Then: the contradiction is refused at load time
         assert_eq!(
             result,
             Err(JobsError::CorruptState {

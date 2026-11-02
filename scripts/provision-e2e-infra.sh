@@ -36,6 +36,14 @@ fi
 # a different major would otherwise win and point pg_ctlcluster at a
 # nonexistent cluster.
 PGVER="$(find /usr/lib/postgresql -maxdepth 3 -type f -name postgres -printf '%h\n' | awk -F/ '{print $(NF-1)}' | sort -V | tail -1)"
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+    sudo tee "/etc/postgresql/${PGVER}/main/conf.d/e2e-throwaway.conf" >/dev/null <<'CONF'
+fsync = off
+synchronous_commit = off
+full_page_writes = off
+max_connections = 300
+CONF
+fi
 sudo pg_ctlcluster "${PGVER}" main start
 
 # Password for TCP auth (debian defaults to peer on the unix socket only).
@@ -46,6 +54,13 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 pg_isready -h 127.0.0.1 -p 5432 -U postgres
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+    [[ "$(sudo -u postgres psql -qtAc 'SHOW fsync')" == "off" ]]
+    [[ "$(sudo -u postgres psql -qtAc 'SHOW synchronous_commit')" == "off" ]]
+    [[ "$(sudo -u postgres psql -qtAc 'SHOW full_page_writes')" == "off" ]]
+    [[ "$(sudo -u postgres psql -qtAc 'SHOW max_connections')" == "300" ]]
+fi
 
 ADMIN_URL="postgresql://postgres:e2e-ci@127.0.0.1:5432/postgres"
 echo "PostgreSQL ${PGVER} ready."

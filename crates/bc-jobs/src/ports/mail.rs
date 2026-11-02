@@ -8,6 +8,7 @@ use crate::domain::ids::{AgentId, AttachmentId, MailId};
 use crate::domain::mail::attachment::AttachmentBody;
 use crate::domain::mail::content::MailContent;
 use crate::domain::mail::delivery::RefusedRestart;
+use crate::domain::mail::refusal::MailRefusal;
 use crate::domain::mail::views::MailRead;
 use crate::domain::runner::refusal::RunnerRefusal;
 use crate::domain::runner::work::WorkNamed;
@@ -23,6 +24,13 @@ pub struct SendMail<'a> {
 pub struct Sent {
     pub refused_restarts: Vec<RefusedRestart>,
     pub wakes_restart: bool,
+}
+
+pub struct RefusedMail<'a> {
+    pub work: WorkNamed<'a>,
+    pub from: AgentId,
+    pub mail_id: MailId,
+    pub refusal: &'a MailRefusal,
 }
 
 pub struct Minting<'a> {
@@ -44,6 +52,12 @@ pub struct UploadAttachment<'a> {
 #[async_trait]
 pub trait MailSender: Send + Sync {
     async fn send_mail(&self, request: SendMail<'_>, minting: Minting<'_>) -> Stored<Sent>;
+
+    async fn note_refused_mail(
+        &self,
+        request: RefusedMail<'_>,
+        minting: Minting<'_>,
+    ) -> Result<(), PortError>;
 }
 
 #[async_trait]

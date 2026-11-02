@@ -62,6 +62,10 @@ pub enum JobsError {
         requested: u32,
         ceiling: u32,
     },
+    CancelledRetentionAboveRetention {
+        cancelled: i64,
+        retention: i64,
+    },
     JobAlreadyTerminal {
         status: &'static str,
     },
@@ -70,6 +74,8 @@ pub enum JobsError {
         status: &'static str,
     },
     JobAlreadyDeleted,
+    TreeScrubbed,
+    RequestDataErased,
     JobNotFailed {
         status: &'static str,
     },
@@ -129,9 +135,6 @@ pub enum JobsError {
         run_id: Uuid,
     },
     RunNotReserved {
-        run_id: Uuid,
-    },
-    RunReservedElsewhere {
         run_id: Uuid,
     },
     ReservationWithinDelay {

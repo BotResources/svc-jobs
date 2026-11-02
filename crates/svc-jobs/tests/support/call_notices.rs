@@ -109,3 +109,51 @@ pub async fn wait_for_job_notice(
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
+
+pub async fn mail_notices(fixture: &JobsFixture, work: &Work, address: Option<Uuid>) -> Vec<Value> {
+    gesture::items(&gesture::unread(&fixture.gql(), &runner_access(), work, address).await)
+        .into_iter()
+        .filter(|item| item["itemKind"] == "MAIL_NOTICE")
+        .collect()
+}
+
+pub async fn wait_for_mail_notices(
+    fixture: &JobsFixture,
+    work: &Work,
+    address: Option<Uuid>,
+    count: usize,
+) -> Vec<Value> {
+    let waited = std::time::Instant::now();
+    loop {
+        let seen = mail_notices(fixture, work, address).await;
+        if seen.len() >= count {
+            return seen;
+        }
+        assert!(
+            waited.elapsed() < LONG,
+            "expected {count} mail notice(s); saw {seen:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+pub async fn refused_background_call(fixture: &JobsFixture, caller: &Caller<'_>) -> Uuid {
+    let job = Uuid::now_v7();
+    Producer::new(fixture.fabric(), "projects")
+        .send_v3(
+            wire::VERB_CREATE,
+            json!({
+                "job_id": job.to_string(),
+                "runner_type": caller.pair.child.runner_type,
+                "producer": "projects",
+                "parent_job_id": caller.root.to_string(),
+                "mode": "BACKGROUND",
+                "caller_address": caller.address.to_string(),
+                "acting_run_id": runner::run_id(&caller.trigger).to_string(),
+                "acting_instance_key": caller.pair.parent.instance_key,
+                "priority": 99,
+            }),
+        )
+        .await;
+    job
+}

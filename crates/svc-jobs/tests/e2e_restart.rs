@@ -193,3 +193,71 @@ async fn a_failed_restart_run_puts_the_agents_back_to_finished_and_leaves_the_ma
     durable.close().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_mail_arriving_while_the_restart_waits_for_its_scheduled_retry_creates_no_second_restart()
+{
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let mut scene = running_child(&fixture, "restart-retry-mail").await;
+    scene.finish_child(&durable).await;
+    scene.mail_receiver(&fixture, scene.sender).await;
+    let trigger = scene.pair.child.next_trigger(LONG).await;
+    scene.pair.child.start_applied(&fixture, &trigger).await;
+
+    scene
+        .pair
+        .child
+        .fail_run(&trigger, "TRANSIENT", "provider_unavailable", Some(4))
+        .await;
+    durable
+        .await_count(
+            FINISHED_OF_RUN,
+            scene.child_run(),
+            2,
+            "the agents are back to FINISHED while the retry is scheduled",
+        )
+        .await;
+    let second = scene.mail_receiver(&fixture, scene.sender).await;
+    durable
+        .assert_count(
+            RESTARTS_OF_RUN,
+            scene.child_run(),
+            1,
+            "the mail creates no second restart Job",
+        )
+        .await;
+
+    let retry = scene.pair.child.next_trigger(LONG).await;
+    assert_eq!(
+        runner::job_id(&retry),
+        runner::job_id(&trigger),
+        "the scheduled retry is a Run of the same restart Job"
+    );
+    scene.pair.child.start_applied(&fixture, &retry).await;
+    let waiting = gesture::items(
+        &gesture::unread(
+            &fixture.gql(),
+            &runner_access(),
+            &Work::of(&scene.pair.child, &retry),
+            Some(scene.receiver),
+        )
+        .await,
+    );
+    assert!(
+        waiting
+            .iter()
+            .any(|item| item["mailId"] == second.mail_id.to_string()),
+        "the Run of the retry reads the mail that waited: {waiting:?}"
+    );
+    durable
+        .assert_count(
+            RESTARTS_OF_RUN,
+            scene.child_run(),
+            1,
+            "still one restart Job after the retry starts",
+        )
+        .await;
+    durable.close().await;
+    fixture.shutdown().await;
+}

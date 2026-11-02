@@ -38,6 +38,7 @@ impl JobEvent {
             | Self::ManualRetryStarted(_)
             | Self::JobDeleted(_)
             | Self::JobAffordancesChanged(_)
+            | Self::JobContentErased(_)
             | Self::JobPriorityForced(_)
             | Self::JobPriorityRecalculated(_) => None,
         }

@@ -195,6 +195,43 @@ async fn a_surface_request_that_cannot_take_the_tree_gets_no_reply() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_started_request_that_cannot_take_the_tree_gets_no_reply_and_holds_nothing() {
+    let fixture = JobsFixture::start().await;
+    let client = fixture.gql();
+    let durable = Durable::open(&fixture.app_url()).await;
+    let scene = dispatched(&fixture, "lock-timeout-started").await;
+    let start = uuid::Uuid::now_v7();
+    let timeouts_before = metrics::tree_lock_timeouts(&client).await;
+    let hold = TreeHold::take(&fixture.app_url(), scene.tree()).await;
+
+    let waited = tokio::time::Instant::now();
+    let mut pending =
+        surface::started_without_waiting(fixture.nats(), &scene.runner, scene.run(), start).await;
+    metrics::await_tree_lock_timeouts_above(&client, timeouts_before).await;
+
+    assert!(
+        pending.silent_for(Duration::from_secs(1)).await,
+        "a started request that timed out on the Tree lock is not answered"
+    );
+    assert!(
+        waited.elapsed() > BOUNDED_WAIT,
+        "the request waited for the Tree before it gave up"
+    );
+    assert_eq!(
+        durable.count(STARTS_OF_RUN, scene.run()).await,
+        0,
+        "a started request that is not answered holds nothing"
+    );
+
+    hold.release().await;
+    let retried = scene.runner.send_started(&scene.trigger, start).await;
+    assert_eq!(retried["accepted"], true, "{retried}");
+    assert_eq!(durable.count(STARTS_OF_RUN, scene.run()).await, 1);
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_runner_fact_that_cannot_take_the_tree_is_redelivered_and_lands_when_it_is_free() {
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;

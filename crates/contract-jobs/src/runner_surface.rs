@@ -5,7 +5,7 @@ use crate::reason::Reason;
 use crate::segment::SubjectSegment;
 use crate::{
     CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE, CMD_JOBS_RUNNER_MARK_READ_RUNNER_TYPE,
-    CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE,
+    CMD_JOBS_RUNNER_REGISTER_AGENTS_RUNNER_TYPE, CMD_JOBS_RUNNER_STARTED_RUNNER_TYPE,
 };
 
 pub const SURFACE_WIRE_VERSION: u8 = 1;
@@ -13,10 +13,12 @@ pub const SURFACE_WIRE_VERSION: u8 = 1;
 pub const REGISTER_AGENTS_FILTER: &str = "jobs.runner.register_agents.*";
 pub const MARK_READ_FILTER: &str = "jobs.runner.mark_read.*";
 pub const LIST_AGENTS_FILTER: &str = "jobs.runner.list_agents.*";
+pub const STARTED_FILTER: &str = "jobs.runner.started.*";
 
 pub const REGISTER_AGENTS_PREFIX: &str = "jobs.runner.register_agents.";
 pub const MARK_READ_PREFIX: &str = "jobs.runner.mark_read.";
 pub const LIST_AGENTS_PREFIX: &str = "jobs.runner.list_agents.";
+pub const STARTED_PREFIX: &str = "jobs.runner.started.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +32,10 @@ pub enum SurfaceReason {
     AgentIdNotFinished,
     ItemNotYours,
     Malformed,
+    InstanceUnknown,
+    RunHeld,
+    RunReservedElsewhere,
+    RunNotPending,
 }
 
 fn wire_version() -> u8 {
@@ -50,6 +56,10 @@ pub fn mark_read_subject(runner_type: &SubjectSegment) -> String {
 
 pub fn list_agents_subject(runner_type: &SubjectSegment) -> String {
     render(CMD_JOBS_RUNNER_LIST_AGENTS_RUNNER_TYPE, runner_type)
+}
+
+pub fn started_subject(runner_type: &SubjectSegment) -> String {
+    render(CMD_JOBS_RUNNER_STARTED_RUNNER_TYPE, runner_type)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +94,15 @@ pub struct ListAgents {
     pub version: u8,
     pub run_id: Uuid,
     pub instance_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartedRequest {
+    #[serde(default = "wire_version")]
+    pub version: u8,
+    pub run_id: Uuid,
+    pub instance_key: String,
+    pub start_id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,68 +190,7 @@ impl ListAgentsReply {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests;
 
-    #[test]
-    fn each_request_renders_its_own_subject_for_the_runner_type() {
-        let analyst = SubjectSegment::runner_type("analyst").unwrap();
-        assert_eq!(
-            register_agents_subject(&analyst),
-            "jobs.runner.register_agents.analyst"
-        );
-        assert_eq!(mark_read_subject(&analyst), "jobs.runner.mark_read.analyst");
-        assert_eq!(
-            list_agents_subject(&analyst),
-            "jobs.runner.list_agents.analyst"
-        );
-    }
-
-    #[test]
-    fn a_registration_without_a_declared_restart_reads_as_not_restartable() {
-        let agent: AgentDeclaration = serde_json::from_value(serde_json::json!({
-            "agent_id": Uuid::nil().to_string(),
-            "has_inbox": true,
-        }))
-        .unwrap();
-        assert!(!agent.declares_restart);
-    }
-
-    #[test]
-    fn a_refusal_carries_its_reason_and_its_words_and_an_acceptance_neither() {
-        let accepted = serde_json::to_value(SurfaceReply::accepted()).unwrap();
-        assert_eq!(
-            accepted,
-            serde_json::json!({ "version": 1, "accepted": true })
-        );
-        let refused = serde_json::to_value(SurfaceReply::refused(
-            SurfaceReason::RunNotStarted,
-            "The run has not started.",
-        ))
-        .unwrap();
-        assert_eq!(refused["reason"], "run_not_started");
-        assert_eq!(refused["accepted"], false);
-    }
-
-    #[test]
-    fn every_reason_travels_as_its_snake_case_code() {
-        let codes = [
-            (SurfaceReason::RunUnknown, "run_unknown"),
-            (SurfaceReason::RunNotStarted, "run_not_started"),
-            (SurfaceReason::RunEnded, "run_ended"),
-            (SurfaceReason::RunRemoved, "run_removed"),
-            (SurfaceReason::InstanceMismatch, "instance_mismatch"),
-            (SurfaceReason::AgentIdInOtherTree, "agent_id_in_other_tree"),
-            (SurfaceReason::AgentIdNotFinished, "agent_id_not_finished"),
-            (SurfaceReason::ItemNotYours, "item_not_yours"),
-            (SurfaceReason::Malformed, "malformed"),
-        ];
-        for (reason, code) in codes {
-            assert_eq!(serde_json::to_value(reason).unwrap(), code);
-            assert_eq!(
-                serde_json::from_value::<SurfaceReason>(serde_json::json!(code)).unwrap(),
-                reason
-            );
-        }
-    }
-}
+#[cfg(test)]
+mod tests_started;

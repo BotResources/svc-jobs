@@ -1,3 +1,4 @@
+pub mod auto_finish;
 pub mod directory;
 pub mod environment;
 pub mod fleet;
@@ -9,7 +10,9 @@ pub mod mail;
 pub mod restart;
 pub mod result;
 pub mod saved_state;
+pub mod scrub;
 pub mod transport;
+pub mod trigger_ledger;
 pub mod user;
 
 use thiserror::Error;

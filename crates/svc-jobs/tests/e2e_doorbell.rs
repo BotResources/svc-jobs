@@ -11,7 +11,8 @@ use support::{LONG, wire};
 use uuid::Uuid;
 
 #[tokio::test]
-async fn every_kind_of_item_rings_the_live_run_and_a_runner_off_the_bus_loses_nothing() {
+async fn a_mail_a_copy_and_a_call_notice_ring_the_live_run_and_a_runner_off_the_bus_loses_nothing()
+{
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let gql = fixture.gql();
@@ -30,6 +31,7 @@ async fn every_kind_of_item_rings_the_live_run_and_a_runner_off_the_bus_loses_no
         );
     }
     let bell = DoorbellLog::open(fixture.fabric()).await;
+    let bell_v2 = DoorbellLog::open_v2(fixture.fabric()).await;
     let waiting = gesture::items(
         &gesture::unread(&gql, &runner, &scene.child_work, Some(scene.receiver)).await,
     );
@@ -90,6 +92,38 @@ async fn every_kind_of_item_rings_the_live_run_and_a_runner_off_the_bus_loses_no
         "a notice of a runner call is announced the same way: {rings:?}"
     );
     assert_eq!(durable.rings_for(run, Some("CC_NOTICE")).await, 1);
+
+    let rings_v2 = bell_v2.expect_rings(run, 4, LONG).await;
+    let kinds = |rings: &[serde_json::Value]| {
+        let mut named: Vec<(String, String, String)> = rings
+            .iter()
+            .map(|ring| {
+                (
+                    ring["item_kind"].as_str().unwrap_or_default().to_owned(),
+                    ring["item_id"].as_str().unwrap_or_default().to_owned(),
+                    ring["address"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        named.sort();
+        named
+    };
+    assert_eq!(
+        kinds(&rings),
+        kinds(&rings_v2),
+        "the second version of the doorbell announces the same items, the same way"
+    );
+    for ring in &rings_v2 {
+        let item: Uuid = ring["item_id"]
+            .as_str()
+            .unwrap_or_default()
+            .parse()
+            .unwrap();
+        assert_eq!(item.get_version_num(), 7, "the item id is a UUIDv7");
+        assert_eq!(durable.rings_of_item(item).await, 1);
+        assert_eq!(durable.rings_of_item_v2(item).await, 1);
+    }
+    bell_v2.stop().await;
     bell.stop().await;
     durable.close().await;
     fixture.shutdown().await;

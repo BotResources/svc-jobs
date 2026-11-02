@@ -44,35 +44,37 @@ spec:
           {{- end }}
           ports:
             - name: http
-              containerPort: {{ .Values.port }}
+              containerPort: {{ .Values.port | int64 }}
               protocol: TCP
           env:
             - name: PORT
-              value: {{ .Values.port | quote }}
+              value: {{ .Values.port | int64 | quote }}
             - name: RUST_LOG
               value: {{ .Values.logLevel | quote }}
             {{- with .Values.postgres.trustedNetworkHosts }}
-            # Per-host plaintext opt-out (see values.yaml): the lib refuses a
-            # plaintext DSN to a remote host unless its host is listed here.
             - name: TRUSTED_NETWORK_HOSTS
               value: {{ join "," . | quote }}
             {{- end }}
             - name: JOBS_RETIREMENT_QUIET_PERIOD_SECONDS
-              value: {{ .Values.runnerTypes.retirementQuietPeriodSeconds | quote }}
+              value: {{ .Values.runnerTypes.retirementQuietPeriodSeconds | int64 | quote }}
             - name: JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS
-              value: {{ .Values.runnerTypes.impactSweepIntervalSeconds | quote }}
+              value: {{ .Values.runnerTypes.impactSweepIntervalSeconds | int64 | quote }}
             - name: JOBS_CATALOG_RECONCILE_INTERVAL_SECONDS
-              value: {{ .Values.runnerTypes.catalogReconcileIntervalSeconds | quote }}
+              value: {{ .Values.runnerTypes.catalogReconcileIntervalSeconds | int64 | quote }}
             - name: JOBS_DEFAULT_MAX_PRIORITY
-              value: {{ .Values.priorities.defaultMaxPriority | quote }}
+              value: {{ .Values.priorities.defaultMaxPriority | int64 | quote }}
             - name: JOBS_CLAIM_MAX_WAIT_SECONDS
-              value: {{ .Values.claims.maxWaitSeconds | quote }}
+              value: {{ .Values.claims.maxWaitSeconds | int64 | quote }}
             - name: JOBS_CLAIM_RESERVATION_SECONDS
-              value: {{ .Values.claims.reservationSeconds | quote }}
+              value: {{ .Values.claims.reservationSeconds | int64 | quote }}
             - name: JOBS_CLAIM_MAX_HELD
-              value: {{ .Values.claims.maxHeld | quote }}
+              value: {{ .Values.claims.maxHeld | int64 | quote }}
             - name: JOBS_SAVED_STATE_MAX_BYTES
-              value: {{ .Values.savedState.maxBytes | quote }}
+              value: {{ .Values.savedState.maxBytes | int64 | quote }}
+            - name: JOBS_RETENTION_DAYS
+              value: {{ .Values.retention.days | int64 | quote }}
+            - name: JOBS_CANCELLED_RETENTION_DAYS
+              value: {{ .Values.retention.cancelledDays | int64 | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -87,13 +89,6 @@ spec:
                   name: {{ .Values.postgres.existingSecret | quote }}
                   key: {{ .Values.postgres.keys.databaseUrlOwner | quote }}
             {{- if .Values.postgres.keys.appPassword }}
-            # When set, svc-jobs provisions the jobs_app role at boot with this
-            # password ONLY when the role does not already accept it (a probe
-            # guards the PG16-denied ALTER ROLE on re-boot; rotation belongs to
-            # the CNPG roles reconciler, not the service), and grants it after
-            # migrating. Clear the key when the role is provisioned out of
-            # band, so a Secret without it never fails the pod with
-            # CreateContainerConfigError.
             - name: JOBS_APP_PASSWORD
               valueFrom:
                 secretKeyRef:

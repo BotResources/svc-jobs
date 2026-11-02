@@ -32,6 +32,21 @@ pub async fn spawn_instance(
     }
 }
 
+pub struct BootAttempt {
+    pub outcome: BootOutcome,
+    pub logs: String,
+}
+
+pub async fn attempt_boot(db: &E2eDatabase, nats_url: &str, knobs: &Knobs) -> BootAttempt {
+    let (mut service, base_url) = spawn_process(db, nats_url, knobs);
+    let outcome = service
+        .await_boot(&format!("{base_url}/readyz"), BOOT_TIMEOUT)
+        .await;
+    let logs = service.logs();
+    service.shutdown().await;
+    BootAttempt { outcome, logs }
+}
+
 pub(super) fn spawn_process(
     db: &E2eDatabase,
     nats_url: &str,
@@ -93,6 +108,15 @@ pub(super) fn spawn_process(
     }
     if let Some(held) = claim_max_held.as_deref() {
         env.push(("JOBS_CLAIM_MAX_HELD", held));
+    }
+    if let Some(days) = knobs.retention_days.as_deref() {
+        env.push(("JOBS_RETENTION_DAYS", days));
+    }
+    if let Some(days) = knobs.cancelled_retention_days.as_deref() {
+        env.push(("JOBS_CANCELLED_RETENTION_DAYS", days));
+    }
+    for (name, value) in &knobs.chart_env {
+        env.push((name.as_str(), value.as_str()));
     }
     if let Some(initial) = restart_initial.as_deref() {
         env.push(("JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS", initial));

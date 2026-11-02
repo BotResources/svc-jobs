@@ -1,3 +1,4 @@
+use bc_jobs::domain::directory::removal::DirectoryRemoval;
 use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
 use bc_jobs::domain::runner::answer::InlineAnswer;
@@ -11,8 +12,9 @@ use sqlx::PgConnection;
 
 use crate::app::integration::message::{cancelled_message, failure_message};
 use crate::db::call_notices::{
-    Delivering, NoticeFor, call_notices_of, insert_notice, queue_position, result_of_run,
+    Delivering, call_notices_of, insert_notice, queue_position, result_of_run,
 };
+use crate::db::notice_target::NoticeFor;
 use crate::db::restart::wake_run;
 use crate::error::ServiceError;
 
@@ -23,30 +25,31 @@ pub async fn tell_callers(
     metadata: &EventMetadata,
     at: DateTime<Utc>,
     inline_max_bytes: usize,
+    removal: &DirectoryRemoval,
 ) -> Result<(), ServiceError> {
     for event in events {
         let job_id = event.job_id();
         let Some(notices) = call_notices_of(&mut *tx, job_id).await? else {
             continue;
         };
+        if removal.removes_the_caller_of(&notices) {
+            continue;
+        }
         for plan in notices.plan(event) {
             let Some(notice) =
                 build(&mut *tx, plan, event, job_id, &notices, inline_max_bytes).await?
             else {
                 continue;
             };
-            let wakes = notice.notice_type == NoticeType::JobFailed;
-            insert_notice(
+            let wakes = notice.starts_a_restart();
+            let inserted = insert_notice(
                 &mut *tx,
-                NoticeFor {
-                    run_id: notices.caller_run,
-                    address: notices.address,
-                },
+                NoticeFor::call(notices.caller_run, notices.address),
                 &notice,
                 Delivering { ids, metadata, at },
             )
             .await?;
-            if wakes {
+            if wakes && inserted.is_some() {
                 wake_run(&mut *tx, notices.caller_run.as_uuid(), at).await?;
             }
         }
@@ -62,15 +65,7 @@ async fn build(
     notices: &CallNotices,
     inline_max_bytes: usize,
 ) -> Result<Option<Notice>, ServiceError> {
-    let bare = |notice_type| Notice {
-        notice_type,
-        job_id,
-        position: None,
-        failure_report: None,
-        message: None,
-        answer: None,
-        result_id: None,
-    };
+    let bare = |notice_type| Notice::of_job(notice_type, job_id);
     Ok(Some(match plan {
         NoticePlan::Accepted => bare(NoticeType::Accepted),
         NoticePlan::Started => bare(NoticeType::Started),

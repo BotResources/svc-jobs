@@ -156,6 +156,14 @@ impl DoorbellLog {
         }
     }
 
+    pub async fn open_v2(fabric: &FabricTestNats) -> Self {
+        let coords =
+            contract_jobs::evt_run_item_arrived_v2_coords().expect("the doorbell coordinates");
+        Self {
+            capture: fabric.capture_events(&[&coords]).await,
+        }
+    }
+
     pub fn rings_for(&self, run_id: Uuid) -> Vec<Value> {
         let wanted = run_id.to_string();
         let mut rings = Vec::new();

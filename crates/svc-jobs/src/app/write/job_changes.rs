@@ -1,11 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 
-use bc_jobs::domain::ids::{EventId, JobId, KnownUserId, RunId};
+use bc_jobs::domain::directory::removal::DirectoryRemoval;
+use bc_jobs::domain::ids::{EventId, JobId, KnownUserId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::keys::RunnerTypeKey;
-use bc_jobs::domain::payload::CallMode;
 use bc_jobs::domain::policy::ServiceLimits;
-use bc_jobs::domain::references::SourceReference;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::event::user::UserEvent;
 use bc_jobs::ports::environment::IdFactory;
@@ -14,123 +12,23 @@ use br_util_nats_fabric::stage;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use super::change::JobChange;
+use super::erasure::erase_what_a_cancel_leaves_behind;
+use super::finish_premise::guard_finish_premise_still_holds;
 use super::guards::{
     claim_source, guard_caller_addresses_still_held, guard_decision_still_holds,
-    guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_restarts_still_due,
-    guard_runner_types_still_accept_jobs, lock_directory_trees,
+    guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_kept_payloads_uploaded,
+    guard_restarts_still_due, guard_runner_types_still_accept_jobs, lock_directory_trees,
+    lock_kept_payloads,
 };
 use super::notices::tell_callers;
-use super::premise::{PriorityPremise, guard_priority_premise_still_holds};
+use super::premise::guard_priority_premise_still_holds;
 use super::rederive;
 use super::routing::resolve_runner_type_routes;
 use crate::app::{followups, integration};
+use crate::db::removal::removed_with_jobs;
 use crate::db::{PgStore, apply, hydrate};
 use crate::error::ServiceError;
-
-pub struct JobChange {
-    pub job_id: JobId,
-    pub before: Option<Job>,
-    pub events: Vec<JobEvent>,
-    pub note: Option<String>,
-    pub claimed_source: Option<SourceReference>,
-    pub metadata: Option<EventMetadata>,
-    pub answers: Vec<integration::Published>,
-    pub priority_premise: Option<PriorityPremise>,
-    pub descendants_premise: Option<Vec<Uuid>>,
-    pub free_capacity_of: Option<RunnerTypeKey>,
-    pub removes_directory: bool,
-    pub restart: Option<RestartPremise>,
-    pub caller_address: Option<CallerAddressPremise>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CallerAddressPremise {
-    pub mode: CallMode,
-    pub address: Option<Uuid>,
-    pub caller: RunId,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RestartPremise {
-    pub origin_run: Uuid,
-    pub tree: JobId,
-}
-
-impl JobChange {
-    pub fn new(job_id: JobId, before: Option<Job>, events: Vec<JobEvent>) -> Self {
-        Self {
-            job_id,
-            before,
-            events,
-            note: None,
-            claimed_source: None,
-            metadata: None,
-            answers: Vec::new(),
-            priority_premise: None,
-            descendants_premise: None,
-            free_capacity_of: None,
-            removes_directory: false,
-            restart: None,
-            caller_address: None,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.events.is_empty() && self.answers.is_empty() && !self.removes_directory
-    }
-
-    pub fn restarting(mut self, origin_run: Uuid, tree: JobId) -> Self {
-        self.restart = Some(RestartPremise { origin_run, tree });
-        self
-    }
-
-    pub fn holding_caller_address(mut self, premise: Option<CallerAddressPremise>) -> Self {
-        self.caller_address = premise;
-        self
-    }
-
-    pub fn removing_directory(mut self) -> Self {
-        self.removes_directory = true;
-        self
-    }
-
-    pub fn requiring_free_capacity(mut self, runner_type: RunnerTypeKey) -> Self {
-        self.free_capacity_of = Some(runner_type);
-        self
-    }
-
-    pub fn over_descendants(mut self, descendants: impl IntoIterator<Item = JobId>) -> Self {
-        let mut ids: Vec<Uuid> = descendants.into_iter().map(|id| id.as_uuid()).collect();
-        ids.sort_unstable();
-        self.descendants_premise = Some(ids);
-        self
-    }
-
-    pub fn on_priority_premise(mut self, premise: Option<PriorityPremise>) -> Self {
-        self.priority_premise = premise;
-        self
-    }
-
-    pub fn answering(mut self, answer: integration::Published) -> Self {
-        self.answers.push(answer);
-        self
-    }
-
-    pub fn with_metadata(mut self, metadata: EventMetadata) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
-    pub fn with_note(mut self, note: Option<String>) -> Self {
-        self.note = note;
-        self
-    }
-
-    pub fn claiming_source(mut self, source: Option<SourceReference>) -> Self {
-        self.claimed_source = source;
-        self
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct WriteContext<'a> {
@@ -173,9 +71,12 @@ pub async fn commit_job_changes_in(
         return Ok(());
     }
     guard_free_capacity_of_every_type(&mut *tx, &changes).await?;
+    lock_kept_payloads(&mut *tx, &changes).await?;
+    guard_kept_payloads_uploaded(&mut *tx, &changes).await?;
     lock_directory_trees(&mut *tx, &changes).await?;
     guard_caller_addresses_still_held(&mut *tx, &changes).await?;
     guard_restarts_still_due(&mut *tx, &changes).await?;
+    guard_finish_premise_still_holds(&mut *tx, &changes).await?;
     let held = followups::rows_to_lock(&mut *tx, &changes).await?;
     for change in &changes {
         guard_priority_premise_still_holds(&mut *tx, change.priority_premise).await?;
@@ -191,19 +92,21 @@ pub async fn commit_job_changes_in(
     for change in &changes {
         guard_descendants_unchanged(&mut *tx, change).await?;
     }
+    let removal = removal_of(&mut *tx, &changes).await?;
     let routed = resolve_runner_type_routes(&mut *tx, ids, &changes).await?;
     guard_runner_types_still_accept_jobs(&routed)?;
     for change in &changes {
-        apply_change(&mut *tx, ids, change, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, change, metadata, at, limits, &removal).await?;
     }
     for followup in followups::of_settled_jobs(&mut *tx, &changes, &held).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits, &removal).await?;
     }
     for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
-        apply_change(&mut *tx, ids, &followup, metadata, at, limits).await?;
+        apply_change(&mut *tx, ids, &followup, metadata, at, limits, &removal).await?;
     }
-    for change in changes.iter().filter(|change| change.removes_directory) {
-        apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
+    let removed_runs: Vec<Uuid> = removal.runs().map(|run| run.as_uuid()).collect();
+    if !removed_runs.is_empty() {
+        apply::directory::remove_job_subtree(tx, &removed_runs, at).await?;
     }
     Ok(())
 }
@@ -242,6 +145,18 @@ async fn lock_root_first(
     Ok(hydrate::load_map(tx, &held).await?)
 }
 
+async fn removal_of(
+    tx: &mut sqlx::PgConnection,
+    changes: &[JobChange],
+) -> Result<DirectoryRemoval, ServiceError> {
+    let roots: Vec<Uuid> = changes
+        .iter()
+        .filter(|change| change.removes_directory)
+        .map(|change| change.job_id.as_uuid())
+        .collect();
+    Ok(removed_with_jobs(tx, &roots).await?)
+}
+
 async fn apply_change(
     tx: &mut sqlx::PgConnection,
     ids: &dyn IdFactory,
@@ -249,6 +164,7 @@ async fn apply_change(
     metadata: &EventMetadata,
     at: DateTime<Utc>,
     limits: &ServiceLimits,
+    removal: &DirectoryRemoval,
 ) -> Result<(), ServiceError> {
     if let Some(source) = &change.claimed_source {
         claim_source(tx, change.job_id, source).await?;
@@ -260,6 +176,12 @@ async fn apply_change(
         .collect::<Result<_, bc_jobs::JobsError>>()?;
     let metadata = change.metadata.as_ref().unwrap_or(metadata);
     apply::apply_job_events(tx, change.job_id, &recorded, metadata, at).await?;
+    if let Some(command_id) = change
+        .remembered_command
+        .filter(|_| change.resolves_the_job())
+    {
+        apply::command_memory::remember(tx, change.job_id, command_id).await?;
+    }
     for (event_id, event) in &recorded {
         let published =
             integration::of_event(event, change.before.as_ref(), change.note.as_deref())?;
@@ -288,7 +210,8 @@ async fn apply_change(
         metadata,
         at,
         limits.inline_payload_max_bytes(),
+        removal,
     )
     .await?;
-    Ok(())
+    erase_what_a_cancel_leaves_behind(tx, &change.events, limits, at).await
 }

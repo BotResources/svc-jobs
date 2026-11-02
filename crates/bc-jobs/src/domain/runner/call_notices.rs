@@ -34,6 +34,13 @@ impl CallNotices {
         }
     }
 
+    pub fn refusal_address(&self) -> Option<AgentId> {
+        match self.mode {
+            CallMode::Background => self.address,
+            CallMode::Sync => None,
+        }
+    }
+
     pub fn plan(&self, event: &JobEvent) -> Vec<NoticePlan> {
         let background = self.mode == CallMode::Background;
         match event.run_inbox_effect() {
@@ -47,12 +54,11 @@ impl CallNotices {
             RunInboxEffect::RunStarted if background => vec![NoticePlan::Started],
             RunInboxEffect::RunCompleted { run_id } => vec![NoticePlan::RunCompleted { run_id }],
             RunInboxEffect::JobFailed => vec![NoticePlan::JobFailed],
-            RunInboxEffect::JobCancelled if !background => vec![NoticePlan::JobCancelled],
+            RunInboxEffect::JobCancelled => vec![NoticePlan::JobCancelled],
             RunInboxEffect::Untouched
             | RunInboxEffect::JobQueued
             | RunInboxEffect::RetryScheduled
             | RunInboxEffect::RunStarted
-            | RunInboxEffect::JobCancelled
             | RunInboxEffect::RunFailed
             | RunInboxEffect::RunCancelled { .. } => vec![],
         }
@@ -93,6 +99,7 @@ mod tests {
             run_id: run_id(),
             runner_type: instance().runner_type().clone(),
             instance_key: instance().instance_key().clone(),
+            start_id: None,
         })
     }
 
@@ -150,7 +157,8 @@ mod tests {
                 "RunCompleted",
                 "RunCancelled",
                 "RetryScheduled",
-                "JobFailed"
+                "JobFailed",
+                "JobCancelled"
             ]
         );
         assert_eq!(
@@ -222,8 +230,31 @@ mod tests {
     }
 
     #[test]
-    fn a_background_call_lists_no_cancel_notice() {
-        assert!(background().plan(&job_cancelled()).is_empty());
+    fn a_background_call_tells_its_caller_that_the_called_job_was_cancelled_whoever_cancelled_it() {
+        assert_eq!(
+            background().plan(&job_cancelled()),
+            vec![NoticePlan::JobCancelled]
+        );
+    }
+
+    #[test]
+    fn only_a_background_call_with_a_caller_address_leaves_a_refusal_notice() {
+        let call = background();
+        assert_eq!(call.refusal_address(), call.address);
+        assert!(call.address.is_some());
+        assert_eq!(
+            CallNotices {
+                mode: CallMode::Sync,
+                ..call
+            }
+            .refusal_address(),
+            None
+        );
+        let no_address = CallNotices {
+            address: None,
+            ..call
+        };
+        assert_eq!(no_address.refusal_address(), None);
     }
 
     #[test]

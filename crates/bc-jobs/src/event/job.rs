@@ -4,8 +4,8 @@ use serde_json::Value;
 use crate::domain::ids::JobId;
 use crate::error::JobsError;
 use crate::event::job_facts::{
-    JobAffordancesChanged, JobCancelled, JobCompleted, JobDeleted, JobFailed, JobPriorityForced,
-    JobPriorityRecalculated, JobQueued, ManualRetryStarted, RetryScheduled,
+    JobAffordancesChanged, JobCancelled, JobCompleted, JobContentErased, JobDeleted, JobFailed,
+    JobPriorityForced, JobPriorityRecalculated, JobQueued, ManualRetryStarted, RetryScheduled,
     RunCancellationRequested, RunCancelled, RunCompleted, RunDispatched, RunFailed,
     RunPlanDeclared, RunStarted, RunStepStarted,
 };
@@ -30,6 +30,7 @@ pub enum JobEvent {
     ManualRetryStarted(ManualRetryStarted),
     JobDeleted(JobDeleted),
     JobAffordancesChanged(JobAffordancesChanged),
+    JobContentErased(JobContentErased),
     JobPriorityForced(JobPriorityForced),
     JobPriorityRecalculated(JobPriorityRecalculated),
 }
@@ -61,6 +62,7 @@ impl JobEvent {
             Self::ManualRetryStarted(_) => "ManualRetryStarted",
             Self::JobDeleted(_) => "JobDeleted",
             Self::JobAffordancesChanged(_) => "JobAffordancesChanged",
+            Self::JobContentErased(_) => "JobContentErased",
             Self::JobPriorityForced(_) => "JobPriorityForced",
             Self::JobPriorityRecalculated(_) => "JobPriorityRecalculated",
         }
@@ -84,6 +86,7 @@ impl JobEvent {
             Self::ManualRetryStarted(fact) => fact.job_id,
             Self::JobDeleted(fact) => fact.job_id,
             Self::JobAffordancesChanged(fact) => fact.job_id,
+            Self::JobContentErased(fact) => fact.job_id,
             Self::JobPriorityForced(fact) => fact.job_id,
             Self::JobPriorityRecalculated(fact) => fact.job_id,
         }
@@ -107,6 +110,7 @@ impl JobEvent {
             Self::ManualRetryStarted(fact) => payload_of(fact),
             Self::JobDeleted(fact) => payload_of(fact),
             Self::JobAffordancesChanged(fact) => payload_of(fact),
+            Self::JobContentErased(fact) => payload_of(fact),
             Self::JobPriorityForced(fact) => payload_of(fact),
             Self::JobPriorityRecalculated(fact) => payload_of(fact),
         }
@@ -130,6 +134,7 @@ impl JobEvent {
             "ManualRetryStarted" => Ok(Self::ManualRetryStarted(fact_of(payload)?)),
             "JobDeleted" => Ok(Self::JobDeleted(fact_of(payload)?)),
             "JobAffordancesChanged" => Ok(Self::JobAffordancesChanged(fact_of(payload)?)),
+            "JobContentErased" => Ok(Self::JobContentErased(fact_of(payload)?)),
             "JobPriorityForced" => Ok(Self::JobPriorityForced(fact_of(payload)?)),
             "JobPriorityRecalculated" => Ok(Self::JobPriorityRecalculated(fact_of(payload)?)),
             other => Err(JobsError::UnknownEnumValue {
@@ -160,6 +165,7 @@ impl JobEvent {
             | Self::ManualRetryStarted(_)
             | Self::JobDeleted(_)
             | Self::JobAffordancesChanged(_)
+            | Self::JobContentErased(_)
             | Self::JobPriorityForced(_)
             | Self::JobPriorityRecalculated(_) => true,
             Self::RunCancellationRequested(_) => false,
@@ -170,12 +176,60 @@ impl JobEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ids::StartId;
     use crate::domain::keys::ReasonCode;
     use crate::fixtures::{job_id, resolution_id, run_id};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn stored_run_started(extra: Option<(&str, Value)>) -> Value {
+        let mut payload = json!({
+            "job_id": job_id().as_uuid(),
+            "run_id": run_id().as_uuid(),
+            "runner_type": "analyst",
+            "instance_key": "pod-7",
+        });
+        if let Some((key, value)) = extra {
+            payload[key] = value;
+        }
+        payload
+    }
+
+    #[test]
+    fn a_run_started_stored_before_the_start_id_existed_still_decodes_without_one() {
+        let decoded = JobEvent::decode("RunStarted", stored_run_started(None)).unwrap();
+        match decoded {
+            JobEvent::RunStarted(fact) => assert_eq!(fact.start_id, None),
+            other => panic!("expected a RunStarted fact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_run_started_writes_its_start_id_only_when_it_has_one() {
+        let without = stored_run_started(None);
+        let start = Uuid::now_v7();
+        let with = stored_run_started(Some(("start_id", json!(start))));
+        let rewritten_without = JobEvent::decode("RunStarted", without.clone())
+            .unwrap()
+            .payload()
+            .unwrap();
+        let rewritten_with = JobEvent::decode("RunStarted", with.clone())
+            .unwrap()
+            .payload()
+            .unwrap();
+        assert_eq!(rewritten_without, without);
+        assert!(rewritten_without.get("start_id").is_none());
+        assert_eq!(rewritten_with, with);
+        match JobEvent::decode("RunStarted", with).unwrap() {
+            JobEvent::RunStarted(fact) => {
+                assert_eq!(fact.start_id, Some(StartId::new(start).unwrap()));
+            }
+            other => panic!("expected a RunStarted fact, got {other:?}"),
+        }
+    }
 
     #[test]
     fn every_fact_addresses_the_job_it_belongs_to() {
-        // Given: a fact about a run and a fact about the job itself
         let job = job_id();
         let run_fact = JobEvent::RunCancelled(RunCancelled {
             withdrawn_for: None,
@@ -186,29 +240,24 @@ mod tests {
             job_id: job,
             resolution_id: resolution_id(),
         });
-        // When/Then: both are addressed to the aggregate root, never to the run
         assert_eq!(run_fact.job_id(), job);
         assert_eq!(job_fact.job_id(), job);
     }
 
     #[test]
     fn a_fact_serializes_the_data_a_subscriber_would_otherwise_re_query() {
-        // Given: a completed run fact
         let event = JobEvent::RunCompleted(RunCompleted {
             job_id: job_id(),
             run_id: run_id(),
             attempt_number: crate::domain::attempts::AttemptNumber::FIRST,
         });
-        // When: it is rendered for storage and transport
         let payload = event.payload().unwrap();
-        // Then: the attempt number travels with it
         assert_eq!(event.event_type(), "RunCompleted");
         assert_eq!(payload["attempt_number"], 1);
     }
 
     #[test]
     fn the_stop_request_is_the_only_fact_the_client_never_sees() {
-        // Given: the internal stop request and a fact of the same run's lifecycle
         let internal = JobEvent::RunCancellationRequested(RunCancellationRequested {
             job_id: job_id(),
             run_id: run_id(),
@@ -221,19 +270,16 @@ mod tests {
             job_id: job_id(),
             run_id: run_id(),
         });
-        // When/Then: only the orchestration fact is held back, and the domain owns that rule
         assert!(!internal.reaches_client());
         assert!(published.reaches_client());
     }
 
     #[test]
     fn an_affordance_change_is_the_only_fact_that_changes_no_job_state() {
-        // Given: an affordance flip caused by another job settling
         let flip = JobEvent::JobAffordancesChanged(JobAffordancesChanged {
             job_id: job_id(),
             caused_by_job_id: Some(job_id()),
         });
-        // When/Then: it is recognised as a pure affordance push
         assert!(!flip.changes_job_state());
         assert!(
             JobEvent::JobCompleted(JobCompleted {

@@ -1,6 +1,6 @@
 use bc_jobs::commands::job::cancellation::CancelJob;
 use bc_jobs::commands::job::resolution::{FailJob, FinishJob};
-use bc_jobs::domain::ids::{JobId, ResolutionId};
+use bc_jobs::domain::ids::{CommandId, JobId, ResolutionId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::ownership::{
     ActorRef, CancelRequester, DeclarationClaim, ResolutionRequester,
@@ -10,7 +10,7 @@ use br_core_events::EventMetadata;
 
 use super::integration::Published;
 use super::write::JobChange;
-use super::{Jobs, retry};
+use super::{Jobs, retry, write};
 use crate::error::ServiceError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +111,12 @@ pub async fn cancel_from_integration(
 }
 const CANCEL_ATTEMPTS: usize = 5;
 
+#[derive(Clone)]
+pub struct CancelAnswer {
+    pub accepted: Published,
+    pub command_id: Option<CommandId>,
+}
+
 pub async fn cancel(
     jobs: &Jobs,
     job_id: JobId,
@@ -126,7 +132,7 @@ pub async fn cancel_answered(
     job_id: JobId,
     resolution_id: ResolutionId,
     requester: CancelRequester,
-    accepted: Published,
+    answer: CancelAnswer,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     cancel_with(
@@ -134,7 +140,7 @@ pub async fn cancel_answered(
         job_id,
         resolution_id,
         requester,
-        Some(accepted),
+        Some(answer),
         metadata,
     )
     .await
@@ -145,7 +151,7 @@ async fn cancel_with(
     job_id: JobId,
     resolution_id: ResolutionId,
     requester: CancelRequester,
-    accepted: Option<Published>,
+    answer: Option<CancelAnswer>,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     retry::on_write_race(CANCEL_ATTEMPTS, || {
@@ -154,7 +160,7 @@ async fn cancel_with(
             job_id,
             resolution_id,
             requester.clone(),
-            accepted.clone(),
+            answer.clone(),
             metadata,
         )
     })
@@ -166,10 +172,23 @@ async fn cancel_once(
     job_id: JobId,
     resolution_id: ResolutionId,
     requester: CancelRequester,
-    accepted: Option<Published>,
+    answer: Option<CancelAnswer>,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
     let job = jobs.require(job_id).await?;
+    if let Some(answer) = &answer
+        && let Some(command_id) = answer.command_id
+        && job.repeat_of_cancel(command_id, &requester)?.is_some()
+    {
+        return write::publish_again(
+            &jobs.store,
+            jobs.ids.as_ref(),
+            vec![answer.accepted.clone()],
+            metadata,
+            jobs.clock.now(),
+        )
+        .await;
+    }
     let result = job.cancel(CancelJob {
         resolution_id,
         requester,
@@ -198,8 +217,10 @@ async fn cancel_once(
     let mut root = JobChange::new(job_id, Some(job.clone()), result.events)
         .over_descendants(descendants.iter().map(Job::id))
         .removing_directory();
-    if let Some(accepted) = accepted {
-        root = root.answering(accepted);
+    if let Some(answer) = answer {
+        root = root
+            .answering(answer.accepted)
+            .remembering(answer.command_id);
     }
     let mut changes = vec![root];
     changes.append(&mut cascaded);

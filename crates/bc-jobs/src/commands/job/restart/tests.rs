@@ -25,6 +25,36 @@ fn queued(result: JobCommandResult) -> JobQueued {
 }
 
 #[test]
+fn an_origin_of_a_scrubbed_tree_cannot_be_restarted() {
+    let run = RunBuilder::new(1).started(ts(5)).completed(ts(10)).build();
+    let run_id = run.id();
+    let origin = JobBuilder::new()
+        .with_run(run)
+        .with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
+        .in_a_scrubbed_tree(ts(900))
+        .build();
+    assert_eq!(
+        restart_job(&origin, ParentContext::Root, command(run_id)),
+        Err(JobsError::TreeScrubbed)
+    );
+}
+
+#[test]
+fn an_origin_whose_request_data_was_erased_cannot_be_restarted() {
+    let run = RunBuilder::new(1).started(ts(5)).cancelled(ts(10)).build();
+    let run_id = run.id();
+    let origin = JobBuilder::new()
+        .with_run(run)
+        .with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
+        .with_request_data_erased(ts(400))
+        .build();
+    assert_eq!(
+        restart_job(&origin, ParentContext::Root, command(run_id)),
+        Err(JobsError::RequestDataErased)
+    );
+}
+
+#[test]
 fn a_restart_of_a_job_that_is_its_own_parent_is_its_own_parent_and_keeps_the_initial_job() {
     let (origin, run) = finished_origin();
     let fact = queued(restart_job(&origin, ParentContext::Root, command(run)).unwrap());
@@ -134,4 +164,38 @@ fn a_manual_retry_successor_of_a_restart_job_is_a_restart_of_the_same_run() {
         panic!("expected the retry to start");
     };
     assert_eq!(queued(plan.successor).restart_of_run_id, Some(run));
+}
+
+#[test]
+fn a_restart_that_is_refused_for_good_ends_its_wake_and_any_other_error_keeps_it() {
+    let parent = job_id().as_uuid();
+    let ends = [
+        JobsError::RunnerTypeRetired {
+            runner_type: "analyst".to_owned(),
+        },
+        JobsError::ParentJobTerminal {
+            parent_job_id: parent,
+        },
+        JobsError::ParentJobDeleted {
+            parent_job_id: parent,
+        },
+        JobsError::ParentJobUnknown {
+            parent_job_id: parent,
+        },
+        JobsError::TreeScrubbed,
+        JobsError::RequestDataErased,
+    ];
+    for refusal in ends {
+        assert!(refusal_ends_the_wake(&refusal), "{refusal:?}");
+    }
+    let keeps = [
+        JobsError::JobDeleted,
+        JobsError::NotRequester,
+        JobsError::SelfReference {
+            field: "restart_job_id",
+        },
+    ];
+    for refusal in keeps {
+        assert!(!refusal_ends_the_wake(&refusal), "{refusal:?}");
+    }
 }

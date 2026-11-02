@@ -1,6 +1,6 @@
-use bc_jobs::domain::ids::{AgentId, ItemId, JobId, ResultId, RunId};
+use bc_jobs::domain::ids::{ItemId, JobId, ResultId, RunId};
 use bc_jobs::domain::job::JobCall;
-use bc_jobs::domain::mail::inbox::{ItemKind, Notice};
+use bc_jobs::domain::mail::inbox::Notice;
 use bc_jobs::domain::payload::PayloadAttachment;
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::call_notices::CallNotices;
@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use super::doorbell::{Arrival, Ring, ring};
 use super::hydrate::unavailable;
+use super::notice_target::NoticeFor;
 
 const POSITION_SQL: &str = "WITH waiting AS ( \
         SELECT w.job_id, w.runner_type_id, w.root_job_id, w.effective_priority, w.created_at, \
@@ -112,11 +113,6 @@ pub async fn result_of_run(
     }))
 }
 
-pub struct NoticeFor {
-    pub run_id: RunId,
-    pub address: Option<AgentId>,
-}
-
 pub struct Delivering<'a> {
     pub ids: &'a dyn IdFactory,
     pub metadata: &'a EventMetadata,
@@ -134,18 +130,22 @@ pub async fn insert_notice(
         detail: error.to_string(),
     })?;
     let inserted = sqlx::query(
-        "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at) \
-         SELECT $1, 'NOTICE', $2, $3, $4, $5 \
+        "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at, source_key) \
+         SELECT $1, $6::text, $2, $3, $4, $5, md5($7::text)::uuid \
          WHERE NOT EXISTS (SELECT 1 FROM directory_removed_runs d WHERE d.run_id = $3) \
            AND NOT EXISTS (SELECT 1 FROM run_terminals t \
                            WHERE t.run_id = $3 AND t.kind IN ('FAILED', 'CANCELLED')) \
-           AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a WHERE a.agent_id = $2))",
+           AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a \
+                WHERE a.agent_id = $2)) \
+         ON CONFLICT (address, source_key) WHERE source_key IS NOT NULL DO NOTHING",
     )
     .bind(item_id.as_uuid())
-    .bind(target.address.map(|address| address.as_uuid()))
+    .bind(target.address().map(|address| address.as_uuid()))
     .bind(target.run_id.as_uuid())
     .bind(body)
     .bind(delivering.at)
+    .bind(target.kind.as_db_str())
+    .bind(target.key())
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
@@ -162,13 +162,12 @@ pub async fn insert_notice(
             &mut *tx,
             Arrival {
                 run_id: RunId::new(run)?,
-                address: target.address.map(|address| address.as_uuid()),
+                address: target.address().map(|address| address.as_uuid()),
                 item_id,
-                kind: ItemKind::Notice,
+                kind: target.kind,
             },
             Ring {
-                record_id: delivering.ids.next(),
-                event_id: delivering.ids.next(),
+                ids: delivering.ids,
                 metadata: delivering.metadata,
                 at: delivering.at,
             },

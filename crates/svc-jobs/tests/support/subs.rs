@@ -19,6 +19,7 @@ const JOB_EVENT: &str = r#"event {
       ... on JobsManualRetryStartedEvent { successorJobId manualRetryId runId }
       ... on JobsJobDeletedEvent { deletedById }
       ... on JobsJobAffordancesChangedEvent { causedByJobId }
+      ... on JobsJobContentErasedEvent { erasedAt }
     }"#;
 
 const JOB_DETAIL: &str = r#"id status attemptCount activeRunId nextAttemptAt isDeleted
@@ -34,6 +35,10 @@ const JOB_DETAIL: &str = r#"id status attemptCount activeRunId nextAttemptAt isD
       }
       children { job { id status attemptCount } affordances { action allowed reasonCode params } }"#;
 
+const REQUEST_DATA: &str = r#"id status config contentErasedAt
+      passport { subjectKind subjectId }
+      payload { form message }"#;
+
 const JOB_SUMMARY: &str = r#"job {
           id status attemptCount activeRunId nextAttemptAt failureCause isDeleted
           runnerType producer predecessorJobId successorJobId
@@ -46,6 +51,18 @@ pub fn job_changed(job_id: Uuid) -> String {
     __typename
     ... on JobsJobSnapshot {{ cursor job {{ {JOB_DETAIL} }} {AFFORDANCES} }}
     ... on JobsJobDelta {{ cursor {JOB_EVENT} job {{ {JOB_DETAIL} }} {AFFORDANCES} }}
+  }}
+}}"#
+    )
+}
+
+pub fn job_request_data(job_id: Uuid) -> String {
+    format!(
+        r#"subscription {{
+  jobsJobChanged(jobId: "{job_id}") {{
+    __typename
+    ... on JobsJobSnapshot {{ cursor job {{ {REQUEST_DATA} }} }}
+    ... on JobsJobDelta {{ cursor {JOB_EVENT} job {{ {REQUEST_DATA} }} }}
   }}
 }}"#
     )
@@ -243,40 +260,6 @@ pub fn fleet_changed_with_dispatch(runner_type: &str) -> String {
       event {{ id kind occurredAt runnerType instanceKey jobId runId }}
       {DISPATCH_RUNNER_TYPE}
       {AFFORDANCES}
-    }}
-  }}
-}}"#
-    )
-}
-
-pub fn my_max_priority_changed() -> String {
-    r#"subscription {
-  jobsMyMaxPriorityChanged {
-    __typename
-    ... on JobsMyMaxPrioritySnapshot { maxPriority }
-    ... on JobsMyMaxPriorityDelta { maxPriority }
-  }
-}"#
-    .to_owned()
-}
-
-pub fn user_max_priorities_changed(user_ids: &[Uuid]) -> String {
-    let ids = user_ids
-        .iter()
-        .map(|id| format!("\"{id}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        r#"subscription {{
-  jobsUserMaxPrioritiesChanged(userIds: [{ids}]) {{
-    __typename
-    ... on JobsUserMaxPrioritiesSnapshot {{
-      cursor
-      userMaxPriorities {{ userId maxPriority isDefault {AFFORDANCES} }}
-    }}
-    ... on JobsUserMaxPriorityDelta {{
-      cursor
-      userMaxPriority {{ userId maxPriority isDefault {AFFORDANCES} }}
     }}
   }}
 }}"#

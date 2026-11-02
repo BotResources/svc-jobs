@@ -74,8 +74,14 @@ impl PgStore {
     }
 
     pub async fn load_batch(&self, ids: &[Uuid]) -> Result<Vec<Job>, PortError> {
-        let mut connection = self.pool().acquire().await.map_err(unavailable)?;
-        load_many(&mut connection, ids).await
+        let mut tx = self.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
+        let jobs = load_many(&mut tx, ids).await?;
+        tx.commit().await.map_err(unavailable)?;
+        Ok(jobs)
     }
 
     pub async fn next_retry_due_at(

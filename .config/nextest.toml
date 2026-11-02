@@ -1,0 +1,12 @@
+[profile.default]
+retries = 0
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[[profile.default.overrides]]
+filter = "binary(e2e_bus_outage_recovery)"
+priority = 100
+
+[[profile.default.overrides]]
+filter = "binary(e2e_resolution_contract_versions) | binary(e2e_idempotency)"
+priority = 50

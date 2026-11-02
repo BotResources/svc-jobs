@@ -36,6 +36,8 @@ impl JobBuilder {
                 payload: None,
                 call: None,
                 restart_of_run_id: None,
+                content_erased_at: None,
+                tree_scrubbed: false,
             },
         }
     }
@@ -57,6 +59,11 @@ impl JobBuilder {
 
     pub fn with_requester(mut self, requester: Requester) -> Self {
         self.state.requester = requester;
+        self
+    }
+
+    pub fn with_call(mut self, call: JobCall) -> Self {
+        self.state.call = Some(call);
         self
     }
 
@@ -154,6 +161,20 @@ impl JobBuilder {
             ts(60),
             successor_settled_at_load,
         ))
+    }
+
+    pub fn with_request_data_erased(mut self, at: DateTime<Utc>) -> Self {
+        self.state.config = None;
+        self.state.passport = None;
+        self.state.payload = None;
+        self.state.content_erased_at = Some(at);
+        self
+    }
+
+    pub fn in_a_scrubbed_tree(mut self, at: DateTime<Utc>) -> Self {
+        self = self.with_request_data_erased(at);
+        self.state.tree_scrubbed = true;
+        self
     }
 
     pub fn deleted(mut self, at: DateTime<Utc>) -> Self {

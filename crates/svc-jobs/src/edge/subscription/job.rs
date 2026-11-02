@@ -14,7 +14,7 @@ use crate::edge::project;
 use crate::edge::state::EdgeState;
 use crate::edge::tree::JobTree;
 use crate::edge::types::event::of_domain;
-use crate::edge::types::job::GqlJobDetail;
+use crate::edge::types::job_detail::GqlJobDetail;
 use crate::edge::types::stream::{GqlJobDelta, GqlJobSnapshot, GqlJobStreamMessage};
 use crate::stream::Fact;
 
@@ -56,10 +56,6 @@ pub fn job_stream(
             if concerning.is_empty() {
                 continue;
             }
-            // The whole tree is read again, once per batch, never patched from
-            // the facts in hand: one transaction's facts may span two batches —
-            // a cascade's root fact can arrive before its descendants' — and a
-            // delta carries the tree as committed, descendants included.
             let reset = concerning.len() > RESET_ABOVE;
             let refreshed = projection(&state, job_id, &principal).await.map(|found| {
                 found.map(|projected| {

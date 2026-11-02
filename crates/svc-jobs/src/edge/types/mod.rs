@@ -4,6 +4,7 @@ pub mod event;
 pub mod fleet;
 pub mod input;
 pub mod job;
+pub mod job_detail;
 pub mod log;
 pub mod origin;
 pub mod priority;

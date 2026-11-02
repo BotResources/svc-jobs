@@ -2,7 +2,8 @@ br-svc-jobs {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace
 
 Service: {{ include "br-svc-jobs.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.port }}
 
-Endpoints (in-cluster; the GraphQL surface is platform-administrator only):
+Endpoints (in-cluster; the GraphQL surface is platform-administrator only, except
+the runner gestures of a service account that holds the scope jobs:runner):
   POST   http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql
   GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/graphql   (playground)
   GET    http://{{ include "br-svc-jobs.fullname" . }}:{{ .Values.port }}/sdl
@@ -19,13 +20,28 @@ Postgres DSNs must exist in Secret "{{ .Values.postgres.existingSecret }}" under
 
 NATS at {{ .Values.nats.url }} must already carry the declared JetStream
 topology — streams INTEGRATION_CMD, INTEGRATION_EVT, JOBS_TRIGGER, JOBS_STATUS,
-JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE. svc-jobs binds them and
+JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE and PUBLISHED_LANGUAGE.
+svc-jobs binds them and
 fails the boot loudly when one is absent; it never creates them. Keep the
 JOBS_CANCEL bucket's TTL at least as long as the longest maximum run duration
 any runner type is set to (a new type starts at JOBS_RUN_MAX_DURATION_SECONDS,
 default 72h). Instances of CLAIM runner types request their runs on
-jobs.claim.{runner_type} (core NATS request/reply): the runner credentials must
-be allowed to publish there, and svc-jobs to subscribe to jobs.claim.*.
+jobs.claim.v2.{runner_type}, and every runner instance sends its requests to
+jobs.runner.{started,register_agents,list_agents,mark_read}.{runner_type} (core
+NATS request/reply): the runner credentials must be allowed to publish on
+jobs.claim.v2.* and jobs.runner.*.* and to subscribe to their reply inboxes, and
+svc-jobs to subscribe to the same subjects and to publish the replies.
+svc-jobs must also be allowed to subscribe to
+$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.> (a run whose trigger a runner
+terminates is failed from that broker advisory); runner credentials must not be
+allowed to publish on $JS.EVENT.ADVISORY.>. Without the right the server refuses
+the subscription silently: no run is failed by a termination, the pod stays ready,
+and the refusal shows as a warn line and in jobs_nats_server_errors_total.
+
+Retention: a finished Tree is kept {{ .Values.retention.days }} day(s) after its last activity
+(JOBS_RETENTION_DAYS, 1 to 395); the request data of a cancelled Job is kept
+{{ .Values.retention.cancelledDays }} day(s) after the cancel (JOBS_CANCELLED_RETENTION_DAYS, 0 to 395, never
+above the first). svc-jobs refuses to boot outside these bounds.
 
 The chart does NOT create Secrets. Provision them via your secret-management
 tool (ExternalSecrets, Sealed Secrets, kubectl, etc.).

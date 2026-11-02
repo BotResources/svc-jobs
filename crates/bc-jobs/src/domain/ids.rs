@@ -57,6 +57,7 @@ uuid_v7_id!(KnownUserId, "known_user_id");
 uuid_v7_id!(PresenceSessionId, "presence_session_id");
 uuid_v7_id!(RunnerTypeId, "runner_type_id");
 uuid_v7_id!(ItemId, "item_id");
+uuid_v7_id!(StartId, "start_id");
 uuid_v7_id!(ResultId, "result_id");
 
 macro_rules! any_uuid_id {
@@ -94,6 +95,7 @@ macro_rules! any_uuid_id {
 any_uuid_id!(AgentId);
 any_uuid_id!(MailId);
 any_uuid_id!(AttachmentId);
+any_uuid_id!(CommandId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "Uuid", into = "Uuid")]

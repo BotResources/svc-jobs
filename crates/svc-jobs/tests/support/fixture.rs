@@ -12,6 +12,7 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_svc-jobs");
 pub const APP_ROLE: &str = "jobs_app";
 pub const APP_PASSWORD: &str = "jobsapproleforeveryworktree";
 pub const BOOT_TIMEOUT: Duration = Duration::from_secs(60);
+pub const NO_SWEEP_IN_THE_TEST: u64 = 3_600;
 
 pub struct Knobs {
     pub inactivity_timeout_seconds: u64,
@@ -29,6 +30,9 @@ pub struct Knobs {
     pub task_restart_initial_backoff_milliseconds: Option<u64>,
     pub task_restart_max_backoff_seconds: Option<u64>,
     pub presence_ttl: Duration,
+    pub retention_days: Option<String>,
+    pub cancelled_retention_days: Option<String>,
+    pub chart_env: Vec<(String, String)>,
 }
 
 impl Default for Knobs {
@@ -49,6 +53,9 @@ impl Default for Knobs {
             task_restart_initial_backoff_milliseconds: None,
             task_restart_max_backoff_seconds: None,
             presence_ttl: infra::STEADY_PRESENCE_TTL,
+            retention_days: None,
+            cancelled_retention_days: None,
+            chart_env: Vec::new(),
         }
     }
 }
@@ -66,6 +73,14 @@ pub struct JobsFixture {
 impl JobsFixture {
     pub async fn start() -> Self {
         Self::start_cluster(1, Knobs::default()).await
+    }
+
+    pub async fn start_without_sweep() -> Self {
+        Self::start_with(Knobs {
+            backstop_interval_seconds: NO_SWEEP_IN_THE_TEST,
+            ..Knobs::default()
+        })
+        .await
     }
 
     pub async fn start_with(knobs: Knobs) -> Self {
@@ -145,6 +160,12 @@ impl JobsFixture {
 
     pub fn member(&self) -> &Passport {
         &self.member
+    }
+
+    pub fn database(&self) -> &E2eDatabase {
+        self.db
+            .as_ref()
+            .expect("the database is live until shutdown")
     }
 
     pub fn fabric(&self) -> &FabricTestNats {

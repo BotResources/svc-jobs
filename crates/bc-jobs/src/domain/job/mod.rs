@@ -1,8 +1,12 @@
+mod accessors;
 pub mod claim;
 pub mod derived;
+#[cfg(test)]
+mod erasure;
 pub mod parenting;
 pub mod parts;
 pub mod resolution;
+pub mod scrub;
 pub mod status;
 
 use chrono::{DateTime, Utc};
@@ -46,6 +50,8 @@ pub struct JobState {
     pub payload: Option<JobPayload>,
     pub call: Option<JobCall>,
     pub restart_of_run_id: Option<RunId>,
+    pub content_erased_at: Option<DateTime<Utc>>,
+    pub tree_scrubbed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +78,8 @@ pub struct Job {
     payload: Option<JobPayload>,
     call: Option<JobCall>,
     restart_of_run_id: Option<RunId>,
+    content_erased_at: Option<DateTime<Utc>>,
+    tree_scrubbed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -143,6 +151,15 @@ impl Job {
         {
             return Err(corrupt("resolution_names_a_foreign_run"));
         }
+        if state.content_erased_at.is_some()
+            && (state.config.is_some() || state.passport.is_some() || state.payload.is_some())
+        {
+            return Err(corrupt("erased_job_holds_request_data"));
+        }
+        if (state.content_erased_at.is_some() || state.tree_scrubbed) && state.resolution.is_none()
+        {
+            return Err(corrupt("erased_job_not_resolved"));
+        }
         if state.deletion.is_some() && state.resolution.is_none() {
             return Err(corrupt("deleted_job_without_resolution"));
         }
@@ -183,102 +200,8 @@ impl Job {
             payload: state.payload,
             call: state.call,
             restart_of_run_id: state.restart_of_run_id,
+            content_erased_at: state.content_erased_at,
+            tree_scrubbed: state.tree_scrubbed,
         })
-    }
-
-    pub fn id(&self) -> JobId {
-        self.id
-    }
-
-    pub fn runner_type(&self) -> &RunnerTypeKey {
-        &self.runner_type
-    }
-
-    pub fn producer(&self) -> &ProducerKey {
-        &self.producer
-    }
-
-    pub fn config(&self) -> Option<&RunnerConfig> {
-        self.config.as_ref()
-    }
-
-    pub fn parent_job_id(&self) -> Option<JobId> {
-        self.parent_job_id
-    }
-
-    pub fn predecessor_job_id(&self) -> Option<JobId> {
-        self.predecessor_job_id
-    }
-
-    pub fn triggered_by(&self) -> Option<&KnownUser> {
-        self.triggered_by.as_ref()
-    }
-
-    pub fn source_entity_id(&self) -> Option<SourceEntityId> {
-        self.source_entity_id
-    }
-
-    pub fn max_attempts(&self) -> Option<MaxAttempts> {
-        self.max_attempts
-    }
-
-    pub fn priority(&self) -> &JobPriority {
-        &self.priority
-    }
-
-    pub fn created_at(&self) -> DateTime<Utc> {
-        self.created_at
-    }
-
-    pub fn owner(&self) -> &JobOwner {
-        &self.owner
-    }
-
-    pub fn runs(&self) -> &[Run] {
-        &self.runs
-    }
-
-    pub fn resolution(&self) -> Option<&JobResolution> {
-        self.resolution.as_ref()
-    }
-
-    pub fn deletion(&self) -> Option<&JobDeletion> {
-        self.deletion.as_ref()
-    }
-
-    pub fn manual_retry(&self) -> Option<&ManualRetryRecord> {
-        self.manual_retry.as_ref()
-    }
-
-    pub fn initial_job_id(&self) -> JobId {
-        self.initial_job_id
-    }
-
-    pub fn wire_parent_job_id(&self) -> JobId {
-        self.parent_job_id.unwrap_or(self.id)
-    }
-
-    pub fn requester(&self) -> &Requester {
-        &self.requester
-    }
-
-    pub fn passport(&self) -> Option<&JobPassport> {
-        self.passport.as_ref()
-    }
-
-    pub fn payload(&self) -> Option<&JobPayload> {
-        self.payload.as_ref()
-    }
-
-    pub fn call(&self) -> Option<&JobCall> {
-        self.call.as_ref()
-    }
-
-    pub fn restart_of_run_id(&self) -> Option<RunId> {
-        self.restart_of_run_id
-    }
-
-    pub fn is_restart(&self) -> bool {
-        self.restart_of_run_id.is_some()
     }
 }

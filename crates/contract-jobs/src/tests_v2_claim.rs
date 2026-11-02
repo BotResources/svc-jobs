@@ -41,7 +41,7 @@ fn a_v2_claim_reply_serving_a_run_without_a_passport_does_not_parse() {
 }
 
 #[test]
-fn a_surface_refusal_outside_the_closed_set_of_nine_keeps_its_word() {
+fn a_surface_refusal_outside_the_closed_set_of_thirteen_keeps_its_word() {
     let known = [
         "run_unknown",
         "run_not_started",
@@ -52,6 +52,10 @@ fn a_surface_refusal_outside_the_closed_set_of_nine_keeps_its_word() {
         "agent_id_not_finished",
         "item_not_yours",
         "malformed",
+        "instance_unknown",
+        "run_held",
+        "run_reserved_elsewhere",
+        "run_not_pending",
     ];
     for word in known {
         let reply: runner_surface::SurfaceReply =

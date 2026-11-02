@@ -9,7 +9,9 @@ pub(super) fn jobs_sql() -> String {
      j.effective_priority::smallint AS effective_priority, \
      j.forced_priority::smallint AS forced_priority, \
      parent_rt.type_key AS parent_runner_type, \
-     ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call, \
+     ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call, j.content_erased_at, \
+     EXISTS (SELECT 1 FROM tree_scrubs ts WHERE ts.initial_job_id = ({root})::uuid) \
+         AS tree_scrubbed, \
      ro.restarts_run_id::uuid AS restart_of_run_id \
      FROM jobs j \
      JOIN runner_types rt ON rt.id = j.runner_type_id \
@@ -37,8 +39,8 @@ pub(super) const RESERVATIONS_SQL: &str = "SELECT rr.run_id::uuid AS run_id, rr.
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
      WHERE r.job_id = ANY($1)";
 
-pub(super) const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rt.type_key, \
-     ri.instance_key FROM run_starts rs \
+pub(super) const STARTS_SQL: &str = "SELECT rs.run_id::uuid AS run_id, rs.started_at, rs.start_id::uuid AS start_id, \
+     rt.type_key, ri.instance_key FROM run_starts rs \
      JOIN runs r ON r.id = rs.run_id \
      JOIN runner_instances ri ON ri.id = rs.instance_id \
      JOIN runner_types rt ON rt.id = ri.runner_type_id \
@@ -74,7 +76,7 @@ pub(super) const CANCELLATIONS_SQL: &str = "SELECT c.run_id::uuid AS run_id, c.r
 
 pub(super) const RESOLUTIONS_SQL: &str = "SELECT DISTINCT ON (job_id) job_id::uuid AS job_id, id::uuid AS id, \
      kind::text AS kind, occurred_at, failure_cause::text AS failure_cause, \
-     caused_by_run_id::uuid AS caused_by_run_id \
+     caused_by_run_id::uuid AS caused_by_run_id, command_id \
      FROM job_resolutions WHERE job_id = ANY($1) ORDER BY job_id, occurred_at DESC, id DESC";
 
 pub(super) const DELETIONS_SQL: &str = "SELECT d.job_id::uuid AS job_id, d.deleted_by_id::uuid AS deleted_by_id, \

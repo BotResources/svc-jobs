@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::error::ServiceError;
 
 pub use message::plain_message;
-pub use v2::{Lineage, cancel_accepted, command_rejected, creation_rejected};
+pub use v2::{Lineage, cancel_accepted, command_rejected, creation_rejected, queued_again};
 
 #[derive(Debug, Clone)]
 pub struct Published {
@@ -45,6 +45,14 @@ pub fn of_event(
     published.extend(v1::of_event(event, before, note)?);
     published.extend(v2::of_event(event, before, note)?);
     Ok(published)
+}
+
+pub fn resolution_again(
+    event: &JobEvent,
+    job: &Job,
+    note: Option<&str>,
+) -> Result<Vec<Published>, ServiceError> {
+    v2::of_event(event, Some(job), note)
 }
 
 pub fn record(

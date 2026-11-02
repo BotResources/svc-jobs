@@ -98,6 +98,60 @@ pub async fn register_as(
     .await
 }
 
+fn started_body(instance_key: &str, run_id: Uuid, start_id: Uuid) -> Value {
+    json!({
+        "version": 1,
+        "run_id": run_id.to_string(),
+        "instance_key": instance_key,
+        "start_id": start_id.to_string(),
+    })
+}
+
+pub async fn started_as(
+    nats: &TestNats,
+    runner_type: &str,
+    instance_key: &str,
+    run_id: Uuid,
+    start_id: Uuid,
+) -> Value {
+    request(
+        nats,
+        format!("jobs.runner.started.{runner_type}"),
+        started_body(instance_key, run_id, start_id),
+    )
+    .await
+}
+
+pub async fn started_without_waiting(
+    nats: &TestNats,
+    runner: &FakeRunner<'_>,
+    run_id: Uuid,
+    start_id: Uuid,
+) -> Pending {
+    send_without_waiting(
+        nats,
+        format!("jobs.runner.started.{}", runner.runner_type),
+        started_body(&runner.instance_key, run_id, start_id),
+    )
+    .await
+}
+
+pub async fn started(
+    nats: &TestNats,
+    runner: &FakeRunner<'_>,
+    run_id: Uuid,
+    start_id: Uuid,
+) -> Value {
+    started_as(
+        nats,
+        &runner.runner_type,
+        &runner.instance_key,
+        run_id,
+        start_id,
+    )
+    .await
+}
+
 pub async fn list(nats: &TestNats, runner: &FakeRunner<'_>, run_id: Uuid) -> Value {
     request(
         nats,

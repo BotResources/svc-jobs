@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::payload::{JobPayload, PayloadAttachment};
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::kept_payload::{
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::unavailable;
+use super::tree_lock::lock_tree;
 use super::work::require_work;
 
 pub const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
@@ -28,13 +30,33 @@ pub const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
     SELECT kp.job_id FROM src s JOIN kept_payloads kp ON kp.job_id = s.job_id \
     ORDER BY s.depth LIMIT 1";
 
+pub async fn lock_kept_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<(), PortError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kept_payload:{job_id}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    Ok(())
+}
+
+pub async fn try_lock_kept_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<bool, PortError> {
+    sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kept_payload:{job_id}"))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(unavailable)
+}
+
 fn corrupt(error: serde_json::Error) -> PortError {
     PortError::Unavailable {
         detail: error.to_string(),
     }
 }
 
-async fn stored(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<StoredPayload>, PortError> {
+pub(crate) async fn stored(
+    tx: &mut PgConnection,
+    job_id: Uuid,
+) -> Result<Option<StoredPayload>, PortError> {
     let Some(row) =
         sqlx::query("SELECT uploader, message, attachments FROM kept_payloads WHERE job_id = $1")
             .bind(job_id)
@@ -72,11 +94,12 @@ impl KeptPayloads for PgStore {
                 Err(refusal) => return Ok(Err(refusal.into())),
             },
         };
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("kept_payload:{for_job_id}"))
-            .execute(&mut *tx)
-            .await
-            .map_err(unavailable)?;
+        lock_kept_payload(&mut tx, for_job_id).await?;
+        if let Ok(job_id) = JobId::new(for_job_id)
+            && let Some(tree) = PgStore::initial_job_of(&mut tx, job_id).await?
+        {
+            lock_tree(&mut tx, tree).await?;
+        }
         let job = existing_job(&mut tx, for_job_id).await?;
         let known = stored(&mut tx, for_job_id).await?;
         let admission = match decide_upload(&uploader, &payload, job.as_ref(), known.as_ref()) {
@@ -138,7 +161,7 @@ async fn existing_job(
     tx: &mut PgConnection,
     job_id: Uuid,
 ) -> Result<Option<ExistingJob>, PortError> {
-    let row = sqlx::query("SELECT requester, payload FROM jobs WHERE id = $1")
+    let row = sqlx::query("SELECT requester, payload, content_erased_at FROM jobs WHERE id = $1")
         .bind(job_id)
         .fetch_optional(&mut *tx)
         .await
@@ -154,7 +177,13 @@ async fn existing_job(
         Some(stored) => Some(serde_json::from_value(stored).map_err(corrupt)?),
         None => None,
     };
-    Ok(Some(ExistingJob { requester, payload }))
+    Ok(Some(ExistingJob {
+        requester,
+        payload,
+        request_data_erased: row
+            .get::<Option<DateTime<Utc>>, _>("content_erased_at")
+            .is_some(),
+    }))
 }
 
 async fn job_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<JobPayload>, PortError> {

@@ -11,6 +11,7 @@ pub const RUN_TIMEOUT: &str = "run_timeout";
 pub const CLAIM_LOST: &str = "claim_lost";
 pub const TRIGGER_STRANDED: &str = "trigger_stranded";
 pub const PASSPORT_REQUIRED: &str = "passport_required";
+pub const TRIGGER_TERMINATED: &str = "trigger_terminated";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

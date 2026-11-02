@@ -95,6 +95,9 @@ jobs:
       - name: helm template dry-run
         run: helm template ci charts/br-svc-jobs --debug > /dev/null
 
+      - name: chart integer env values render as plain integers
+        run: scripts/check-chart-env.sh
+
   supply-chain:
     name: supply chain (audit + deny + machete)
     needs: fmt
@@ -272,6 +275,7 @@ jobs:
               - 'crates/svc-jobs/**'
               - 'crates/infra/**'
               - 'crates/shared-kernel/**'
+              - 'charts/br-svc-jobs/**'
               - 'Cargo.toml'
               - 'scripts/provision-e2e-infra.sh'
               - '.github/workflows/ci.yml'
@@ -349,11 +353,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: e2e-jobs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
 
       - name: provision e2e infra (postgres + nats-server)
         run: bash scripts/provision-e2e-infra.sh
 
       - name: e2e reality chains
-        run: >
-          cargo test -p svc-jobs --locked --no-fail-fast --tests
-          -- --test-threads=1
+        run: cargo nextest run -p svc-jobs --locked --no-fail-fast -j 3

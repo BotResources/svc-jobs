@@ -48,6 +48,7 @@ pub enum MailRefusal {
     BadAddresses(Vec<BadAddress>),
     AddressNotYours,
     MailNotYours,
+    MailContentErased,
 }
 
 impl MailRefusal {
@@ -63,6 +64,7 @@ impl MailRefusal {
             Self::BadAddresses(_) => "bad_addresses",
             Self::AddressNotYours => "address_not_yours",
             Self::MailNotYours => "mail_not_yours",
+            Self::MailContentErased => "mail_content_erased",
         }
     }
 
@@ -84,6 +86,7 @@ impl MailRefusal {
             Self::BadAddresses(_) => "At least one recipient cannot receive the mail.",
             Self::AddressNotYours => "The address is not an address of the agents of the Run.",
             Self::MailNotYours => "The mail was not sent to this address.",
+            Self::MailContentErased => "Jobs erased the content of the mail.",
         }
     }
 }

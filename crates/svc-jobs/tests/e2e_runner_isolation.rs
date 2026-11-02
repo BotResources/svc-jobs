@@ -5,8 +5,11 @@ use serde_json::{Value, json};
 use support::db::Durable;
 use support::fixture::{JobsFixture, machine_caller, runner_access};
 use support::gesture::{self, Mail, Work};
+use support::producer::{JobDeclaration, Producer};
 use support::restart::{read_result, result_for, running_child, upload_result};
+use support::runner::{self, FakeRunner};
 use support::surface::{self, Agent};
+use support::{LONG, dispatch, wire};
 use uuid::Uuid;
 
 const SAVED_OF_RUN: &str = "SELECT count(*) FROM saved_states WHERE run_id = $1";
@@ -245,5 +248,53 @@ async fn a_runner_uses_only_its_own_runs_addresses_and_jobs() {
     .await;
     assert_eq!(own_register["accepted"], true, "{own_register}");
     durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_instance_that_does_not_hold_a_run_started_by_request_is_refused_every_call_on_it() {
+    let fixture = JobsFixture::start().await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let nats = fixture.nats();
+    let runner_type = wire::unique_runner_type("isolation-hold");
+    let mut holder = FakeRunner::new(nats, &runner_type, "instance-i");
+    let mut stranger = FakeRunner::new(nats, &runner_type, "instance-j");
+    holder.connect().await;
+    stranger.connect().await;
+    dispatch::await_live_instances(&client, admin, &runner_type, 2, LONG).await;
+    Producer::new(fixture.fabric(), "projects")
+        .declare_v2(&JobDeclaration::new(&runner_type))
+        .await;
+    let trigger = holder.next_trigger(LONG).await;
+    let run = runner::run_id(&trigger);
+    assert_eq!(
+        holder.send_started(&trigger, Uuid::now_v7()).await["accepted"],
+        true
+    );
+
+    let registered = surface::register(nats, &stranger, run, &[Agent::with_inbox()]).await;
+    let listed = surface::list(nats, &stranger, run).await;
+    let marked = surface::raw(
+        nats,
+        "mark_read",
+        &stranger,
+        json!({
+            "version": 1,
+            "run_id": run.to_string(),
+            "instance_key": stranger.instance_key,
+            "item_ids": [],
+        }),
+    )
+    .await;
+
+    for reply in [&registered, &listed, &marked] {
+        assert_eq!(surface::reason(reply), "instance_mismatch", "{reply}");
+    }
+    assert_eq!(
+        surface::list(nats, &holder, run).await["accepted"],
+        true,
+        "the holder keeps its run"
+    );
     fixture.shutdown().await;
 }

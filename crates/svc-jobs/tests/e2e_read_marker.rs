@@ -1,6 +1,7 @@
 mod support;
 
 use serde_json::Value;
+use support::auto_finish::item_id;
 use support::call_notices::{background_call, caller, notices, wait_for_notice};
 use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail, Work};
@@ -13,10 +14,6 @@ fn ids(items: &[Value], key: &str) -> Vec<String> {
         .iter()
         .map(|item| item[key].as_str().unwrap_or_default().to_owned())
         .collect()
-}
-
-fn item_id(item: &Value) -> Uuid {
-    Uuid::parse_str(item["itemId"].as_str().expect("an item id")).expect("an item id is a uuid")
 }
 
 async fn mark(fixture: &JobsFixture, runner: &FakeRunner<'_>, work: &Work, item: Uuid) {

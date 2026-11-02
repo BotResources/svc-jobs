@@ -1,3 +1,4 @@
+pub mod auto_finish;
 pub mod backstop;
 pub mod cancellation;
 pub mod create;
@@ -5,9 +6,12 @@ pub mod deletion;
 pub mod dispatch;
 pub mod manual_retry;
 pub mod priority;
+pub mod repeat;
 pub mod resolution;
 pub mod restart;
 pub mod run_outcome;
 pub mod run_progress;
+pub mod run_start_request;
 pub mod source;
+pub mod terminated_trigger;
 pub mod withdrawal;

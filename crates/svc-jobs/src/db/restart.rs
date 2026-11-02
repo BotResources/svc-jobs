@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bc_jobs::domain::ids::{JobId, RunId};
+use bc_jobs::domain::mail::inbox::{ItemKind, NoticeType};
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::restart::RestartWakes;
 use chrono::{DateTime, Utc};
@@ -13,14 +14,34 @@ use super::PgStore;
 use super::directory_entry::{ENTRY_TABLES, entry_columns, entry_of};
 use super::hydrate::unavailable;
 
-const FAILURE_NOTICE: &str = "i.kind = 'NOTICE' AND i.notice ->> 'type' = 'JOB_FAILED'";
+fn waking_notice() -> String {
+    let types: Vec<String> = NoticeType::WAKING
+        .iter()
+        .map(|notice_type| format!("'{}'", notice_type.as_wire_str()))
+        .collect();
+    format!(
+        "(i.kind = 'NOTICE' AND i.notice ->> 'type' IN ({}))",
+        types.join(", ")
+    )
+}
+
+fn waking_item_kinds() -> String {
+    let kinds: Vec<String> = ItemKind::WAKING
+        .iter()
+        .map(|kind| format!("i.kind = '{}'", kind.as_db_str()))
+        .collect();
+    kinds.join(" OR ")
+}
 
 fn unread_waiting() -> String {
+    let notice = waking_notice();
+    let kinds = waking_item_kinds();
     format!(
         "(EXISTS (SELECT 1 FROM inbox_items i WHERE i.address = d.agent_id \
-                 AND i.read_at IS NULL AND (i.kind = 'MAIL' OR ({FAILURE_NOTICE}))) \
+                 AND i.read_at IS NULL \
+                 AND ({notice} OR {kinds})) \
           OR EXISTS (SELECT 1 FROM inbox_items i WHERE i.address IS NULL \
-                 AND i.run_id = d.run_id AND i.read_at IS NULL AND {FAILURE_NOTICE}))"
+                 AND i.run_id = d.run_id AND i.read_at IS NULL AND {notice}))"
     )
 }
 

@@ -17,6 +17,6 @@ spec:
     {{- include "br-svc-jobs.selectorLabels" . | nindent 4 }}
   ports:
     - name: http
-      port: {{ .Values.port }}
+      port: {{ .Values.port | int64 }}
       targetPort: http
       protocol: TCP

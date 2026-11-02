@@ -1,6 +1,10 @@
 mod support;
 
 use serde_json::json;
+use support::auto_finish::{
+    Called, becomes_completed, complete, mark_the_notice, stays, sync_call,
+};
+use support::call_notices::caller;
 use support::events::EventLog;
 use support::fixture::JobsFixture;
 use support::gesture::Work;
@@ -150,6 +154,59 @@ async fn a_retry_cannot_resolve_what_its_failed_first_run_created() {
     assert_eq!(
         gql::status_of(&client, fixture.admin(), child).await,
         "CANCELLED"
+    );
+    answers.stop().await;
+    fixture.shutdown().await;
+}
+
+async fn refuse_the_others(
+    fixture: &JobsFixture,
+    answers: &EventLog,
+    third: &Work,
+    called: &Called,
+    expected: usize,
+) -> Vec<String> {
+    act(fixture, wire::VERB_FINISH, called.job, third).await;
+    act(fixture, wire::VERB_FINISH, called.job, &called.work).await;
+    Producer::new(fixture.fabric(), "billing")
+        .send_v3(
+            wire::VERB_FINISH,
+            json!({ "job_id": called.job.to_string() }),
+        )
+        .await;
+    reasons(answers, called.job, expected).await
+}
+
+#[tokio::test]
+async fn jobs_is_the_one_other_finisher_and_a_runner_or_a_service_gets_no_new_right() {
+    let fixture = JobsFixture::start().await;
+    let answers = EventLog::open_v2(fixture.fabric()).await;
+    let mut caller = caller(&fixture, "rights-auto").await;
+    let mut third = live_runner(&fixture, "rights-auto-third").await;
+    let (_, third_work, _) = root_run(&fixture, &mut third, 1).await;
+    let called = sync_call(&fixture, &mut caller).await;
+    assert_eq!(
+        refuse_the_others(&fixture, &answers, &third_work, &called, 3).await,
+        vec!["not_requester"; 3],
+        "a third runner, the runner working the Job and a service are refused"
+    );
+    complete(&caller, &called).await;
+    mark_the_notice(&fixture, &caller, &called).await;
+    stays(&fixture, &[called.job], "IN_PROGRESS").await;
+
+    caller.pair.parent.complete_run(&caller.trigger).await;
+    becomes_completed(&fixture, &[called.job]).await;
+    assert_eq!(
+        refuse_the_others(&fixture, &answers, &third_work, &called, 6).await,
+        vec![
+            "acting_run_not_live",
+            "job_terminal",
+            "job_terminal",
+            "not_requester",
+            "not_requester",
+            "not_requester"
+        ],
+        "once Jobs has finished the Job, a runner or a service still gets only a refusal"
     );
     answers.stop().await;
     fixture.shutdown().await;

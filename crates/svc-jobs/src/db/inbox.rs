@@ -187,6 +187,7 @@ fn unread_item(
         }
         None => None,
     };
+    kind.guard_notice_shape(notice.as_ref())?;
     Ok(UnreadItem {
         item_id: ItemId::new(row.get("item_id"))?,
         seq: row.get("seq"),

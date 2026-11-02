@@ -18,6 +18,18 @@ pub struct RestartJob {
     pub applicable_maximum: Priority,
 }
 
+pub fn refusal_ends_the_wake(refusal: &JobsError) -> bool {
+    matches!(
+        refusal,
+        JobsError::RunnerTypeRetired { .. }
+            | JobsError::ParentJobTerminal { .. }
+            | JobsError::ParentJobDeleted { .. }
+            | JobsError::ParentJobUnknown { .. }
+            | JobsError::TreeScrubbed
+            | JobsError::RequestDataErased
+    )
+}
+
 pub fn restart_job(
     origin: &Job,
     parent: ParentContext<'_>,
@@ -27,6 +39,12 @@ pub fn restart_job(
         return Err(JobsError::SelfReference {
             field: "restart_job_id",
         });
+    }
+    if origin.tree_scrubbed() {
+        return Err(JobsError::TreeScrubbed);
+    }
+    if origin.content_erased_at().is_some() {
+        return Err(JobsError::RequestDataErased);
     }
     origin.find_run(command.origin_run_id)?;
     let parent = parent.resolve(origin.parent_job_id())?;

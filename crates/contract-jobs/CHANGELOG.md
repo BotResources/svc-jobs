@@ -5,6 +5,36 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## 0.8.0 - 2026-11-02
+
+Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant, type or field
+of contract-jobs 0.7.0 is removed or renamed, and the obsolete offers keep their constants
+and types: `event_v2::ItemKind` and `event_v2::RunItemArrived` are unchanged, still the
+three words `MAIL`, `CC_NOTICE` and `NOTICE`.
+
+- `integration.evt.jobs.run.item_arrived.v2`: `EVT_RUN_ITEM_ARRIVED_V2`,
+  `event_v2::RunItemArrivedV2` (same fields as `RunItemArrived`, with the four-word
+  `ItemKindV2`; the run, the item id and the item kind are required) and, with the
+  `integration` feature, `evt_run_item_arrived_v2_coords()` (aggregate `run`). The
+  integration builders are now twelve commands and twenty events.
+- `event_v2::ItemKindV2` is new: the closed set of the four kinds of the doorbell of
+  version 2 (`Mail`, `CcNotice`, `Notice`, `MailNotice`; `MAIL`, `CC_NOTICE`, `NOTICE`,
+  `MAIL_NOTICE`). `event_v2::ItemKind` keeps its three words, and `RunItemArrived`
+  (version 1) keeps reading and writing only these three: `MAIL_NOTICE` does not
+  deserialize on version 1.
+- `jobs.runner.started.{runner_type}`: `CMD_JOBS_RUNNER_STARTED_RUNNER_TYPE`,
+  `runner_surface::started_subject`, `STARTED_FILTER`, `STARTED_PREFIX` and
+  `runner_surface::StartedRequest { version, run_id, instance_key, start_id }`. A missing
+  `version` reads as 1; the instance key is plain text; the start id is not checked. The
+  reply is `SurfaceReply`.
+- `runner_surface::SurfaceReason` gains `InstanceUnknown`, `RunHeld`,
+  `RunReservedElsewhere` and `RunNotPending` (`instance_unknown`, `run_held`,
+  `run_reserved_elsewhere`, `run_not_pending`): thirteen codes, shared by `SurfaceReply`
+  and `ListAgentsReply`. A reason outside the set still deserializes as an unknown word.
+- Breaking for exhaustive matches on `SurfaceReason`: a `match` on it needs arms for the
+  new values (`InstanceUnknown`, `RunHeld`, `RunReservedElsewhere`, `RunNotPending`).
+  Consumers of `ItemKind` and `RunItemArrived` need no change.
+
 ## 0.7.0 - 2026-10-30
 
 - `graphql_roots`: the eleven GraphQL roots of the runner surface as public constants

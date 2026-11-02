@@ -8,6 +8,131 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.9.0 - 2026-11-02
+
+- `domain::auto_finish::AutoFinishFacts` and its `decide`
+  (`commands::job::auto_finish`): the decision that a called Job is finished by rule, from the facts of the Job, of its
+  restart Jobs, of the answers its Caller read and of the Caller Runs. It
+  returns `FinishByRule` (the Job, the restart Jobs to finish and the premise
+  the commit must still find true) or an `AutoFinishWait` with a stable
+  reason. `ResolutionRequester::Rule(FinishVerdict)` lets `Job::finish` accept
+  that decision and no other actor: the verdict can only be made by `decide`.
+- `ports::auto_finish::AutoFinishReader`: the facts of a Job, the Jobs a
+  sweep considers (paged by Job id), the Jobs called by given Runs and the
+  Jobs called from the Tree of a given restart Job.
+- `commands::job::restart::refusal_ends_the_wake`: whether a refused restart
+  leaves no wake behind.
+- `Job::content_erased_at`: the first erasure time of the request data of a Job,
+  `None` until it was erased. `JobState::content_erased_at` is the stored value; a
+  Job marked erased that still holds a payload, a Passport or a configuration
+  cannot be loaded.
+- `JobEvent::JobContentErased` (`event_type` `JobContentErased`, fact
+  `JobContentErased { job_id, at }`): the first erasure of the request data of a
+  Job by the sweep. It reaches the clients and changes no other state.
+- `ports::job::ContentErasure` carries the time, the event id and the metadata
+  of that erasure to `CancelledRequestData::erase_request_data_of`.
+- `Retention::cancelled_request_data_is_due(cancelled_at, now)` and
+  `Retention::cancelled_request_data_due_before(now)`: the request data of a
+  cancelled Job is due once the cancelled retention has passed since the cancel
+  (at once with a cancelled retention of 0). The Jobs that wait for the erasure
+  are the ones `ports::job::CancelledRequestData::cancelled_jobs_awaiting_erasure`
+  returns.
+- `domain::erasure::{ERASED_TEXT, ERASED_CONVERSATION_ID}`: the fixed values that
+  replace the author and the source conversation of an erased mail; both pass
+  the checks that load a mail.
+- `UploadRefusal::RequestDataErased` (`request_data_erased`), `ExistingJob::request_data_erased`
+  and `MailRefusal::MailContentErased` (`mail_content_erased`).
+- `Retention::scrub_standing(&TreeFacts, now) -> ScrubStanding` and
+  `Retention::scrub_due_before(now)`: the decision that a Tree is due for its
+  scrub (not while a Job is unresolved or a Run is live, not before the
+  retention has passed since the last activity, never twice).
+- `events_of_a_scrub(&[Job], at)`: one `JobContentErased` per Job of the Tree,
+  carrying the time of the scrub, or the time the request data of that Job was
+  first erased when a cancel sweep had erased it earlier, and a
+  `JobAffordancesChanged` for each Job whose manual retry was available.
+- `ports::scrub::{TreeScrubs, TreeScrub, ScrubOutcome, OrphanUploads}`.
+  `TreeScrubs::trees_due_for_scrub(due_before, batch, after)` returns
+  `DueTree { initial_job_id, created_at }` values, oldest Initial Job first,
+  and `after` continues a page after the last Tree of the previous page.
+- `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
+  retry, a restart, and the affordance for the manual retry, are refused in a
+  scrubbed Tree.
+- `JobsError::RequestDataErased` (`request_data_erased`): a restart of a Job
+  whose request data was erased is refused, and the refusal ends the wake of that
+  restart (`commands::job::restart::refusal_ends_the_wake`). A Job that is not
+  resolved cannot carry `content_erased_at` or a scrubbed Tree: it fails to load
+  with the reason `erased_job_not_resolved`.
+- `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
+  without an agent because a removed restart Run took them, and the mail
+  addresses that one cancel removes from the agent directory, and
+  `removes_the_caller_of(&CallNotices)`, the decision that a Caller removed by
+  the same cancel keeps no notice: a background Caller by its Run or its
+  address, a sync Caller by its Run or its emptied Run.
+- `Job::record_run_started_request`, `commands::job::run_start_request::StartRequestFact`
+  and `domain::run::start_refusal::StartRefusal`: the decision of the started
+  request (hold under a start id, accepted again for the same start id and
+  holder, six refusals with stable codes and plain messages). `StartId` is a
+  UUIDv7 id; `RunStart::start_id` and `RunStarted::start_id` carry it (`None`
+  for a Run held by the status-stream fact, and for events stored before it
+  existed).
+- `Job::record_run_started` (status-stream fact) now discards a Run reserved
+  for another Instance as `CommandWarning::FactDiscardedReservedElsewhere`
+  instead of returning an error. Breaking: `JobsError::RunReservedElsewhere`
+  (code `run_reserved_elsewhere`) is removed from `JobsError`; the started request
+  refuses with `StartRefusal::RunReservedElsewhere` and the same code.
+- `domain::mail::inbox::ItemKind::MailNotice` (database word `MAIL_NOTICE`) and
+  `NoticeType::Refused`; `Notice::job_id` is optional and `Notice::mail_id` names
+  the refused mail of a mail notice. `ItemKind::WAKING`, `NoticeType::WAKING`
+  and `NoticeType::starts_a_restart` give the one list of the notices that start
+  a restart. `Notice::of_job` and `Notice::of_mail` build a notice.
+- `domain::mail::refused::mail_notice` and `MailRefusal::leaves_a_mail_notice`,
+  `notice_words` and `notice_key`: which mail refusals leave a mail notice, its
+  words and the key that makes a repeated refusal leave one notice.
+  `ports::mail::MailSender::note_refused_mail` and `RefusedMail` write it.
+- `CallNotices::plan` tells a background Caller that the called Job was
+  cancelled (`NoticePlan::JobCancelled`), whoever cancelled it;
+  `CallNotices::refusal_address` gives the address of a refused background
+  call's notice.
+- `domain::policy::Retention`: the days a Tree is kept after its last activity
+  (1 to 395) and the days the request data of a cancelled Job is kept (0 to
+  395, never above the first). `Retention::from_days` builds it and refuses
+  a value outside the bounds with `JobsError::OutOfRange`, and a cancelled
+  retention above the retention with
+  `JobsError::CancelledRetentionAboveRetention` (code
+  `cancelled_retention_above_retention`); `Retention::tree()` and
+  `Retention::cancelled()` read it. `ServiceLimits::with_retention`,
+  `ServiceLimits::retention`, `ServiceLimits::tree_retention` and
+  `ServiceLimits::cancelled_retention` carry them; the defaults are 30 and 0.
+  The bounds and defaults are public as `domain::policy::MIN_RETENTION_DAYS`,
+  `MAX_RETENTION_DAYS`, `DEFAULT_RETENTION_DAYS` and
+  `DEFAULT_CANCELLED_RETENTION_DAYS`.
+- `Job::fail_run_for_terminated_trigger(ReclaimRun, &RetryPolicy, &ServiceLimits)`:
+  a Run that has not started and is not reserved fails as permanent with the
+  reason `trigger_terminated` (`domain::run::failure::TRIGGER_TERMINATED`), which
+  ends its Job with no retry; a Run that started, a Run reserved by a claim and a
+  Run that ended produce no event and a warning (`CommandWarning::
+  TriggerTerminationIgnored { run_standing: IgnoredRunStanding }` (`started` or
+  `reserved`), code `trigger_termination_ignored`, or the existing
+  `fact_discarded_on_terminal_run`). A pushed Run that failed with that reason
+  without ever starting loads.
+- `ports::transport::TriggerSequence` (the stream sequence the broker gives a
+  published trigger, never zero) and `ports::trigger_ledger::TriggerLedger` (store
+  the sequence of a Run's trigger; find the Run a sequence belongs to).
+  **Breaking for an implementor of `RunnerTransport`:** `dispatch` returns the
+  `TriggerSequence`.
+- `Job::repeat_of_finish`, `Job::repeat_of_fail` and `Job::repeat_of_cancel`:
+  the decision that a command repeats the command that resolved the Job. The
+  sender is checked first (`NotRequester`, `NotOwner` or
+  `RunnerNotWorkingTheJob` as for the command itself), then the answer is the
+  event of the first resolution, rebuilt from what the Job stored. A command
+  id that resolved nothing, or resolved the Job another way, is no repeat.
+  `JobResolution::command_id` and `JobResolution::remembering` carry the
+  command id (`CommandId`, a UUID of any version) stored with a resolution.
+- `CreateJob::is_the_same_declaration_as` is public. For a Job whose request
+  data was erased it compares the runner type, the producer, the parent, the
+  identity of the user, the Requester, the source, the maximum attempts and the
+  priority, and ignores the configuration, the Passport and the payload.
+
 ## 0.8.2 - 2026-11-01
 
 - `domain::mail::inbox::NoticeType::JobCancelled` and

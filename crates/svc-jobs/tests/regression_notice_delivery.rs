@@ -6,7 +6,8 @@ use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use svc_jobs::app::write::JobChange;
-use svc_jobs::db::call_notices::{Delivering, NoticeFor, insert_notice};
+use svc_jobs::db::call_notices::{Delivering, insert_notice};
+use svc_jobs::db::notice_target::NoticeFor;
 
 use support::clock;
 use support::contention::{
@@ -18,15 +19,7 @@ const NOTICES_OF_RUN: &str =
     "SELECT count(*) FROM inbox_items WHERE kind = 'NOTICE' AND run_id::text = $1";
 
 fn notice(job_id: JobId) -> Notice {
-    Notice {
-        notice_type: NoticeType::Accepted,
-        job_id,
-        position: None,
-        failure_report: None,
-        message: None,
-        answer: None,
-        result_id: None,
-    }
+    Notice::of_job(NoticeType::Accepted, job_id)
 }
 
 async fn deliver(
@@ -39,10 +32,7 @@ async fn deliver(
     let metadata = metadata();
     let item = insert_notice(
         &mut tx,
-        NoticeFor {
-            run_id,
-            address: None,
-        },
+        NoticeFor::call(run_id, None),
         &notice(job_id),
         Delivering {
             ids: &ids,

@@ -39,6 +39,7 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::ValueTooLong { .. }
         | JobsError::InvalidDuration { .. }
         | JobsError::OutOfRange { .. }
+        | JobsError::CancelledRetentionAboveRetention { .. }
         | JobsError::InvalidJitter
         | JobsError::InvalidRetryFactor
         | JobsError::NotAJsonObject { .. }
@@ -75,6 +76,8 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::JobNotFailed { .. }
         | JobsError::JobNotInProgress { .. }
         | JobsError::JobDeleted
+        | JobsError::TreeScrubbed
+        | JobsError::RequestDataErased
         | JobsError::JobStillActive
         | JobsError::InactivityTimeoutNotReached { .. }
         | JobsError::ParentJobTerminal { .. }
@@ -103,7 +106,6 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::NotClaimMode { .. }
         | JobsError::NotPushMode { .. }
         | JobsError::RunNotReserved { .. }
-        | JobsError::RunReservedElsewhere { .. }
         | JobsError::ReservationWithinDelay { .. }
         | JobsError::TriggerNotStranded { .. }
         | JobsError::StaleLoss { .. } => EdgeError::invalid_state(),

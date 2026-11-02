@@ -8,7 +8,7 @@ use support::{LONG, QUIET};
 
 #[tokio::test]
 async fn the_mail_left_unread_at_the_end_of_a_run_is_delivered_unread_to_the_restart() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut scene = running_child(&fixture, "end-unread").await;
     let mail = Mail::new(scene.sender, &[scene.receiver]).with_body("read me later");

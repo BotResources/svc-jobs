@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use bc_jobs::domain::unreadable_request::UNREADABLE_REQUEST;
 use contract_jobs::runner_surface as wire;
 use futures::StreamExt;
 use serde::Serialize;
-use tokio::sync::Semaphore;
 
 use super::RunnerChannels;
-use crate::app::{Jobs, directory};
+use crate::app::{Jobs, directory, started};
 use crate::error::ServiceError;
 use crate::supervision::Established;
 
@@ -18,11 +18,11 @@ pub async fn respond(
     established: Established,
 ) -> Result<(), ServiceError> {
     let client = channels.client();
-    let in_flight = Arc::new(Semaphore::new(jobs.claims.max_held));
     let mut requests = futures::stream::select_all(vec![
         subscribe(&client, wire::REGISTER_AGENTS_FILTER).await?,
         subscribe(&client, wire::LIST_AGENTS_FILTER).await?,
         subscribe(&client, wire::MARK_READ_FILTER).await?,
+        subscribe(&client, wire::STARTED_FILTER).await?,
     ]);
     established.signal();
     while let Some(message) = requests.next().await {
@@ -30,13 +30,9 @@ pub async fn respond(
             tracing::debug!(subject = %message.subject, "a surface request with no reply subject");
             continue;
         };
-        let Ok(permit) = Arc::clone(&in_flight).acquire_owned().await else {
-            continue;
-        };
         let client = client.clone();
         let jobs = Arc::clone(&jobs);
         tokio::spawn(async move {
-            let _permit = permit;
             let Some(bytes) = answer(&jobs, message.subject.as_str(), &message.payload).await
             else {
                 return;
@@ -69,6 +65,14 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
         };
         return Some(encode(&reply));
     }
+    if let Some(runner_type) = subject.strip_prefix(wire::STARTED_PREFIX) {
+        let reply =
+            match decode::<wire::StartedRequest>(payload).filter(|_| names_its_version(payload)) {
+                Some(request) => started::started(jobs, runner_type, request).await?,
+                None => malformed(),
+            };
+        return Some(encode(&reply));
+    }
     if let Some(runner_type) = subject.strip_prefix(wire::MARK_READ_PREFIX) {
         let reply = match decode::<wire::MarkRead>(payload) {
             Some(request) => directory::mark_read(jobs, runner_type, request).await?,
@@ -79,21 +83,26 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
     if let Some(runner_type) = subject.strip_prefix(wire::LIST_AGENTS_PREFIX) {
         let reply = match decode::<wire::ListAgents>(payload) {
             Some(request) => directory::list_agents(jobs, runner_type, request).await?,
-            None => wire::ListAgentsReply::refused(wire::SurfaceReason::Malformed, MALFORMED_WORDS),
+            None => {
+                wire::ListAgentsReply::refused(wire::SurfaceReason::Malformed, UNREADABLE_REQUEST)
+            }
         };
         return Some(encode(&reply));
     }
     Some(encode(&malformed()))
 }
 
-const MALFORMED_WORDS: &str = "Jobs cannot read the request.";
-
 fn malformed() -> wire::SurfaceReply {
-    wire::SurfaceReply::refused(wire::SurfaceReason::Malformed, MALFORMED_WORDS)
+    wire::SurfaceReply::refused(wire::SurfaceReason::Malformed, UNREADABLE_REQUEST)
 }
 
 fn decode<T: serde::de::DeserializeOwned>(payload: &[u8]) -> Option<T> {
     serde_json::from_slice(payload).ok()
+}
+
+fn names_its_version(payload: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .is_ok_and(|request| request.get("version").is_some())
 }
 
 fn encode<T: Serialize>(reply: &T) -> Vec<u8> {

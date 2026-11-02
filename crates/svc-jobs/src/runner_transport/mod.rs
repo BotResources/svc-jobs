@@ -3,8 +3,10 @@ pub mod claim;
 pub mod consume;
 pub mod observability;
 pub mod presence;
+pub mod server_errors;
 pub mod start_catch_up;
 pub mod surface;
+pub mod terminated;
 pub mod trigger;
 
 use async_nats::jetstream::kv::Store;
@@ -31,14 +33,7 @@ impl RunnerChannels {
         credentials: Option<&NatsCredentials>,
         tuning: ConsumerTuning,
     ) -> Result<Self, ServiceError> {
-        let options = match credentials {
-            Some(credentials) => async_nats::ConnectOptions::with_user_and_password(
-                credentials.user.clone(),
-                credentials.password.clone(),
-            ),
-            None => async_nats::ConnectOptions::new(),
-        };
-        let client = options
+        let client = connection_options(credentials)
             .connect(nats_url)
             .await
             .map_err(|error| ServiceError::Infra(error.to_string()))?;
@@ -81,6 +76,17 @@ impl RunnerChannels {
         bind_stream(&self.jetstream, wire::LOG_STREAM).await?;
         Ok(())
     }
+}
+
+pub fn connection_options(credentials: Option<&NatsCredentials>) -> async_nats::ConnectOptions {
+    let options = match credentials {
+        Some(credentials) => async_nats::ConnectOptions::with_user_and_password(
+            credentials.user.clone(),
+            credentials.password.clone(),
+        ),
+        None => async_nats::ConnectOptions::new(),
+    };
+    server_errors::observed(options)
 }
 
 async fn bind_stream(jetstream: &Context, name: &str) -> Result<Stream, ServiceError> {

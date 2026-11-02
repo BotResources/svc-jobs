@@ -158,6 +158,24 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_saved_state_stands_before_every_other_obstacle() {
+        let everything = RestartObstacles {
+            runner_type_retired: true,
+            parent_job_terminal: true,
+            restart_job_live: true,
+        };
+        let without_saved_state = entry(AgentState::Finished, true, false);
+        assert_eq!(
+            without_saved_state.restart_standing(everything),
+            RestartStanding::NoSavedState
+        );
+        assert_eq!(
+            without_saved_state.restart_standing(CLEAR),
+            RestartStanding::NoSavedState
+        );
+    }
+
+    #[test]
     fn only_an_agent_with_an_inbox_has_a_mail_address_and_it_is_its_agent_id() {
         let mut with_inbox = entry(AgentState::Running, false, false);
         assert_eq!(with_inbox.mail_address(), Some(with_inbox.agent_id));

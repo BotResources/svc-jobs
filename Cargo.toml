@@ -6,6 +6,12 @@ members = [
     "crates/svc-jobs",
 ]
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"

@@ -45,6 +45,7 @@ pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
         | JobEvent::ManualRetryStarted(_)
         | JobEvent::JobDeleted(_)
         | JobEvent::JobAffordancesChanged(_)
+        | JobEvent::JobContentErased(_)
         | JobEvent::JobPriorityForced(_)
         | JobEvent::JobPriorityRecalculated(_) => vec![],
     }
@@ -132,6 +133,7 @@ mod tests {
             run_id: run_id(),
             runner_type: runner_type(),
             instance_key: InstanceKey::new("pod-7").unwrap(),
+            start_id: None,
         });
         assert_eq!(fleet_signals(&event), vec![FleetSignal::JobBeganExecuting]);
     }

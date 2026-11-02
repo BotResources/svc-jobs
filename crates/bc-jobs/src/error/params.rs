@@ -23,6 +23,8 @@ impl JobsError {
             | Self::InvalidRetryFactor
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
+            | Self::TreeScrubbed
+            | Self::RequestDataErased
             | Self::NotOwner
             | Self::NotRequester
             | Self::RunnerNotWorkingTheJob
@@ -59,6 +61,10 @@ impl JobsError {
             Self::MaxAttemptsAboveCeiling { requested, ceiling } => {
                 json!({ "requested": requested, "ceiling": ceiling })
             }
+            Self::CancelledRetentionAboveRetention {
+                cancelled,
+                retention,
+            } => json!({ "cancelled": cancelled, "retention": retention }),
             Self::JobAlreadyTerminal { status }
             | Self::JobNotTerminal { status }
             | Self::JobNotFailed { status }
@@ -77,7 +83,6 @@ impl JobsError {
             | Self::RunNotStarted { run_id }
             | Self::RunWithinMaxDuration { run_id }
             | Self::RunNotReserved { run_id }
-            | Self::RunReservedElsewhere { run_id }
             | Self::ReservationWithinDelay { run_id }
             | Self::TriggerNotStranded { run_id } => json!({ "runId": run_id }),
             Self::RunnerTypeMismatch { expected, claimed } => {

@@ -162,7 +162,7 @@ fn attachment(wire: &InlineAttachment) -> domain_payload::PayloadAttachment {
     }
 }
 
-fn call(wire: &CreateJobV3, mode: CallMode) -> JobCall {
+pub(super) fn call(wire: &CreateJobV3, mode: CallMode) -> JobCall {
     JobCall {
         mode: match mode {
             CallMode::Sync => domain_payload::CallMode::Sync,

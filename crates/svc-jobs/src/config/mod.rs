@@ -1,3 +1,9 @@
+mod claims;
+mod env;
+mod nats;
+mod retention;
+mod tuning;
+
 use std::time::Duration;
 
 use bc_jobs::domain::attempts::MaxAttempts;
@@ -7,6 +13,15 @@ use chrono::TimeDelta;
 
 use crate::error::ServiceError;
 use crate::supervision::RestartPolicy;
+
+pub use claims::ClaimSettings;
+pub use nats::NatsCredentials;
+pub use tuning::ConsumerTuning;
+
+use env::{read, required};
+use nats::nats_credentials;
+use retention::retention_from_environment;
+use tuning::{consumer_tuning, restart_policy};
 
 const DEFAULT_PORT: u16 = 8006;
 const DEFAULT_INACTIVITY_TIMEOUT_SECONDS: i64 = 86_400;
@@ -21,20 +36,11 @@ const DEFAULT_MAX_ATTEMPTS: u32 = 3;
 const DEFAULT_RETRY_FACTOR: u32 = 3;
 const DEFAULT_RETRY_JITTER_BASIS_POINTS: i64 = 2_000;
 const DEFAULT_RETRY_MAX_DELAY_SECONDS: i64 = 3_600;
-const DEFAULT_CONSUMER_ACK_WAIT_SECONDS: u64 = 30;
-const DEFAULT_CONSUMER_MAX_ACK_PENDING: i64 = 256;
-const DEFAULT_CONSUMER_MAX_DELIVER: i64 = -1;
-const DEFAULT_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS: u64 = 250;
-const DEFAULT_TASK_RESTART_MAX_BACKOFF_SECONDS: u64 = 30;
-const DEFAULT_TASK_STABILITY_SECONDS: u64 = 60;
 const DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS: i64 = 180;
 const DEFAULT_RETIREMENT_QUIET_PERIOD_SECONDS: i64 = 86_400;
 const DEFAULT_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_CATALOG_RECONCILE_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_PRIORITY: i64 = 3;
-const DEFAULT_CLAIM_RESERVATION_SECONDS: i64 = 60;
-const DEFAULT_CLAIM_MAX_WAIT_SECONDS: u64 = 30;
-const DEFAULT_CLAIM_MAX_HELD: usize = 1024;
 
 pub struct Settings {
     pub port: u16,
@@ -53,53 +59,6 @@ pub struct Settings {
     pub log_partition_horizon_warning: TimeDelta,
     pub claims: ClaimSettings,
     pub scope_declaration_enabled: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ClaimSettings {
-    pub max_wait: Duration,
-    pub reservation_delay: TimeDelta,
-    pub max_held: usize,
-}
-
-#[derive(Clone, Copy)]
-pub struct ConsumerTuning {
-    pub ack_wait: Duration,
-    pub max_ack_pending: i64,
-    pub max_deliver: i64,
-}
-
-pub struct NatsCredentials {
-    pub user: String,
-    pub password: String,
-}
-
-fn declared(key: &'static str) -> Option<String> {
-    std::env::var(key).ok().filter(|value| !value.is_empty())
-}
-
-fn nats_credentials() -> Result<Option<NatsCredentials>, ServiceError> {
-    match (declared("NATS_USER"), declared("NATS_PASSWORD")) {
-        (None, None) => Ok(None),
-        (Some(user), Some(password)) => Ok(Some(NatsCredentials { user, password })),
-        (Some(_), None) => Err(ServiceError::MissingConfiguration {
-            key: "NATS_PASSWORD",
-        }),
-        (None, Some(_)) => Err(ServiceError::MissingConfiguration { key: "NATS_USER" }),
-    }
-}
-
-fn read<T: std::str::FromStr>(key: &'static str, fallback: T) -> Result<T, ServiceError> {
-    match std::env::var(key) {
-        Err(_) => Ok(fallback),
-        Ok(raw) => raw
-            .parse()
-            .map_err(|_| ServiceError::Configuration { key, value: raw }),
-    }
-}
-
-fn required(key: &'static str) -> Result<String, ServiceError> {
-    std::env::var(key).map_err(|_| ServiceError::MissingConfiguration { key })
 }
 
 impl Settings {
@@ -155,21 +114,6 @@ impl Settings {
         )?;
 
         let default_max_priority: i64 = read("JOBS_DEFAULT_MAX_PRIORITY", DEFAULT_MAX_PRIORITY)?;
-        let claim_reservation_seconds: i64 = read(
-            "JOBS_CLAIM_RESERVATION_SECONDS",
-            DEFAULT_CLAIM_RESERVATION_SECONDS,
-        )?;
-        let claim_max_wait_seconds: u64 = read(
-            "JOBS_CLAIM_MAX_WAIT_SECONDS",
-            DEFAULT_CLAIM_MAX_WAIT_SECONDS,
-        )?;
-        let claim_max_held: usize = read("JOBS_CLAIM_MAX_HELD", DEFAULT_CLAIM_MAX_HELD)?;
-        if claim_max_held == 0 {
-            return Err(ServiceError::Configuration {
-                key: "JOBS_CLAIM_MAX_HELD",
-                value: claim_max_held.to_string(),
-            });
-        }
 
         let ceiling = MaxAttempts::new(max_attempts_ceiling)?;
         let limits = ServiceLimits::new(
@@ -181,31 +125,11 @@ impl Settings {
         )?
         .with_default_max_priority(Priority::new(default_max_priority)?)
         .with_inline_payload_max_bytes(payload_inline_max_bytes)
-        .with_saved_state_max_bytes(saved_state_max_bytes);
+        .with_saved_state_max_bytes(saved_state_max_bytes)
+        .with_retention(retention_from_environment()?);
         bc_jobs::domain::fleet::run_duration::MaxRunDuration::from_seconds(
             run_max_duration_seconds,
         )?;
-        if claim_reservation_seconds <= 0 {
-            return Err(ServiceError::Configuration {
-                key: "JOBS_CLAIM_RESERVATION_SECONDS",
-                value: claim_reservation_seconds.to_string(),
-            });
-        }
-        if claim_max_wait_seconds == 0 {
-            return Err(ServiceError::Configuration {
-                key: "JOBS_CLAIM_MAX_WAIT_SECONDS",
-                value: claim_max_wait_seconds.to_string(),
-            });
-        }
-        if u64::try_from(claim_reservation_seconds).unwrap_or(0) <= claim_max_wait_seconds {
-            return Err(ServiceError::Configuration {
-                key: "JOBS_CLAIM_RESERVATION_SECONDS",
-                value: format!(
-                    "{claim_reservation_seconds} (must exceed JOBS_CLAIM_MAX_WAIT_SECONDS = \
-                     {claim_max_wait_seconds})"
-                ),
-            });
-        }
         let retry_policy = RetryPolicy::new(
             TimeDelta::seconds(retry_base_delay_seconds),
             retry_factor,
@@ -235,47 +159,8 @@ impl Settings {
                 "JOBS_LOG_PARTITION_HORIZON_WARNING_DAYS",
                 DEFAULT_LOG_PARTITION_HORIZON_WARNING_DAYS,
             )?),
-            claims: ClaimSettings {
-                max_wait: Duration::from_secs(claim_max_wait_seconds),
-                reservation_delay: TimeDelta::seconds(claim_reservation_seconds),
-                max_held: claim_max_held,
-            },
+            claims: ClaimSettings::from_environment()?,
             scope_declaration_enabled: read("SCOPE_DECLARATION_ENABLED", true)?,
         })
     }
-}
-
-fn consumer_tuning() -> Result<ConsumerTuning, ServiceError> {
-    let ack_wait_seconds: u64 = read(
-        "JOBS_CONSUMER_ACK_WAIT_SECONDS",
-        DEFAULT_CONSUMER_ACK_WAIT_SECONDS,
-    )?;
-    Ok(ConsumerTuning {
-        ack_wait: Duration::from_secs(ack_wait_seconds.max(1)),
-        max_ack_pending: read(
-            "JOBS_CONSUMER_MAX_ACK_PENDING",
-            DEFAULT_CONSUMER_MAX_ACK_PENDING,
-        )?,
-        max_deliver: read("JOBS_CONSUMER_MAX_DELIVER", DEFAULT_CONSUMER_MAX_DELIVER)?,
-    })
-}
-
-fn restart_policy() -> Result<RestartPolicy, ServiceError> {
-    let initial_backoff_milliseconds: u64 = read(
-        "JOBS_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS",
-        DEFAULT_TASK_RESTART_INITIAL_BACKOFF_MILLISECONDS,
-    )?;
-    let max_backoff_seconds: u64 = read(
-        "JOBS_TASK_RESTART_MAX_BACKOFF_SECONDS",
-        DEFAULT_TASK_RESTART_MAX_BACKOFF_SECONDS,
-    )?;
-    let stability_seconds: u64 = read(
-        "JOBS_TASK_STABILITY_SECONDS",
-        DEFAULT_TASK_STABILITY_SECONDS,
-    )?;
-    Ok(RestartPolicy {
-        initial_backoff: Duration::from_millis(initial_backoff_milliseconds.max(1)),
-        max_backoff: Duration::from_secs(max_backoff_seconds.max(1)),
-        stability: Duration::from_secs(stability_seconds.max(1)),
-    })
 }

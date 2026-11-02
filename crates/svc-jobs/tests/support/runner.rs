@@ -87,6 +87,10 @@ impl<'a> FakeRunner<'a> {
         .await;
     }
 
+    pub async fn send_started(&self, trigger: &Value, start_id: Uuid) -> Value {
+        super::surface::started(self.nats, self, run_id(trigger), start_id).await
+    }
+
     pub async fn start_applied(&self, fixture: &JobsFixture, trigger: &Value) {
         self.start_run(trigger).await;
         let durable = Durable::open(&fixture.app_url()).await;
@@ -166,11 +170,17 @@ impl<'a> FakeRunner<'a> {
 
     pub async fn publish_status(&self, fact: &str, payload: Value) {
         self.nats
-            .publish_raw(
-                &wire::status_subject(&self.runner_type, fact),
-                serde_json::to_vec(&payload).expect("a status fact serializes"),
+            .jetstream()
+            .publish(
+                wire::status_subject(&self.runner_type, fact),
+                serde_json::to_vec(&payload)
+                    .expect("a status fact serializes")
+                    .into(),
             )
-            .await;
+            .await
+            .expect("the status fact is published")
+            .await
+            .expect("the status stream acknowledges the status fact");
     }
 
     pub async fn log_line(
