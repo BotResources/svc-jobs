@@ -112,6 +112,10 @@ impl Job {
         self.content_erased_at
     }
 
+    pub fn tree_scrubbed(&self) -> bool {
+        self.tree_scrubbed
+    }
+
     pub fn is_restart(&self) -> bool {
         self.restart_of_run_id.is_some()
     }

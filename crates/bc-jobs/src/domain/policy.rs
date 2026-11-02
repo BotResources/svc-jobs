@@ -8,7 +8,7 @@ mod retention;
 
 pub use retention::{
     DEFAULT_CANCELLED_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS,
-    MIN_RETENTION_DAYS, Retention,
+    MIN_RETENTION_DAYS, Retention, ScrubStanding, TreeFacts,
 };
 
 const BASIS: i64 = 10_000;

@@ -38,6 +38,7 @@ const CLEAR: RestartObstacles = RestartObstacles {
     runner_type_retired: false,
     parent_job_terminal: false,
     restart_job_live: false,
+    tree_scrubbed: false,
 };
 
 fn to(kind: RecipientKind, standing: AddressStanding) -> Recipient {
@@ -89,6 +90,22 @@ fn one_bad_recipient_refuses_the_whole_mail_and_names_every_bad_address() {
             BadAddressReason::RecipientRemoved
         ]
     );
+}
+
+#[test]
+fn an_agent_of_a_scrubbed_tree_refuses_a_direct_and_a_cc_recipient_with_the_scrub_reason() {
+    let tree = job_id();
+    let scrubbed = RestartObstacles {
+        tree_scrubbed: true,
+        ..CLEAR
+    };
+    for kind in [RecipientKind::Direct, RecipientKind::Cc] {
+        let recipient = to(kind, held(tree, AgentState::Finished, false, scrubbed));
+        assert_eq!(
+            reasons(decide_deliveries(tree, &[recipient])),
+            vec![BadAddressReason::RecipientTreeScrubbed]
+        );
+    }
 }
 
 #[test]

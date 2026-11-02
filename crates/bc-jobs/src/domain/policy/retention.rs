@@ -69,5 +69,8 @@ impl Retention {
     }
 }
 
+mod scrub;
+pub use scrub::{ScrubStanding, TreeFacts};
+
 #[cfg(test)]
 mod tests;

@@ -10,6 +10,8 @@ pub(super) fn jobs_sql() -> String {
      j.forced_priority::smallint AS forced_priority, \
      parent_rt.type_key AS parent_runner_type, \
      ({root})::uuid AS root_job_id, j.requester, j.passport, j.payload, j.call, j.content_erased_at, \
+     EXISTS (SELECT 1 FROM tree_scrubs ts WHERE ts.initial_job_id = ({root})::uuid) \
+         AS tree_scrubbed, \
      ro.restarts_run_id::uuid AS restart_of_run_id \
      FROM jobs j \
      JOIN runner_types rt ON rt.id = j.runner_type_id \

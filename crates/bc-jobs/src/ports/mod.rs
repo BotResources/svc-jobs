@@ -9,6 +9,7 @@ pub mod mail;
 pub mod restart;
 pub mod result;
 pub mod saved_state;
+pub mod scrub;
 pub mod transport;
 pub mod user;
 

@@ -74,6 +74,7 @@ pub enum JobsError {
         status: &'static str,
     },
     JobAlreadyDeleted,
+    TreeScrubbed,
     JobNotFailed {
         status: &'static str,
     },

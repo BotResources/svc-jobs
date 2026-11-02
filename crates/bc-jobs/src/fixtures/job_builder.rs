@@ -37,6 +37,7 @@ impl JobBuilder {
                 call: None,
                 restart_of_run_id: None,
                 content_erased_at: None,
+                tree_scrubbed: false,
             },
         }
     }
@@ -162,6 +163,12 @@ impl JobBuilder {
         self.state.passport = None;
         self.state.payload = None;
         self.state.content_erased_at = Some(at);
+        self
+    }
+
+    pub fn in_a_scrubbed_tree(mut self, at: DateTime<Utc>) -> Self {
+        self = self.with_request_data_erased(at);
+        self.state.tree_scrubbed = true;
         self
     }
 

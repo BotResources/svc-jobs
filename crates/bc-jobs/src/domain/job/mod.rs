@@ -5,6 +5,7 @@ pub mod erasure;
 pub mod parenting;
 pub mod parts;
 pub mod resolution;
+pub mod scrub;
 pub mod status;
 
 use chrono::{DateTime, Utc};
@@ -49,6 +50,7 @@ pub struct JobState {
     pub call: Option<JobCall>,
     pub restart_of_run_id: Option<RunId>,
     pub content_erased_at: Option<DateTime<Utc>>,
+    pub tree_scrubbed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +78,7 @@ pub struct Job {
     call: Option<JobCall>,
     restart_of_run_id: Option<RunId>,
     content_erased_at: Option<DateTime<Utc>>,
+    tree_scrubbed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -193,6 +196,7 @@ impl Job {
             call: state.call,
             restart_of_run_id: state.restart_of_run_id,
             content_erased_at: state.content_erased_at,
+            tree_scrubbed: state.tree_scrubbed,
         })
     }
 }

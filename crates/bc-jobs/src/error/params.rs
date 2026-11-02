@@ -23,6 +23,7 @@ impl JobsError {
             | Self::InvalidRetryFactor
             | Self::JobDeleted
             | Self::JobAlreadyDeleted
+            | Self::TreeScrubbed
             | Self::NotOwner
             | Self::NotRequester
             | Self::RunnerNotWorkingTheJob

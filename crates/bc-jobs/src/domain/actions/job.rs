@@ -27,6 +27,9 @@ impl Job {
                 status: self.status().as_db_str(),
             });
         }
+        if self.tree_scrubbed() {
+            return Err(JobsError::TreeScrubbed);
+        }
         if let Some(record) = self.manual_retry() {
             return Err(JobsError::ManualRetryAlreadyStarted {
                 successor_job_id: record.successor_job_id().as_uuid(),
@@ -49,9 +52,6 @@ impl Job {
         }
     }
 
-    /// Forcing the priority of a Job: a super user, on a Job that is neither
-    /// terminal nor deleted. The forced level only matters while the Job waits;
-    /// forcing a running Job prepares the retry it may wait for.
     pub fn guard_force_priority(&self, principal: &PrincipalFacts) -> Result<(), JobsError> {
         principal.guard_super_user()?;
         self.guard_not_deleted()?;
@@ -129,12 +129,9 @@ mod tests {
 
     #[test]
     fn a_live_job_may_be_cancelled_but_neither_retried_nor_deleted() {
-        // Given: a job in progress
         let job = JobBuilder::new()
             .with_run(RunBuilder::new(1).build())
             .build();
-        // When: the backend computes what may be done to it
-        // Then: cancel is open, the terminal-only actions are blocked with their codes
         assert_eq!(job.can_cancel(), Availability::Available);
         assert_eq!(
             job.can_manual_retry(ParentContext::Root)
@@ -147,9 +144,7 @@ mod tests {
 
     #[test]
     fn a_failed_job_may_be_retried_and_deleted_but_no_longer_cancelled() {
-        // Given: a job that failed and was never retried
         let job = failed_job().build();
-        // When/Then: the terminal actions open and cancel closes
         assert_eq!(
             job.can_manual_retry(ParentContext::Root).unwrap(),
             Availability::Available
@@ -159,11 +154,32 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_job_of_a_scrubbed_tree_is_refused_a_retry_with_the_scrub_reason() {
+        let job = failed_job().in_a_scrubbed_tree(ts(900)).build();
+        assert_eq!(
+            job.can_manual_retry(ParentContext::Root).unwrap(),
+            Availability::Blocked {
+                reason_code: "tree_scrubbed".to_owned(),
+                params: json!({})
+            }
+        );
+        assert_eq!(
+            job.guard_manual_retry(ParentContext::Root),
+            Err(JobsError::TreeScrubbed)
+        );
+        let listed = job.affordances(ParentContext::Root, &super_user()).unwrap();
+        let retry = listed
+            .iter()
+            .find(|affordance| affordance.action() == MANUAL_RETRY)
+            .expect("the retry is always listed");
+        assert!(!retry.allowed());
+        assert_eq!(retry.reason_code(), Some("tree_scrubbed"));
+    }
+
+    #[test]
     fn a_failed_job_already_retried_may_not_be_retried_again() {
-        // Given: a failed job whose manual-retry successor exists
         let successor = job_id();
         let job = failed_job().manually_retried_by(successor, false).build();
-        // When/Then: the second retry is blocked, naming the successor in params
         assert_eq!(
             job.can_manual_retry(ParentContext::Root).unwrap(),
             Availability::Blocked {
@@ -175,12 +191,10 @@ mod tests {
 
     #[test]
     fn a_failed_child_may_be_retried_while_the_parent_that_owns_it_still_runs() {
-        // Given: a failed child job whose parent is still executing
         let parent = JobBuilder::new()
             .with_run(RunBuilder::new(1).started(ts(5)).build())
             .build();
         let child = failed_job().with_parent(parent.id()).build();
-        // When/Then: the retry is open, judged against the parent that owns the child
         assert_eq!(
             child
                 .can_manual_retry(ParentContext::Loaded(&parent))
@@ -191,11 +205,8 @@ mod tests {
 
     #[test]
     fn a_childs_affordances_are_never_computed_without_its_parent() {
-        // Given: a failed child job whose parent was not loaded with it
         let child = failed_job().with_parent(job_id()).build();
-        // When: the affordance surface is asked for anyway
         let result = child.affordances(ParentContext::Root, &super_user());
-        // Then: it fails loud instead of publishing a corruption code as a business reason
         assert_eq!(
             result.err(),
             Some(JobsError::CorruptState {
@@ -206,14 +217,11 @@ mod tests {
 
     #[test]
     fn a_failed_child_is_never_retried_under_a_parent_that_has_finished() {
-        // Given: a failed child whose parent failed after it
         let parent = failed_job().build();
         let child = failed_job().with_parent(parent.id()).build();
-        // When: the affordance and the command guard are both consulted
         let verdict = child
             .can_manual_retry(ParentContext::Loaded(&parent))
             .unwrap();
-        // Then: both refuse — a successor under a finished parent could never be resolved
         assert_eq!(
             child.guard_manual_retry(ParentContext::Loaded(&parent)),
             Err(JobsError::ParentJobTerminal {
@@ -225,10 +233,8 @@ mod tests {
 
     #[test]
     fn deletion_waits_while_the_manual_retry_successor_is_still_running() {
-        // Given: a failed predecessor whose successor has not finished
         let successor = job_id();
         let job = failed_job().manually_retried_by(successor, false).build();
-        // When/Then: deletion is blocked until the chain settles
         assert_eq!(
             job.can_delete(),
             Availability::Blocked {
@@ -240,19 +246,14 @@ mod tests {
 
     #[test]
     fn deletion_opens_once_the_manual_retry_successor_is_terminal() {
-        // Given: a failed predecessor whose successor has finished
         let job = failed_job().manually_retried_by(job_id(), true).build();
-        // When/Then: the audit record may now be soft-deleted
         assert_eq!(job.can_delete(), Availability::Available);
     }
 
     #[test]
     fn a_deleted_job_offers_no_action_at_all() {
-        // Given: an already soft-deleted job
         let job = failed_job().deleted(ts(90)).build();
-        // When: the affordance surface is projected
         let affordances = job.affordances(ParentContext::Root, &super_user()).unwrap();
-        // Then: every action is blocked, each with its own code
         assert_eq!(
             affordances
                 .iter()
@@ -269,37 +270,29 @@ mod tests {
 
     #[test]
     fn the_affordance_surface_names_every_administrator_action() {
-        // Given: any job
         let job = JobBuilder::new().build();
-        // When: the surface is projected for a snapshot or an event
         let actions: Vec<&str> = job
             .affordances(ParentContext::Root, &super_user())
             .unwrap()
             .iter()
             .map(|entry| entry.action())
             .collect();
-        // Then: the administrator mutations on a job are always present
         assert_eq!(actions, vec![CANCEL, MANUAL_RETRY, DELETE, FORCE_PRIORITY]);
     }
 
     #[test]
     fn the_affordance_and_the_command_refusal_are_the_same_verdict() {
-        // Given: a job that may not be deleted
         let job = JobBuilder::new().build();
-        // When: the guard and the affordance are both consulted
         let refusal = job.guard_delete().unwrap_err();
-        // Then: the client sees exactly the code the mutation would return
         assert_eq!(job.can_delete().reason_code(), Some(refusal.code()));
     }
 
     #[test]
     fn a_super_user_may_force_a_live_job_whatever_it_is_doing() {
-        // Given: a waiting job and a running one
         let waiting = JobBuilder::new().build();
         let running = JobBuilder::new()
             .with_run(RunBuilder::new(1).started(ts(5)).build())
             .build();
-        // When/Then: both may be forced by a super user
         assert_eq!(
             waiting.can_force_priority(&super_user()),
             Availability::Available
@@ -312,13 +305,11 @@ mod tests {
 
     #[test]
     fn a_principal_who_is_not_a_super_user_may_not_force_a_priority() {
-        // Given: a waiting job, an ordinary member and a service account
         let job = JobBuilder::new().build();
         for principal in [
             member(),
             PrincipalFacts::new(PrincipalKind::Service, true, PlatformRole::SuperUser),
         ] {
-            // When/Then: the decision refuses with the super-user code
             assert_eq!(
                 job.can_force_priority(&principal).reason_code(),
                 Some("not_super_user")
@@ -328,9 +319,7 @@ mod tests {
 
     #[test]
     fn a_terminal_job_has_no_priority_left_to_force() {
-        // Given: a failed job
         let job = failed_job().build();
-        // When/Then: forcing is closed with the lifecycle code, even for a super user
         assert_eq!(
             job.can_force_priority(&super_user()).reason_code(),
             Some("job_already_terminal")
@@ -339,12 +328,9 @@ mod tests {
 
     #[test]
     fn the_force_affordance_and_the_force_guard_are_the_same_verdict() {
-        // Given: a terminal job and a member
         let job = failed_job().build();
         for principal in [super_user(), member()] {
-            // When: the guard and the affordance are both consulted
             let refusal = job.guard_force_priority(&principal).unwrap_err();
-            // Then: the client sees exactly the code the mutation would return
             assert_eq!(
                 job.can_force_priority(&principal).reason_code(),
                 Some(refusal.code())

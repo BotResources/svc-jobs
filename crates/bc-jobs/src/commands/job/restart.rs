@@ -28,6 +28,9 @@ pub fn restart_job(
             field: "restart_job_id",
         });
     }
+    if origin.tree_scrubbed() {
+        return Err(JobsError::TreeScrubbed);
+    }
     origin.find_run(command.origin_run_id)?;
     let parent = parent.resolve(origin.parent_job_id())?;
     if let Some(parent) = parent {

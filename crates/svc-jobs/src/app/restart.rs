@@ -79,7 +79,8 @@ async fn refused(
         JobsError::RunnerTypeRetired { .. }
         | JobsError::ParentJobTerminal { .. }
         | JobsError::ParentJobDeleted { .. }
-        | JobsError::ParentJobUnknown { .. } => {
+        | JobsError::ParentJobUnknown { .. }
+        | JobsError::TreeScrubbed => {
             tracing::info!(
                 run_id = %origin_run_id.as_uuid(),
                 code = refusal.code(),

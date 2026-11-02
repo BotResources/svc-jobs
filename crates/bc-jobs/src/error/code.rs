@@ -25,6 +25,7 @@ impl JobsError {
             Self::JobDeleted => "job_deleted",
             Self::JobNotTerminal { .. } => "job_not_terminal",
             Self::JobAlreadyDeleted => "job_already_deleted",
+            Self::TreeScrubbed => "tree_scrubbed",
             Self::JobNotFailed { .. } => "job_not_failed",
             Self::JobNotInProgress { .. } => "job_not_in_progress",
             Self::NotOwner => "not_owner",

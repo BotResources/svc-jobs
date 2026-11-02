@@ -124,3 +124,86 @@ fn the_instant_the_sweep_selects_by_and_the_due_test_of_a_cancel_are_the_same_ru
         assert!(!retention.cancelled_request_data_is_due(boundary + TimeDelta::seconds(1), now));
     }
 }
+
+fn quiet_tree(last_activity: DateTime<Utc>) -> TreeFacts {
+    TreeFacts {
+        last_activity,
+        unresolved_jobs: 0,
+        live_runs: 0,
+        scrubbed: false,
+    }
+}
+
+fn at(day: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 1, day, 12, 0, 0).unwrap()
+}
+
+#[test]
+fn a_tree_is_scrubbed_once_the_retention_has_passed_since_its_last_activity() {
+    let retention = Retention::from_days(30, 0).unwrap();
+    let last = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+    let thirty = last + TimeDelta::days(30);
+    assert_eq!(
+        retention.scrub_standing(&quiet_tree(last), thirty - TimeDelta::seconds(1)),
+        ScrubStanding::Waiting
+    );
+    assert_eq!(
+        retention.scrub_standing(&quiet_tree(last), thirty),
+        ScrubStanding::Due
+    );
+    assert!(retention.scrub_standing(&quiet_tree(last), thirty).is_due());
+    assert_eq!(retention.scrub_due_before(thirty), last);
+}
+
+#[test]
+fn a_tree_with_a_job_that_is_not_terminal_or_a_run_that_is_live_is_never_scrubbed() {
+    let retention = Retention::from_days(1, 0).unwrap();
+    let long_after = at(28) + TimeDelta::days(300);
+    let working = TreeFacts {
+        unresolved_jobs: 1,
+        ..quiet_tree(at(1))
+    };
+    let running = TreeFacts {
+        live_runs: 2,
+        ..quiet_tree(at(1))
+    };
+    assert_eq!(
+        retention.scrub_standing(&working, long_after),
+        ScrubStanding::WorkRemains
+    );
+    assert_eq!(
+        retention.scrub_standing(&running, long_after),
+        ScrubStanding::WorkRemains
+    );
+}
+
+#[test]
+fn a_scrubbed_tree_is_not_scrubbed_again() {
+    let retention = Retention::from_days(1, 0).unwrap();
+    let tree = TreeFacts {
+        scrubbed: true,
+        ..quiet_tree(at(1))
+    };
+    assert_eq!(
+        retention.scrub_standing(&tree, at(28) + TimeDelta::days(300)),
+        ScrubStanding::Scrubbed
+    );
+}
+
+#[test]
+fn a_lower_setting_applies_to_the_trees_that_exist_and_a_higher_one_restores_nothing() {
+    let tree = quiet_tree(at(1));
+    let now = at(1) + TimeDelta::days(6);
+    assert_eq!(
+        Retention::from_days(30, 0)
+            .unwrap()
+            .scrub_standing(&tree, now),
+        ScrubStanding::Waiting
+    );
+    assert_eq!(
+        Retention::from_days(5, 0)
+            .unwrap()
+            .scrub_standing(&tree, now),
+        ScrubStanding::Due
+    );
+}

@@ -28,6 +28,18 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   the checks that load a mail.
 - `UploadRefusal::RequestDataErased` (`request_data_erased`), `ExistingJob::request_data_erased`
   and `MailRefusal::MailContentErased` (`mail_content_erased`).
+- `Retention::scrub_standing(&TreeFacts, now) -> ScrubStanding` and
+  `Retention::scrub_due_before(now)`: the decision that a Tree is due for its
+  scrub (not while a Job is unresolved or a Run is live, not before the
+  retention has passed since the last activity, never twice).
+- `events_of_a_scrub(&[Job], at)`: one `JobContentErased` per Job of the Tree,
+  and a `JobAffordancesChanged` for each Job whose manual retry was available.
+- `ports::scrub::{TreeScrubs, TreeScrub, ScrubOutcome, OrphanUploads}`.
+- `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
+  retry, and the affordance for it, are refused in a scrubbed Tree.
+  `RestartObstacles::tree_scrubbed`, `RestartStanding::TreeScrubbed` and
+  `BadAddressReason::RecipientTreeScrubbed` (`recipient_tree_scrubbed`) make a
+  finished agent of a scrubbed Tree not restartable.
 - `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
   without an agent because a removed restart Run took them, and the mail
   addresses that one cancel removes from the agent directory, and

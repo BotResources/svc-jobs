@@ -113,6 +113,7 @@ fn decide_one(
         RestartStanding::Running | RestartStanding::RestartInFlight => {
             Ok(delivery(true, false, None))
         }
+        RestartStanding::TreeScrubbed => Err(BadAddressReason::RecipientTreeScrubbed),
         RestartStanding::NoSavedState | RestartStanding::ParentJobTerminal => {
             Err(BadAddressReason::RecipientCannotRestart)
         }

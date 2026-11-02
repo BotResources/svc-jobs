@@ -53,6 +53,7 @@ mod tests {
         runner_type_retired: false,
         parent_job_terminal: false,
         restart_job_live: false,
+        tree_scrubbed: false,
     };
 
     fn sent_starts_a_restart(entry: &DirectoryEntry, obstacles: RestartObstacles) -> bool {
@@ -77,11 +78,12 @@ mod tests {
         let mut compared = 0;
         for state in [AgentState::Running, AgentState::Finished] {
             for (declares, holds) in [(true, true), (true, false), (false, true)] {
-                for bits in 0..8u8 {
+                for bits in 0..16u8 {
                     let obstacles = RestartObstacles {
                         runner_type_retired: bits & 1 != 0,
                         parent_job_terminal: bits & 2 != 0,
                         restart_job_live: bits & 4 != 0,
+                        tree_scrubbed: bits & 8 != 0,
                     };
                     let entry = entry(state, declares, holds);
                     let listed = entry.restartable_now(obstacles) == Some(true);
@@ -96,7 +98,23 @@ mod tests {
                 }
             }
         }
-        assert_eq!(compared, 48);
+        assert_eq!(compared, 96);
+    }
+
+    #[test]
+    fn a_scrubbed_tree_blocks_the_wake_with_its_own_standing() {
+        let finished = entry(AgentState::Finished, true, false);
+        assert_eq!(
+            decide_restart_wake(
+                &finished,
+                RestartObstacles {
+                    tree_scrubbed: true,
+                    ..CLEAR
+                },
+                true
+            ),
+            RestartWake::Blocked(RestartStanding::TreeScrubbed)
+        );
     }
 
     #[test]

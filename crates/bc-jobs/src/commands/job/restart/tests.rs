@@ -25,6 +25,20 @@ fn queued(result: JobCommandResult) -> JobQueued {
 }
 
 #[test]
+fn an_origin_of_a_scrubbed_tree_cannot_be_restarted() {
+    let run = RunBuilder::new(1).started(ts(5)).completed(ts(10)).build();
+    let run_id = run.id();
+    let origin = JobBuilder::new()
+        .with_run(run)
+        .in_a_scrubbed_tree(ts(900))
+        .build();
+    assert_eq!(
+        restart_job(&origin, ParentContext::Root, command(run_id)),
+        Err(JobsError::TreeScrubbed)
+    );
+}
+
+#[test]
 fn a_restart_of_a_job_that_is_its_own_parent_is_its_own_parent_and_keeps_the_initial_job() {
     let (origin, run) = finished_origin();
     let fact = queued(restart_job(&origin, ParentContext::Root, command(run)).unwrap());
