@@ -26,6 +26,11 @@ form to decide whether a version ships.
   wakes a finished restartable agent and, left unread at the end of a
   successful Run, starts the restart at once.
 
+### Changed
+
+- A 0.6 pod cannot read the inbox items of kind `MAIL_NOTICE`, or of notice type
+  `REFUSED`, that a 0.7 pod keeps.
+
 ## 0.6.2 - 2026-11-01
 
 ### Fixed
