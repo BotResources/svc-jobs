@@ -185,26 +185,24 @@ async fn jobs_is_the_one_other_finisher_and_a_runner_or_a_service_gets_no_new_ri
     let mut third = live_runner(&fixture, "rights-auto-third").await;
     let (_, third_work, _) = root_run(&fixture, &mut third, 1).await;
     let called = sync_call(&fixture, &mut caller).await;
+    assert_eq!(
+        refuse_the_others(&fixture, &answers, &third_work, &called, 3).await,
+        vec!["not_requester"; 3],
+        "a third runner, the runner working the Job and a service are refused"
+    );
     complete(&caller, &called).await;
     mark_the_notice(&fixture, &caller, &called).await;
     stays(&fixture, &[called.job], "IN_PROGRESS").await;
 
-    assert_eq!(
-        refuse_the_others(&fixture, &answers, &third_work, &called, 3).await,
-        vec!["acting_run_not_live", "not_requester", "not_requester"],
-        "while the caller's Run is live, nobody but the caller finishes the Job"
-    );
-
     caller.pair.parent.complete_run(&caller.trigger).await;
     becomes_completed(&fixture, &[called.job]).await;
-    let late = refuse_the_others(&fixture, &answers, &third_work, &called, 6).await;
     assert_eq!(
-        late,
+        refuse_the_others(&fixture, &answers, &third_work, &called, 6).await,
         vec![
             "acting_run_not_live",
-            "acting_run_not_live",
             "job_terminal",
             "job_terminal",
+            "not_requester",
             "not_requester",
             "not_requester"
         ],
