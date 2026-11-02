@@ -13,15 +13,14 @@ use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::EventMetadata;
 use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};
 use contract_jobs::command_v3::{CallMode, CreateJobV3};
-use contract_jobs::event::{
-    REASON_DUPLICATE_ACTIVE_ENTITY, REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD,
-};
-use serde_json::{Value, json};
 
 mod declare;
+mod refusal;
 
-use super::integration::Lineage;
-use super::write::{CallerAddressPremise, CreationRefusal, PriorityPremise};
+pub use refusal::reject_malformed;
+use refusal::{caller_of, reject};
+
+use super::write::{CallerAddressPremise, PriorityPremise};
 use super::{Jobs, acting, write};
 use crate::error::ServiceError;
 
@@ -54,15 +53,31 @@ async fn admit(
     wire: CreateJobV3,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
-    let (wire, requester) = match requester_of(jobs, wire.clone(), metadata).await {
+    let acting = match acting::named(
+        jobs,
+        wire.acting_run_id,
+        wire.acting_instance_key.as_deref(),
+    )
+    .await
+    {
+        Ok(acting) => acting,
+        Err(ServiceError::Domain(refusal)) => {
+            return reject(jobs, &wire, &refusal, metadata, None).await;
+        }
+        Err(other) => return Err(other),
+    };
+    let named_run = acting.as_ref().map(|acting| acting.run_id);
+    let (wire, requester) = match requester_of(jobs, wire.clone(), acting, metadata).await {
         Ok(found) => found,
-        Err(ServiceError::Domain(refusal)) => return reject(jobs, &wire, &refusal, metadata).await,
+        Err(ServiceError::Domain(refusal)) => {
+            return reject(jobs, &wire, &refusal, metadata, named_run).await;
+        }
         Err(other) => return Err(other),
     };
     let built = declare::requested_priority(&wire)
         .and_then(|requested| declare::build(&wire, requested, requester));
     match built {
-        Err(refusal) => reject(jobs, &wire, &refusal, metadata).await,
+        Err(refusal) => reject(jobs, &wire, &refusal, metadata, named_run).await,
         Ok(command) => decide(jobs, &wire, command, metadata).await,
     }
 }
@@ -70,14 +85,9 @@ async fn admit(
 async fn requester_of(
     jobs: &Jobs,
     mut wire: CreateJobV3,
+    acting: Option<acting::ActingRun>,
     metadata: &EventMetadata,
 ) -> Result<(CreateJobV3, Requester), ServiceError> {
-    let acting = acting::named(
-        jobs,
-        wire.acting_run_id,
-        wire.acting_instance_key.as_deref(),
-    )
-    .await?;
     let Some(acting) = acting else {
         let actor = ActorRef::new(metadata.actor.id());
         return Ok((wire, Requester::Service(Some(actor))));
@@ -130,13 +140,14 @@ async fn decide(
     command: CreateJob,
     metadata: &EventMetadata,
 ) -> Result<(), ServiceError> {
+    let caller = caller_of(&command.requester);
     if let Some(runner_type) = FleetReader::load(&jobs.store, &command.runner_type).await?
         && let Err(refusal) = runner_type.guard_accept_job()
     {
-        return reject(jobs, wire, &refusal, metadata).await;
+        return reject(jobs, wire, &refusal, metadata, caller).await;
     }
     if let Some(refusal) = kept_payload_refusal(jobs, &command).await? {
-        return reject(jobs, wire, &refusal, metadata).await;
+        return reject(jobs, wire, &refusal, metadata, caller).await;
     }
     let existing = JobReader::load(&jobs.store, command.id).await?;
     let parent = match command.parent_job_id {
@@ -187,11 +198,11 @@ async fn decide(
                     | JobsError::ParentJobUnknown { .. }
                     | JobsError::CallerAddressNotHeld
                     | JobsError::CallerAddressNotOfRun),
-                )) => reject(jobs, wire, &refusal, metadata).await,
+                )) => reject(jobs, wire, &refusal, metadata, caller).await,
                 settled => settled,
             }
         }
-        Err(refusal) => reject(jobs, wire, &refusal, metadata).await,
+        Err(refusal) => reject(jobs, wire, &refusal, metadata, caller).await,
     }
 }
 
@@ -208,67 +219,4 @@ async fn kept_payload_refusal(
     }
     let stored = jobs.store.stored_payload(command.id.as_uuid()).await?;
     Ok(guard_kept_payload_uploaded(&command.requester, stored.as_ref()).err())
-}
-
-pub async fn reject_malformed(
-    jobs: &Jobs,
-    job_id: uuid::Uuid,
-    metadata: &EventMetadata,
-) -> Result<(), ServiceError> {
-    write::publish_rejection(
-        &jobs.store,
-        jobs.ids.as_ref(),
-        CreationRefusal {
-            job_id,
-            lineage: Lineage::declared(job_id, None, None),
-            reason_code: REASON_MALFORMED_PAYLOAD,
-            params: json!({ "jobId": job_id }),
-        },
-        metadata,
-        jobs.clock.now(),
-    )
-    .await
-}
-
-async fn reject(
-    jobs: &Jobs,
-    wire: &CreateJobV3,
-    refusal: &JobsError,
-    metadata: &EventMetadata,
-) -> Result<(), ServiceError> {
-    write::publish_rejection(
-        &jobs.store,
-        jobs.ids.as_ref(),
-        CreationRefusal {
-            job_id: wire.job_id,
-            lineage: Lineage::declared(wire.job_id, wire.parent_job_id, wire.initial_job_id),
-            reason_code: published_code(refusal),
-            params: rejection_params(wire, refusal),
-        },
-        metadata,
-        jobs.clock.now(),
-    )
-    .await
-}
-
-fn published_code(refusal: &JobsError) -> &'static str {
-    match refusal {
-        JobsError::JobIdConflict { .. } => REASON_ID_REUSE,
-        JobsError::SourceAlreadyActive { .. } => REASON_DUPLICATE_ACTIVE_ENTITY,
-        other => other.code(),
-    }
-}
-
-fn rejection_params(wire: &CreateJobV3, refusal: &JobsError) -> Value {
-    let mut params = refusal.params();
-    if let Some(fields) = params.as_object_mut() {
-        fields.insert("jobId".to_owned(), json!(wire.job_id));
-        if let Some(entity_id) = wire.source_entity_id {
-            fields.insert("sourceEntityId".to_owned(), json!(entity_id));
-        }
-        if let Some(bc) = &wire.source_bc {
-            fields.insert("sourceBc".to_owned(), json!(bc));
-        }
-    }
-    params
 }

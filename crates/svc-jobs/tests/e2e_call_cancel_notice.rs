@@ -123,6 +123,98 @@ async fn a_sync_call_whose_called_job_is_cancelled_tells_the_caller_whoever_canc
 }
 
 #[tokio::test]
+async fn a_background_call_whose_called_job_is_cancelled_tells_the_caller_at_its_address_whoever_cancelled_it()
+ {
+    let fixture = JobsFixture::start().await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let client = fixture.gql();
+    let mut scene = call_scene(&fixture, "background-cancel", 3).await;
+
+    let by_administrator = scene.call(&fixture, "BACKGROUND", 1).await;
+    let first = scene.called.next_trigger(LONG).await;
+    scene.called.start_applied(&fixture, &first).await;
+    gql::cancel_job(&client, fixture.admin(), Uuid::now_v7(), by_administrator).await;
+    gql::wait_for_status(
+        &client,
+        fixture.admin(),
+        by_administrator,
+        "CANCELLED",
+        LONG,
+    )
+    .await;
+    let seen = wait_for_job_notice(
+        &fixture,
+        &scene.work,
+        Some(scene.address),
+        "JOB_CANCELLED",
+        Some(by_administrator),
+    )
+    .await;
+    let told = cancelled_notices(&seen, by_administrator);
+    assert_eq!(told.len(), 1, "one notice for one cancelled call: {seen:?}");
+    assert_eq!(told[0]["itemKind"], "NOTICE");
+    assert_eq!(told[0]["address"], scene.address.to_string());
+    let item = Uuid::parse_str(told[0]["itemId"].as_str().unwrap_or_default()).unwrap();
+    assert_eq!(durable.rings_of_item(item).await, 1);
+    assert_eq!(durable.rings_of_item_v2(item).await, 1);
+    let words = told[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        words.contains(&by_administrator.to_string()) && words.contains("cancelled"),
+        "the notice has a message in plain words: {words}"
+    );
+
+    let by_its_runner = scene.call(&fixture, "BACKGROUND", 1).await;
+    let second = scene.called.next_trigger(LONG).await;
+    scene.called.start_applied(&fixture, &second).await;
+    act(
+        &fixture,
+        wire::VERB_CANCEL,
+        by_its_runner,
+        &Work::of(&scene.called, &second),
+    )
+    .await;
+    gql::wait_for_status(&client, fixture.admin(), by_its_runner, "CANCELLED", LONG).await;
+    let seen = wait_for_job_notice(
+        &fixture,
+        &scene.work,
+        Some(scene.address),
+        "JOB_CANCELLED",
+        Some(by_its_runner),
+    )
+    .await;
+    assert_eq!(cancelled_notices(&seen, by_its_runner).len(), 1);
+
+    let by_requester = scene.call(&fixture, "BACKGROUND", 1).await;
+    let third = scene.called.next_trigger(LONG).await;
+    scene.called.start_applied(&fixture, &third).await;
+    scene
+        .resolve(&fixture, wire::VERB_CANCEL, by_requester)
+        .await;
+    gql::wait_for_status(&client, fixture.admin(), by_requester, "CANCELLED", LONG).await;
+    let seen = wait_for_job_notice(
+        &fixture,
+        &scene.work,
+        Some(scene.address),
+        "JOB_CANCELLED",
+        Some(by_requester),
+    )
+    .await;
+    assert_eq!(cancelled_notices(&seen, by_requester).len(), 1);
+    assert_eq!(
+        cancelled_notices(&seen, by_administrator).len(),
+        1,
+        "the first notice stays unread and is not told again"
+    );
+    assert_eq!(
+        gql::status_of(&client, fixture.admin(), scene.root).await,
+        "IN_PROGRESS",
+        "the cancel of a called Job does not end the Job of its Caller"
+    );
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_caller_run_that_fails_keeps_no_cancel_notice_of_the_calls_the_failure_cancels() {
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;

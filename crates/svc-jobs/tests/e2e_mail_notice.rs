@@ -52,6 +52,12 @@ async fn a_refused_mail_leaves_one_mail_notice_at_the_sender_and_rings_in_versio
         "the reason names the bad address: {words}"
     );
     assert!(!words.contains("do not leak"));
+    for job in [tree.root, tree.parent_work.job_id, tree.child_work.job_id] {
+        assert!(
+            !words.contains(&job.to_string()),
+            "the words name no Job of the Tree: {words}"
+        );
+    }
 
     let rang = bell_v2.expect_rings(run, 1, LONG).await;
     assert_eq!(rang[0]["item_kind"], "MAIL_NOTICE");

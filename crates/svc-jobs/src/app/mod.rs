@@ -96,10 +96,12 @@ impl Jobs {
     ) -> Result<(), ServiceError> {
         let at = self.clock.now();
         let may_wake_a_restart = changes.iter().any(|change| {
-            change
-                .events
-                .iter()
-                .any(|event| matches!(event, JobEvent::RunCompleted(_) | JobEvent::JobFailed(_)))
+            change.events.iter().any(|event| {
+                matches!(
+                    event,
+                    JobEvent::RunCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_)
+                )
+            })
         });
         let effects: Vec<(JobId, Vec<JobEvent>)> = changes
             .iter()

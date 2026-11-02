@@ -105,8 +105,11 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   the unread items and the finish, fail and cancel of their Jobs. A cancel
   reaches restart Jobs and manual-retry successors. The Caller of a runner call
   is told by notice (accepted, queue position, started, run completed, job
-  failed); the Caller of a sync call is also told when the called Job is
-  cancelled, whoever cancelled it, while the Caller Run is live. A Caller Run
+  failed, cancelled whoever cancelled it); a background call that Jobs refuses
+  leaves a refusal notice at the caller address; a mail that Jobs refuses
+  leaves a mail notice at the sender address. A failure, cancel, refusal or mail
+  notice wakes a finished restartable agent and, left unread at the end of a
+  successful Run, starts the restart at once. A Caller Run
   that has failed or been cancelled receives no notice of any type. A Result is
   kept 7 days.
 
@@ -207,6 +210,7 @@ design.
 | Trigger stream | `JOBS_TRIGGER` / `jobs.trigger.v2.{runner_type}` | jobs → runners | `PUSH` types only. The version 2 trigger carries the run, the job, the attempt, the parent and the Initial Job, the Passport as stored, the user, the configuration, the payload (`INLINE`, `KEPT` or `REFERENCE`), the call mode and the caller address. Persistent, acknowledged, at-least-once; instances of a type compete on a shared work-queue consumer. Switching a type to `CLAIM` does not withdraw triggers already published. |
 | Status stream | `JOBS_STATUS` / `jobs.status.{runner_type}.{started,plan_declared,step_started,completed,failed}` | runners → jobs | Persistent, acknowledged, at-least-once; carries start, plan, step and terminal run facts. The started fact of this stream carries no start id and gets no reply: it holds a pending run for the instance that sends it, and is acknowledged and discarded for a run already held or reserved for another instance. |
 | Runner surface | `jobs.runner.{started,register_agents,list_agents,mark_read}.{runner_type}` (core NATS request/reply, queue group `svc_jobs_runner_surface`) | runners → jobs, answered | `started`, `register_agents` and `mark_read` answer `{version: 1, accepted, reason?, message?}`; `list_agents` answers the listing, or the same refusal; none takes a claim slot. `started` carries `{version, run_id, instance_key, start_id}` (a UUIDv7 the runner makes for each start): accepted, the run is `STARTED` and held by that instance under the start id; the same start id from the holder is accepted again and changes nothing while the run has not ended. Refusals change nothing: `run_unknown` (also an instance of another runner type), `instance_unknown` (no live presence yet; repeat the same request once present), `run_held` (another instance, another start id, or a run held by the status-stream fact), `run_reserved_elsewhere` (a claim reserved the run for another instance), `run_not_pending` (the run or its Job has ended, also a repeat of the start id after the end), `malformed`. |
+| Arrival doorbell | `INTEGRATION_EVT` `integration.evt.jobs.run.item_arrived.v1` and `.v2` | jobs → runners | An event with no content for each new item of a live Run: the Run, the address, the item id (a UUIDv7) and the kind. Both versions are published together for a direct mail, a cc notice and a call notice; a mail notice (kind `MAIL_NOTICE`) is announced in version 2 only. The item is stored before its doorbell is sent. A missed event is recovered by reading the unread items. |
 | Log stream | `JOBS_LOG` / `jobs.log.{runner_type}` | runners → jobs | Size-bounded, discard-old; a lost log line is tolerated, a lost lifecycle fact is not — which is why logs never share the status stream. |
 | Cancel bucket | `JOBS_CANCEL` KV, key `{run_id}` | jobs → runners | One desired-state entry per cancelled run, replayed on watch (re)connection; removed after the terminal fact, bucket TTL is the cleanup backstop. |
 | Presence bucket | `JOBS_PRESENCE` KV, key `{runner_type}.{instance_key}` | runners → jobs | Expiring live state, heartbeat-rewritten; TTL eviction signals loss, graceful shutdown deletes immediately. The first entry of an unknown type registers the RunnerType. Watched with history, so establishing the watch replays the last entry per key before live updates. |

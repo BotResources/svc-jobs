@@ -19,6 +19,12 @@ form to decide whether a version ships.
   is not a whole number, is outside its bounds, or when the cancelled retention
   is above the retention. The chart values are `retention.days` and
   `retention.cancelledDays`.
+- A refused mail leaves a mail notice at the sender, a refused background call
+  leaves a refusal notice at the caller address, a cancelled background call
+  tells its Caller, and the arrival doorbell is published in versions 1 and 2
+  (a mail notice in version 2 only). A failure, cancel, refusal or mail notice
+  wakes a finished restartable agent and, left unread at the end of a
+  successful Run, starts the restart at once.
 
 ## 0.6.2 - 2026-11-01
 

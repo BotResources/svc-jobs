@@ -14,4 +14,4 @@ pub use job_changes::{
     record_user_events_in,
 };
 pub use premise::PriorityPremise;
-pub use rejection::{CreationRefusal, publish_command_rejection, publish_rejection};
+pub use rejection::{CreationRefusal, RefusalNotice, publish_command_rejection, publish_rejection};

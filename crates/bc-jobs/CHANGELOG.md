@@ -20,6 +20,19 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `Job::record_run_started` (status-stream fact) now discards a Run reserved
   for another Instance as `CommandWarning::FactDiscardedReservedElsewhere`
   instead of returning an error.
+- `domain::mail::inbox::ItemKind::MailNotice` (database word `MAIL_NOTICE`) and
+  `NoticeType::Refused`; `Notice::job_id` is optional and `Notice::mail_id` names
+  the refused mail of a mail notice. `ItemKind::WAKING`, `NoticeType::WAKING`
+  and `NoticeType::starts_a_restart` give the one list of the notices that start
+  a restart. `Notice::of_job` and `Notice::new` build a notice.
+- `domain::mail::refused::mail_notice` and `MailRefusal::leaves_a_mail_notice`,
+  `notice_words` and `notice_key`: which mail refusals leave a mail notice, its
+  words and the key that makes a repeated refusal leave one notice.
+  `ports::mail::MailSender::note_refused_mail` and `RefusedMail` write it.
+- `CallNotices::plan` tells a background Caller that the called Job was
+  cancelled (`NoticePlan::JobCancelled`), whoever cancelled it;
+  `CallNotices::refusal_address` gives the address of a refused background
+  call's notice.
 
 - `domain::policy::Retention`: the days a Tree is kept after its last activity
   (1 to 395) and the days the request data of a cancelled Job is kept (0 to

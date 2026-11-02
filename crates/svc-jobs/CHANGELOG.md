@@ -35,9 +35,39 @@ to `## Unreleased`).
 - The start id is stored with the hold (`run_starts.start_id`, migration
   `0010_run_start_id.sql`); a Run held by the status-stream started fact has
   none.
+- A mail that Jobs refuses leaves one unread mail notice at the sender
+  address (item kind `MAIL_NOTICE`, notice type `REFUSED`), only when Jobs holds
+  that address as an address of the sender's Run and the Run is held on the
+  Instance that sends. The notice names the refused mail by its id and gives
+  the reason in words; it carries no subject and names no Job. When the id
+  already belongs to an accepted mail, the reason says so. A refusal that
+  repeats the same refusal of the same mail leaves no second notice. A mail
+  refused for its author or its source conversation leaves a notice too.
+- A background call that Jobs refuses leaves one unread refusal notice
+  (notice type `REFUSED`) at the caller address, in addition to the rejected
+  outcome of the creation, only when the call names a Run that Jobs holds on
+  that Instance and an address of that Run. The notice names the Job the call
+  was to create and gives the reason in words. The same refused call sent again
+  (same command id) leaves no second notice.
+- The arrival doorbell is published as `integration.evt.jobs.run.item_arrived.v2`
+  beside version 1. Both carry the Run, the address, the item id and the kind
+  of each new item; version 1 never announces a mail notice, version 2 does
+  (kind `MAIL_NOTICE`).
+- GraphQL: the item kind `MAIL_NOTICE`, the notice type `REFUSED`; for a mail
+  notice `jobId` is null and `mailId` names the refused mail.
+- `inbox_items.source_key` and the kind `MAIL_NOTICE` (migration
+  `0011_mail_notice.sql`).
 
 ### Changed
 
+- A background call whose called Job is cancelled now tells the Caller by a
+  `JOB_CANCELLED` notice at the caller address, whoever cancelled the Job (the
+  Requester, an administrator or the runner that works the Job), as a sync call
+  already did.
+- A failure notice, a cancel notice, a refusal notice or a mail notice wakes a
+  finished restartable agent (at its address or addressed to its Run) and, left
+  unread when a Run ends with success, starts the restart at once. A cc notice
+  starts nothing.
 - The runner surface answers `register_agents`, `list_agents`, `mark_read` and
   `started` without waiting for a claim slot: a request that waits for its Tree
   no longer delays the others. The surface is no longer bounded in flight by
