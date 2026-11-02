@@ -45,6 +45,7 @@ pub mod surface;
 pub mod tree;
 pub mod tree_hold;
 pub mod trigger_stream;
+pub mod trigger_termination;
 pub mod views;
 pub mod wire;
 

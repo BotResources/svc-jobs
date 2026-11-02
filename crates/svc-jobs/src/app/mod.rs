@@ -31,7 +31,10 @@ pub mod runner_type_impacts;
 pub mod runner_type_lifecycle;
 pub mod runner_type_settings;
 pub mod started;
+pub mod terminated_trigger;
 pub mod tree_directory;
+pub mod trigger_dispatch;
+pub mod trigger_outcomes;
 pub mod user_max_priorities;
 pub mod user_max_priorities_live;
 pub mod write;
@@ -159,7 +162,9 @@ impl Jobs {
                 JobEvent::RunDispatched(fact) if fact.claimed_by.is_some() => Ok(()),
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
                     Ok(run) => match RunTrigger::of_job(job, fact.run_id, run.attempt_number()) {
-                        Ok(trigger) => self.transport.dispatch(&trigger).await,
+                        Ok(trigger) => {
+                            trigger_dispatch::dispatch(self, fact.run_id, &trigger).await
+                        }
                         Err(JobsError::PassportRequired) => {
                             if let Err(error) =
                                 Box::pin(reclaim::without_passport(self, job, fact.run_id)).await

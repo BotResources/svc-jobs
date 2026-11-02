@@ -83,6 +83,19 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   The bounds and defaults are public as `domain::policy::MIN_RETENTION_DAYS`,
   `MAX_RETENTION_DAYS`, `DEFAULT_RETENTION_DAYS` and
   `DEFAULT_CANCELLED_RETENTION_DAYS`.
+- `Job::fail_run_for_terminated_trigger(ReclaimRun, &RetryPolicy, &ServiceLimits)`:
+  a Run that has not started and is not reserved fails as permanent with the
+  reason `trigger_terminated` (`domain::run::failure::TRIGGER_TERMINATED`), which
+  ends its Job with no retry; a Run that started, a Run reserved by a claim and a
+  Run that ended produce no event and a warning (`CommandWarning::
+  TriggerTerminationIgnored`, code `trigger_termination_ignored`, or the existing
+  `fact_discarded_on_terminal_run`). A pushed Run that failed with that reason
+  without ever starting loads.
+- `ports::transport::TriggerSequence` (the stream sequence the broker gives a
+  published trigger, never zero) and `ports::trigger_ledger::TriggerLedger` (store
+  the sequence of a Run's trigger; find the Run a sequence belongs to).
+  **Breaking for an implementor of `RunnerTransport`:** `dispatch` returns the
+  `TriggerSequence`.
 
 ## 0.8.2 - 2026-11-01
 

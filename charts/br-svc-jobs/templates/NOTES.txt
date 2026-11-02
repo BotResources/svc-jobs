@@ -26,6 +26,12 @@ any runner type is set to (a new type starts at JOBS_RUN_MAX_DURATION_SECONDS,
 default 72h). Instances of CLAIM runner types request their runs on
 jobs.claim.{runner_type} (core NATS request/reply): the runner credentials must
 be allowed to publish there, and svc-jobs to subscribe to jobs.claim.*.
+svc-jobs must also be allowed to subscribe to
+$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.> (a run whose trigger a runner
+terminates is failed from that broker advisory); runner credentials must not be
+allowed to publish on $JS.EVENT.ADVISORY.>. Without the right the server refuses
+the subscription silently: no run is failed by a termination, the pod stays ready,
+and the refusal shows as a warn line and in jobs_nats_server_errors_total.
 
 Retention: a finished Tree is kept {{ .Values.retention.days }} day(s) after its last activity
 (JOBS_RETENTION_DAYS, 1 to 395); the request data of a cancelled Job is kept

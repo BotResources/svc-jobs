@@ -142,6 +142,28 @@ to `## Unreleased`).
   not rewrite the display names recorded with a manual retry, a deletion, a
   forced priority or a cancellation request of a Run. An integration event still
   waiting to be published when its Tree is scrubbed is published as it was.
+- A `PUSH` Run that has not started fails as permanent, with the reason
+  `trigger_terminated`, when a runner terminates its trigger (`Term` on the
+  trigger stream): its Job fails with that reason and no retry follows. Jobs
+  stores the stream sequence of each trigger it publishes (table `run_triggers`)
+  and reads the broker advisory of a terminated message of the trigger stream
+  (`$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.>`, a core
+  subscription in the queue group `svc_jobs_trigger_terminated`) to find the Run.
+  A Run that started, a Run reserved by a claim and a Run that ended are left
+  unchanged. The advisory is delivered at most once: a lost advisory leaves the
+  Run pending and its Job waiting. A Run dispatched before this release has no
+  stored sequence and is not covered. The NATS user of Jobs must be allowed to
+  subscribe to the advisory subject. The listener does not take part in
+  readiness: a pod is ready whether or not the subscription is granted. The
+  server refuses a subscription for want of a right without failing the call
+  that made it, so the pod stays ready and no Run is failed by a termination;
+  the refusal is logged at warn and counted in
+  `jobs_nats_server_errors_total`. The listener subscribes again every five
+  seconds only after a subscription error or the end of the subscription.
+  Each termination is counted by outcome in `jobs_trigger_terminations_total`.
+  The stream sequence of a trigger is stored with three attempts, and a
+  termination looks for its Run for about one second before it counts the
+  sequence as naming no Run.
 
 ### Changed
 

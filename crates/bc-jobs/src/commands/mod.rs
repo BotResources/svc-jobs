@@ -73,6 +73,9 @@ pub enum CommandWarning {
     CommandAlreadyApplied {
         command: &'static str,
     },
+    TriggerTerminationIgnored {
+        run_standing: &'static str,
+    },
 }
 
 impl CommandWarning {
@@ -86,6 +89,7 @@ impl CommandWarning {
             Self::CancellationIsBestEffort => "cancellation_is_best_effort",
             Self::CancelledJobAlreadyTerminal => "cancelled_job_already_terminal",
             Self::CommandAlreadyApplied { .. } => "command_already_applied",
+            Self::TriggerTerminationIgnored { .. } => "trigger_termination_ignored",
         }
     }
 
@@ -105,6 +109,9 @@ impl CommandWarning {
             }
             Self::CancellationIsBestEffort | Self::CancelledJobAlreadyTerminal => json!({}),
             Self::CommandAlreadyApplied { command } => json!({ "command": command }),
+            Self::TriggerTerminationIgnored { run_standing } => {
+                json!({ "runStanding": run_standing })
+            }
         }
     }
 }

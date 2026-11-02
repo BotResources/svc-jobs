@@ -60,6 +60,8 @@ fn spawn_durable_fanout(supervisor: &Supervisor, pool: sqlx::PgPool, fabric: Fab
 
 fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<Jobs>, hub: Hub) {
     runner_transport::observability::describe();
+    runner_transport::server_errors::describe();
+    crate::app::trigger_outcomes::describe();
     crate::app::claim_observability::describe();
     crate::db::tree_lock::describe();
 
@@ -93,6 +95,14 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
         let channels = surface_channels.clone();
         let jobs = Arc::clone(&surface_jobs);
         async move { runner_transport::surface::respond(channels, jobs, established).await }
+    });
+
+    let terminated_channels = channels.clone();
+    let terminated_jobs = Arc::clone(&jobs);
+    supervisor.spawn("trigger termination listener", move |established| {
+        let channels = terminated_channels.clone();
+        let jobs = Arc::clone(&terminated_jobs);
+        async move { runner_transport::terminated::listen(channels, jobs, established).await }
     });
 
     let wake_jobs = Arc::clone(&jobs);

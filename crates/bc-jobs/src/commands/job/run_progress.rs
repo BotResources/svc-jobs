@@ -45,7 +45,7 @@ impl Job {
             .then(|| Self::settled_discard(fact, run))
     }
 
-    fn settled_discard(fact: &'static str, run: &Run) -> JobCommandResult {
+    pub(crate) fn settled_discard(fact: &'static str, run: &Run) -> JobCommandResult {
         CommandResult::nothing_happened(CommandWarning::FactDiscardedOnTerminalRun {
             fact,
             run_status: run.status().as_db_str(),

@@ -47,3 +47,27 @@ pub async fn await_tree_lock_timeouts_above(client: &GraphqlClient, floor: f64) 
          happened and it would prove nothing"
     );
 }
+
+const TRIGGER_TERMINATIONS: &str = "jobs_trigger_terminations_total";
+
+pub async fn trigger_terminations(client: &GraphqlClient, outcome: &str) -> f64 {
+    let (status, body) = client.get_raw("/metrics").await;
+    assert!(status.is_success(), "/metrics answers: {status}");
+    let label = format!("outcome=\"{outcome}\"");
+    body.lines()
+        .filter(|line| line.starts_with(TRIGGER_TERMINATIONS) && line.contains(&label))
+        .find_map(|line| line.rsplit(' ').next()?.parse().ok())
+        .unwrap_or_else(|| panic!("the series {TRIGGER_TERMINATIONS}{{{label}}} exists from boot"))
+}
+
+pub async fn await_trigger_terminations(client: &GraphqlClient, outcome: &str, expected: f64) {
+    let reached = br_test_harness::wait_until(LONG, || async {
+        (trigger_terminations(client, outcome).await - expected).abs() < f64::EPSILON
+    })
+    .await;
+    assert!(
+        reached,
+        "the outcome {outcome} was never counted {expected} times: {}",
+        trigger_terminations(client, outcome).await
+    );
+}

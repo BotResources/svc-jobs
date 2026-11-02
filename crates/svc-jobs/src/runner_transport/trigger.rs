@@ -6,7 +6,7 @@ use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey};
 use bc_jobs::domain::payload::{CallMode, JobPayload};
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::transport::{AnnouncedInstance, RunTrigger, RunnerTransport};
+use bc_jobs::ports::transport::{AnnouncedInstance, RunTrigger, RunnerTransport, TriggerSequence};
 use contract_jobs::command_v3;
 use contract_jobs::runner as wire;
 use contract_jobs::runner_transport::trigger_v2_subject;
@@ -80,16 +80,18 @@ fn wire_payload(payload: &JobPayload) -> command_v3::Payload {
 
 #[async_trait]
 impl RunnerTransport for RunnerChannels {
-    async fn dispatch(&self, trigger: &RunTrigger) -> Result<(), PortError> {
+    async fn dispatch(&self, trigger: &RunTrigger) -> Result<TriggerSequence, PortError> {
         let subject = trigger_v2_subject(&segment(&trigger.runner_type)?);
         let bytes = serde_json::to_vec(&wire_trigger(trigger)).map_err(transport_error)?;
-        self.context()
+        let acknowledged = self
+            .context()
             .publish(subject, bytes.into())
             .await
             .map_err(transport_error)?
             .await
             .map_err(transport_error)?;
-        Ok(())
+        TriggerSequence::new(acknowledged.sequence)
+            .ok_or_else(|| transport_error("the broker acknowledged a trigger with sequence 0"))
     }
 
     async fn request_stop(&self, run_id: RunId, _reason: &ReasonCode) -> Result<(), PortError> {
