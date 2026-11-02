@@ -5,6 +5,7 @@ use support::erasure::assert_request_data_held;
 use support::erasure_scene::child_body;
 use support::fixture::JobsFixture;
 use support::lineage::{create, live_runner};
+use support::producer::Producer;
 use support::runner;
 use support::scrub::{age_tree, assert_not_scrubbed_for, await_scrubbed};
 use support::scrub_scene::{ENDED_RUN, end_run_and_finish, live_root, long_runs};
@@ -126,6 +127,54 @@ async fn a_run_that_was_dispatched_and_never_started_does_not_hold_the_tree_when
     end_run_and_finish(&fixture, &durable, &live).await;
     age_tree(&durable, live.root, 31).await;
     await_scrubbed(&durable, live.root, "no Run of the Tree is live").await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_run_that_lives_after_its_job_ended_holds_the_tree_and_its_end_restarts_the_clock() {
+    let fixture = JobsFixture::start_with(long_runs()).await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let live = live_root(&fixture, "clock-outlives", 1).await;
+    Producer::new(fixture.fabric(), "projects")
+        .finish_v2(live.root)
+        .await;
+    gql::wait_for_status(
+        &fixture.gql(),
+        fixture.admin(),
+        live.root,
+        "COMPLETED",
+        LONG,
+    )
+    .await;
+    durable
+        .assert_count(ENDED_RUN, live.work.run_id, 0, "the Run has not ended")
+        .await;
+
+    age_tree(&durable, live.root, 60).await;
+    assert_not_scrubbed_for(
+        &durable,
+        live.root,
+        QUIET,
+        "the Job ended and its Run lives",
+    )
+    .await;
+
+    live.runner.complete_run(&live.trigger).await;
+    durable
+        .await_count(ENDED_RUN, live.work.run_id, 1, "the Run ends")
+        .await;
+    assert_not_scrubbed_for(&durable, live.root, QUIET, "the Run ended just now").await;
+    age_tree(&durable, live.root, 29).await;
+    assert_not_scrubbed_for(
+        &durable,
+        live.root,
+        QUIET,
+        "29 days after the end of the Run",
+    )
+    .await;
+    age_tree(&durable, live.root, 2).await;
+    await_scrubbed(&durable, live.root, "31 days after the end of the Run").await;
     durable.close().await;
     fixture.shutdown().await;
 }

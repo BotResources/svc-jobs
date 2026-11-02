@@ -10,6 +10,7 @@ use bc_jobs::domain::policy::Retention;
 use bc_jobs::domain::priority::Priority;
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
+use bc_jobs::ports::PortError;
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::scrub::{ScrubOutcome, TreeScrub, TreeScrubs};
 use chrono::TimeDelta;
@@ -111,7 +112,6 @@ pub async fn a_job_with_a_started_run(fixture: &Fixture) -> (Job, RunId) {
 }
 
 pub async fn a_completed_job_with_an_ended_run(fixture: &Fixture) -> (Job, RunId) {
-    a_registered_instance(fixture, RUNNER_TYPE).await;
     let (job, run_id) = a_job_with_a_started_run(fixture).await;
     let job = reload(fixture, job.id()).await;
     let ended = job
@@ -140,6 +140,10 @@ pub async fn a_completed_job_with_an_ended_run(fixture: &Fixture) -> (Job, RunId
 }
 
 pub async fn scrub(fixture: &Fixture, tree: JobId) -> ScrubOutcome {
+    try_scrub(fixture, tree).await.expect("the scrub runs")
+}
+
+pub async fn try_scrub(fixture: &Fixture, tree: JobId) -> Result<ScrubOutcome, PortError> {
     fixture
         .store
         .scrub_tree(
@@ -152,5 +156,31 @@ pub async fn scrub(fixture: &Fixture, tree: JobId) -> ScrubOutcome {
             },
         )
         .await
-        .expect("the scrub runs")
+}
+
+pub async fn register_the_runner_type(fixture: &Fixture) {
+    a_registered_instance(fixture, RUNNER_TYPE).await;
+}
+
+pub async fn an_agent_waiting_for_a_restart(fixture: &Fixture, run: RunId, tree: JobId) {
+    let agent = Uuid::now_v7();
+    for sql in [
+        "INSERT INTO saved_states (run_id, state, saved_at) VALUES ($1, '{}'::jsonb, now())",
+        "INSERT INTO directory_agents \
+            (agent_id, run_id, initial_job_id, has_inbox, declares_restart, state, registered_at) \
+         VALUES ($2, $1, $3, true, true, 'FINISHED', now())",
+        "INSERT INTO saved_state_agents (run_id, agent_id, has_inbox) VALUES ($1, $2, true)",
+        "INSERT INTO inbox_items (item_id, kind, run_id, notice, accepted_at) \
+         VALUES ($4, 'NOTICE', $1, jsonb_build_object('type', 'REFUSED', 'job_id', $3::text), now())",
+        "INSERT INTO restart_wakes (run_id, requested_at) VALUES ($1, now())",
+    ] {
+        sqlx::query(sql)
+            .bind(run.as_uuid())
+            .bind(agent)
+            .bind(tree.as_uuid())
+            .bind(Uuid::now_v7())
+            .execute(&fixture.pool)
+            .await
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+    }
 }
