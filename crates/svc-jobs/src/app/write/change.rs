@@ -8,7 +8,7 @@ use br_core_events::EventMetadata;
 use uuid::Uuid;
 
 use super::premise::PriorityPremise;
-use crate::app::integration;
+use crate::app::{followups, integration};
 
 pub struct JobChange {
     pub job_id: JobId,
@@ -65,12 +65,7 @@ impl JobChange {
     }
 
     pub(super) fn resolves_the_job(&self) -> bool {
-        self.events.iter().any(|event| {
-            matches!(
-                event,
-                JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_)
-            )
-        })
+        self.events.iter().any(followups::settles_job)
     }
 
     pub fn remembering(mut self, command_id: Option<CommandId>) -> Self {
