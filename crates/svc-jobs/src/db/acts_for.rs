@@ -40,7 +40,29 @@ pub async fn acts_for_in(tx: &mut PgConnection, run_id: RunId) -> Result<ActsFor
         .map(ActsFor::new)
 }
 
+const ACTS_FOR_ALL_SQL: &str = concat!(
+    "WITH RECURSIVE chain_seed(run_id) AS (SELECT unnest($1::uuid[])), ",
+    acts_for_chain!(),
+    " SELECT run_id::uuid FROM chain"
+);
+
 impl PgStore {
+    pub async fn acts_for_all(&self, runs: &[RunId]) -> Result<Vec<RunId>, PortError> {
+        if runs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let seeds: Vec<Uuid> = runs.iter().map(|run| run.as_uuid()).collect();
+        let found: Vec<Uuid> = sqlx::query_scalar(ACTS_FOR_ALL_SQL)
+            .bind(seeds)
+            .fetch_all(self.pool())
+            .await
+            .map_err(unavailable)?;
+        found
+            .into_iter()
+            .map(|run| RunId::new(run).map_err(PortError::from))
+            .collect()
+    }
+
     pub async fn acts_for(&self, run_id: RunId) -> Result<ActsFor, PortError> {
         let mut connection = self.pool().acquire().await.map_err(unavailable)?;
         acts_for_in(&mut connection, run_id).await

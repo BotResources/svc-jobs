@@ -1,6 +1,7 @@
 pub mod access;
 pub mod actions;
 pub mod attempts;
+pub mod auto_finish;
 pub mod config;
 pub mod directory;
 pub mod erasure;

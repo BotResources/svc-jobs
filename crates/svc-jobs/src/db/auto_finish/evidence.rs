@@ -1,4 +1,4 @@
-use bc_jobs::commands::job::auto_finish::{AnswerRecord, CallerRun, CallerRunEnd};
+use bc_jobs::domain::auto_finish::{AnswerRecord, CallerRun, CallerRunEnd};
 use bc_jobs::domain::ids::RunId;
 use bc_jobs::domain::payload::CallMode;
 use bc_jobs::domain::run::status::RunTerminalKind;

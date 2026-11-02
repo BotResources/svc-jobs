@@ -1,7 +1,7 @@
 mod support;
 
-use bc_jobs::commands::job::auto_finish::{AnswerRecord, CallerRun, CallerRunEnd};
 use bc_jobs::domain::attempts::MaxAttempts;
+use bc_jobs::domain::auto_finish::{AnswerRecord, CallerRun, CallerRunEnd};
 use bc_jobs::domain::policy::ServiceLimits;
 use bc_jobs::domain::run::status::RunTerminalKind;
 use bc_jobs::ports::auto_finish::AutoFinishReader;

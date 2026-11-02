@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::auto_finish::{AnswerRecord, CallerRun, CallerRunEnd};
 use crate::domain::job::JobCall;
 use crate::domain::job::resolution::JobResolution;
 use crate::domain::ownership::{ActorRef, DeclarationClaim};

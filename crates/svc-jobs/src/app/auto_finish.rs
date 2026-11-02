@@ -1,9 +1,13 @@
+mod inline;
+
 use bc_jobs::JobsError;
 use bc_jobs::domain::ids::{JobId, ResolutionId, RunId};
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::ports::auto_finish::AutoFinishReader;
+use bc_jobs::ports::job::DUE_WORK_BATCH;
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 
+use self::inline::{Finished, finish_within_budget};
 use super::write::JobChange;
 use super::{Jobs, SERVICE_ACTOR, retry};
 use crate::error::{Contention, ServiceError};
@@ -55,27 +59,19 @@ pub async fn after_commit(jobs: &Jobs, triggers: &Triggers, cause: &EventMetadat
             return;
         }
     };
-    for called in candidates {
-        if let Err(error) = finish_called_job(jobs, called, cause).await {
-            tracing::warn!(
-                job_id = %called.as_uuid(),
-                error = %error,
-                "finishing a called job failed; the next end of a run or the next sweep decides again"
-            );
-        }
-    }
+    finish_within_budget(candidates, DUE_WORK_BATCH, |called| {
+        finish_called_job(jobs, called, cause)
+    })
+    .await;
 }
 
 async fn candidates_of(jobs: &Jobs, triggers: &Triggers) -> Result<Vec<JobId>, ServiceError> {
-    let mut requesters: Vec<RunId> = Vec::new();
-    for run in &triggers.completed_runs {
-        requesters.push(*run);
-        requesters.extend(jobs.store.acts_for(*run).await?.runs());
-    }
+    let mut requesters: Vec<RunId> = triggers.completed_runs.clone();
+    requesters.extend(jobs.store.acts_for_all(&triggers.completed_runs).await?);
     let mut candidates = AutoFinishReader::called_by_runs(&jobs.store, &requesters).await?;
-    for job in &triggers.stemming_jobs {
-        candidates.extend(AutoFinishReader::called_jobs_stemming_to(&jobs.store, *job).await?);
-    }
+    candidates.extend(
+        AutoFinishReader::called_jobs_stemming_to(&jobs.store, &triggers.stemming_jobs).await?,
+    );
     candidates.sort_by_key(|job| job.as_uuid());
     candidates.dedup();
     Ok(candidates)
@@ -85,19 +81,22 @@ pub async fn finish_called_job(
     jobs: &Jobs,
     called: JobId,
     cause: &EventMetadata,
-) -> Result<(), ServiceError> {
+) -> Result<Finished, ServiceError> {
     match retry::on_write_race(ATTEMPTS, || finish_once(jobs, called, cause)).await {
-        Err(ServiceError::Contended(Contention::WriteRace | Contention::LockTimeout)) => {
+        Err(ServiceError::Contended(contention)) => {
             tracing::info!(
                 job_id = %called.as_uuid(),
                 "finishing a called job was contended; the next end of a run or the next sweep decides again"
             );
-            Ok(())
+            Ok(match contention {
+                Contention::LockTimeout => Finished::TreeBusy,
+                Contention::WriteRace => Finished::Decided,
+            })
         }
         Err(ServiceError::Domain(JobsError::JobAlreadyTerminal { .. } | JobsError::JobDeleted)) => {
-            Ok(())
+            Ok(Finished::Decided)
         }
-        outcome => outcome,
+        outcome => outcome.map(|()| Finished::Decided),
     }
 }
 

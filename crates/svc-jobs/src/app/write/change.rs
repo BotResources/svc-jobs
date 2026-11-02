@@ -1,4 +1,4 @@
-use bc_jobs::commands::job::auto_finish::FinishPremise;
+use bc_jobs::domain::auto_finish::FinishPremise;
 use bc_jobs::domain::ids::{CommandId, JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;

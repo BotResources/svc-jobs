@@ -22,15 +22,16 @@ const A_CALLER_RUN_COMPLETED: &str = "EXISTS ( \
 const A_RUN_OF_THE_JOB_COMPLETED: &str = "EXISTS (SELECT 1 FROM runs r \
      JOIN run_terminals t ON t.run_id = r.id AND t.kind = 'COMPLETED' WHERE r.job_id = j.id)";
 
-const A_READ_MARKER_EXISTS: &str = "EXISTS (SELECT 1 FROM inbox_items i \
-     WHERE i.read_at IS NOT NULL \
-       AND ((i.kind = 'NOTICE' AND i.address IS NULL \
-             AND i.run_id = (j.requester ->> 'Run')::uuid \
-             AND i.notice ->> 'type' = 'RUN_COMPLETED') \
-         OR (i.kind = 'MAIL' AND i.address = (j.call ->> 'caller_address')::uuid)))";
+const A_READ_MARKER_EXISTS: &str = "(EXISTS (SELECT 1 FROM inbox_items i \
+     WHERE i.read_at IS NOT NULL AND i.kind = 'NOTICE' AND i.address IS NULL \
+       AND i.run_id = (j.requester ->> 'Run')::uuid \
+       AND i.notice ->> 'type' = 'RUN_COMPLETED') \
+     OR EXISTS (SELECT 1 FROM inbox_items i \
+     WHERE i.read_at IS NOT NULL AND i.kind = 'MAIL' \
+       AND i.address = (j.call ->> 'caller_address')::uuid))";
 
 const STEMS_CTE: &str = "WITH RECURSIVE stems(job_id) AS ( \
-        SELECT $1::uuid \
+        SELECT unnest($1::uuid[]) \
       UNION \
         SELECT r.job_id::uuid FROM stems s \
         JOIN restart_origins ro ON ro.job_id = s.job_id \
@@ -74,13 +75,20 @@ pub async fn called_by_runs(pool: &PgPool, runs: &[RunId]) -> Result<Vec<JobId>,
     ids(found)
 }
 
-pub async fn called_jobs_stemming_to(pool: &PgPool, job: JobId) -> Result<Vec<JobId>, PortError> {
+pub async fn called_jobs_stemming_to(
+    pool: &PgPool,
+    jobs: &[JobId],
+) -> Result<Vec<JobId>, PortError> {
+    if jobs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let jobs: Vec<Uuid> = jobs.iter().map(|job| job.as_uuid()).collect();
     let sql = format!(
         "{STEMS_CTE} SELECT j.id::uuid FROM stems s JOIN jobs j ON j.id = s.job_id \
          WHERE {CALLED_BY_A_RUN} AND {NOT_RESOLVED}"
     );
     let found: Vec<Uuid> = sqlx::query_scalar(&sql)
-        .bind(job.as_uuid())
+        .bind(jobs)
         .fetch_all(pool)
         .await
         .map_err(unavailable)?;

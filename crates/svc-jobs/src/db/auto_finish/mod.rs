@@ -3,7 +3,7 @@ mod evidence;
 mod family;
 
 use async_trait::async_trait;
-use bc_jobs::commands::job::auto_finish::AutoFinishFacts;
+use bc_jobs::domain::auto_finish::AutoFinishFacts;
 use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::ports::PortError;
@@ -95,7 +95,7 @@ impl AutoFinishReader for PgStore {
         candidates::called_by_runs(self.pool(), runs).await
     }
 
-    async fn called_jobs_stemming_to(&self, job: JobId) -> Result<Vec<JobId>, PortError> {
-        candidates::called_jobs_stemming_to(self.pool(), job).await
+    async fn called_jobs_stemming_to(&self, jobs: &[JobId]) -> Result<Vec<JobId>, PortError> {
+        candidates::called_jobs_stemming_to(self.pool(), jobs).await
     }
 }

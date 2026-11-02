@@ -1,13 +1,9 @@
 mod answer;
-mod facts;
 #[cfg(test)]
 mod tests;
 
-pub use facts::{
-    AnswerRecord, AutoFinishFacts, AutoFinishWait, CallerRun, CallerRunEnd, FinishPremise,
-};
-
 use crate::commands::job::resolution::FinishJob;
+use crate::domain::auto_finish::{AutoFinishFacts, AutoFinishWait, FinishPremise};
 use crate::domain::ids::{JobId, ResolutionId, RunId};
 use crate::domain::job::Job;
 use crate::domain::ownership::{FinishVerdict, ResolutionRequester};

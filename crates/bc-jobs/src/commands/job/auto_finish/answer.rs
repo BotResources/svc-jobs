@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use super::facts::AnswerRecord;
+use crate::domain::auto_finish::AnswerRecord;
 use crate::domain::ids::RunId;
 use crate::domain::payload::CallMode;
 
