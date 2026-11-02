@@ -55,9 +55,22 @@ pub struct AnnouncedInstance {
     pub instance_key: InstanceKey,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TriggerSequence(u64);
+
+impl TriggerSequence {
+    pub fn new(value: u64) -> Option<Self> {
+        (value > 0).then_some(Self(value))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[async_trait]
 pub trait RunnerTransport: Send + Sync {
-    async fn dispatch(&self, trigger: &RunTrigger) -> Result<(), PortError>;
+    async fn dispatch(&self, trigger: &RunTrigger) -> Result<TriggerSequence, PortError>;
 
     async fn request_stop(&self, run_id: RunId, reason_code: &ReasonCode) -> Result<(), PortError>;
 
@@ -84,6 +97,12 @@ pub trait RunnerTransport: Send + Sync {
 mod tests {
     use super::*;
     use crate::fixtures::{JobBuilder, run_id};
+
+    #[test]
+    fn a_stream_sequence_starts_at_one() {
+        assert_eq!(TriggerSequence::new(0), None);
+        assert_eq!(TriggerSequence::new(7).map(TriggerSequence::get), Some(7));
+    }
 
     #[test]
     fn a_trigger_is_built_only_for_a_job_that_holds_a_passport() {

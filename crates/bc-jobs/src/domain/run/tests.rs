@@ -243,6 +243,17 @@ fn a_pushed_run_with_no_passport_to_send_fails_unstarted_and_loads() {
 }
 
 #[test]
+fn a_pushed_run_whose_trigger_was_terminated_fails_unstarted_and_loads() {
+    let report =
+        RunFailureReport::platform(RunFailureKind::Permanent, "trigger_terminated").unwrap();
+    let pushed = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::failed(at(90), report)),
+        ..pending()
+    });
+    assert!(pushed.is_ok());
+}
+
+#[test]
 fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_cannot_be_withdrawn()
 {
     let withdrawn = Run::hydrate(RunState {

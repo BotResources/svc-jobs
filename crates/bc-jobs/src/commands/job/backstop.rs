@@ -38,7 +38,7 @@ pub struct FailForInactivity {
 }
 
 impl ReclaimRun {
-    fn into_failure(self, report: RunFailureReport) -> RunFailureFact {
+    pub(crate) fn into_failure(self, report: RunFailureReport) -> RunFailureFact {
         RunFailureFact {
             run_id: self.run_id,
             report,

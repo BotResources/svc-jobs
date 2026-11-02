@@ -25,6 +25,19 @@ form to decide whether a version ships.
   (a mail notice in version 2 only). A failure, cancel, refusal or mail notice
   wakes a finished restartable agent and, left unread at the end of a
   successful Run, starts the restart at once.
+- A `PUSH` Run that has not started fails as permanent, with the reason
+  `trigger_terminated`, when a runner terminates its trigger (`Term` on the
+  trigger stream): its Job fails with that reason and no retry follows. Jobs
+  stores the stream sequence of each trigger it publishes (table `run_triggers`)
+  and reads the broker advisory of a terminated message of the trigger stream
+  (`$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.JOBS_TRIGGER.>`, a core
+  subscription in the queue group `svc_jobs_trigger_terminated`) to find the Run.
+  A Run that started, a Run reserved by a claim and a Run that ended are left
+  unchanged. The advisory is delivered at most once: a lost advisory leaves the
+  Run pending and its Job waiting. A Run dispatched before this release has no
+  stored sequence and is not covered. The NATS user of Jobs must be allowed to
+  subscribe to the advisory subject; a refused subscription is silent on the
+  broker side, so the pod stays ready and no Run is failed.
 
 ### Changed
 

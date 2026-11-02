@@ -95,6 +95,14 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
         async move { runner_transport::surface::respond(channels, jobs, established).await }
     });
 
+    let terminated_channels = channels.clone();
+    let terminated_jobs = Arc::clone(&jobs);
+    supervisor.spawn("trigger termination listener", move |established| {
+        let channels = terminated_channels.clone();
+        let jobs = Arc::clone(&terminated_jobs);
+        async move { runner_transport::terminated::listen(channels, jobs, established).await }
+    });
+
     let wake_jobs = Arc::clone(&jobs);
     supervisor.spawn("held claim wake router", move |established| {
         let jobs = Arc::clone(&wake_jobs);

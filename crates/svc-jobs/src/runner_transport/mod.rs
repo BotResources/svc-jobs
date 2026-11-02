@@ -5,6 +5,7 @@ pub mod observability;
 pub mod presence;
 pub mod start_catch_up;
 pub mod surface;
+pub mod terminated;
 pub mod trigger;
 
 use async_nats::jetstream::kv::Store;
