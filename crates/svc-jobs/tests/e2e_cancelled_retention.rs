@@ -1,72 +1,19 @@
 mod support;
 
-use br_test_harness::SseSubscription;
-use chrono::{DateTime, Utc};
 use serde_json::json;
 use support::db::Durable;
 use support::erasure::{
     WAITING_FOR_ERASURE, assert_request_data_erased, assert_request_data_held, view_of,
 };
-use support::fixture::{JobsFixture, Knobs};
+use support::fixture::JobsFixture;
 use support::gesture::Work;
 use support::lineage::{act, create, live_runner};
-use support::producer::{JobDeclaration, Producer};
-use support::runner::FakeRunner;
+use support::producer::Producer;
+use support::retention::{age_cancel, erased_at, root_with_request_data, three_days};
 use support::scrub::{age_tree, assert_not_scrubbed_for, await_scrubbed, trigger_of};
-use support::scrub_scene::{ENDED_RUN, long_runs};
-use support::{JOB_CHANGED, LONG, QUIET, SHORT, gql, stream, subs, wire};
+use support::scrub_scene::ENDED_RUN;
+use support::{LONG, QUIET, gql, wire};
 use uuid::Uuid;
-
-fn three_days() -> Knobs {
-    Knobs {
-        cancelled_retention_days: Some("3".to_owned()),
-        ..long_runs()
-    }
-}
-
-async fn age_cancel(durable: &Durable, job: Uuid, days: i64) {
-    sqlx::query(
-        "UPDATE job_resolutions SET occurred_at = now() - make_interval(days => $2::int) \
-         WHERE job_id = $1 AND kind = 'CANCELLED'",
-    )
-    .bind(job)
-    .bind(i32::try_from(days).unwrap())
-    .execute(durable.pool())
-    .await
-    .expect("the cancel is aged");
-}
-
-async fn erased_at(durable: &Durable, job: Uuid) -> Option<DateTime<Utc>> {
-    sqlx::query_scalar("SELECT content_erased_at FROM jobs WHERE id = $1")
-        .bind(job)
-        .fetch_one(durable.pool())
-        .await
-        .expect("the time of the erasure reads")
-}
-
-struct Trees<'a> {
-    root: Uuid,
-    root_work: Work,
-    _runner: FakeRunner<'a>,
-}
-
-async fn root_with_request_data<'a>(fixture: &'a JobsFixture, label: &str) -> Trees<'a> {
-    let mut runner = live_runner(fixture, label).await;
-    let producer = Producer::new(fixture.fabric(), "projects");
-    let declaration = JobDeclaration::new(&runner.runner_type)
-        .with_config(json!({ "model": "m" }))
-        .with_max_attempts(1);
-    let mut body = declaration.payload("projects");
-    body["payload"] = json!({ "form": "INLINE", "message": "the brief", "attachments": [] });
-    producer.declare_payload(body).await;
-    let trigger = runner.next_trigger(LONG).await;
-    runner.start_applied(fixture, &trigger).await;
-    Trees {
-        root: declaration.job_id,
-        root_work: Work::of(&runner, &trigger),
-        _runner: runner,
-    }
-}
 
 #[tokio::test]
 async fn the_cancelled_retention_setting_delays_the_erasure_and_the_sweep_keeps_the_first_time() {
@@ -151,52 +98,6 @@ async fn the_cancelled_retention_setting_delays_the_erasure_and_the_sweep_keeps_
         gql::status_of(&fixture.gql(), fixture.admin(), c).await,
         "IN_PROGRESS"
     );
-    durable.close().await;
-    fixture.shutdown().await;
-}
-
-#[tokio::test]
-async fn an_open_job_subscription_gets_the_erased_view_when_the_sweep_erases_the_request_data() {
-    let fixture = JobsFixture::start_with(three_days()).await;
-    let durable = Durable::open(&fixture.app_url()).await;
-    let tree = root_with_request_data(&fixture, "retention-sub").await;
-    let mut b_runner = live_runner(&fixture, "retention-sub-b").await;
-    let body = json!({ "mode": "SYNC", "max_attempts": 1, "config": { "model": "m" },
-        "payload": { "form": "INLINE", "message": "the brief", "attachments": [] } });
-    let b = create(
-        &fixture,
-        &tree.root_work,
-        &b_runner.runner_type,
-        tree.root,
-        body,
-    )
-    .await;
-    let b_trigger = b_runner.next_trigger(LONG).await;
-    b_runner.start_applied(&fixture, &b_trigger).await;
-    gql::cancel_job(&fixture.gql(), fixture.admin(), Uuid::now_v7(), b).await;
-    gql::wait_for_status(&fixture.gql(), fixture.admin(), b, "CANCELLED", LONG).await;
-
-    let mut watch =
-        SseSubscription::open(fixture.url(), fixture.admin(), &subs::job_request_data(b)).await;
-    let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
-    assert!(opening["job"]["passport"].is_object(), "{opening}");
-    assert!(opening["job"]["payload"].is_object(), "{opening}");
-    assert!(opening["job"]["contentErasedAt"].is_null(), "{opening}");
-
-    age_cancel(&durable, b, 4).await;
-    let delta =
-        stream::await_delta(&mut watch, JOB_CHANGED, "JobsJobContentErasedEvent", LONG).await;
-    assert_eq!(delta["event"]["jobId"], json!(b.to_string()));
-    assert!(delta["event"]["erasedAt"].is_string(), "{delta}");
-    assert!(delta["job"]["passport"].is_null(), "{delta}");
-    assert!(delta["job"]["payload"].is_null(), "{delta}");
-    assert!(delta["job"]["config"].is_null(), "{delta}");
-    assert_eq!(
-        delta["job"]["contentErasedAt"], delta["event"]["erasedAt"],
-        "the view carries the time of the first erasure: {delta}"
-    );
-    assert_eq!(delta["job"]["status"], json!("CANCELLED"));
-    assert_request_data_erased(&fixture, &durable, b, "B").await;
     durable.close().await;
     fixture.shutdown().await;
 }

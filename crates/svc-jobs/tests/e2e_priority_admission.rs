@@ -10,6 +10,7 @@ use support::events::EventLog;
 use support::fixture::{self, JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
+use support::subs_max_priority;
 use support::{
     JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, gql, priority, stream, subs,
     wire,
@@ -36,8 +37,12 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
     let runner_type = wire::unique_runner_type("capped");
     let producer = Producer::new(fixture.fabric(), "projects");
 
-    let mut own =
-        SseSubscription::open(fixture.url(), &user, &subs::my_max_priority_changed()).await;
+    let mut own = SseSubscription::open(
+        fixture.url(),
+        &user,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(
         priority::opening_max(&mut own, SHORT).await,
         5,
@@ -227,8 +232,12 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
     let runner_type = wire::unique_runner_type("defaults");
     let producer = Producer::new(fixture.fabric(), "projects");
 
-    let mut own =
-        SseSubscription::open(fixture.url(), &user, &subs::my_max_priority_changed()).await;
+    let mut own = SseSubscription::open(
+        fixture.url(),
+        &user,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(
         priority::opening_max(&mut own, SHORT).await,
         4,

@@ -10,6 +10,7 @@ use support::events::EventLog;
 use support::fixture::{self, JobsFixture, Knobs, impersonating_member, machine_caller};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
+use support::subs_max_priority;
 use support::{
     JOB_CHANGED, JOBS_CHANGED, LONG, QUIET, SHORT, delta, dispatch, docs, gql, priority, refusal,
     stream, subs, wire,
@@ -43,11 +44,19 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         wire::FIELD_SET_USER_MAX_PRIORITY,
         "a super user caps a user at 2",
     );
-    let mut capped_own =
-        SseSubscription::open(fixture.url(), &capped, &subs::my_max_priority_changed()).await;
+    let mut capped_own = SseSubscription::open(
+        fixture.url(),
+        &capped,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(priority::opening_max(&mut capped_own, SHORT).await, 2);
-    let mut other_own =
-        SseSubscription::open(fixture.url(), &other, &subs::my_max_priority_changed()).await;
+    let mut other_own = SseSubscription::open(
+        fixture.url(),
+        &other,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(
         priority::opening_max(&mut other_own, SHORT).await,
         wire::SERVICE_DEFAULT_MAX_PRIORITY,
@@ -715,8 +724,12 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
     )
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
-    let mut own =
-        SseSubscription::open(fixture.url(), member, &subs::my_max_priority_changed()).await;
+    let mut own = SseSubscription::open(
+        fixture.url(),
+        member,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(priority::opening_max(&mut own, SHORT).await, 2);
     let before = priority::job_view(&client, admin, job_id).await;
     priority::assert_priorities(&before["job"], 4, 2, None, "before the attack");
@@ -864,7 +877,7 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
                 ("X-Passport", machine_header.as_str()),
                 ("Accept", "text/event-stream"),
             ],
-            json!({ "query": subs::my_max_priority_changed() }),
+            json!({ "query": subs_max_priority::my_max_priority_changed() }),
         )
         .await;
     assert_ne!(

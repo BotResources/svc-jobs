@@ -9,6 +9,7 @@ use support::fixture::{JobsFixture, impersonating_admin, impersonating_member, m
 use support::producer::{JobDeclaration, Producer};
 use support::refusal::{subscription_refusal, unauthenticated_refusal};
 use support::runner::{self, FakeRunner};
+use support::subs_max_priority;
 use support::{
     FLEET_CHANGED, JOB_CHANGED, JOBS_CHANGED, LOG_TAIL, LONG, QUIET, SHORT, delta, docs, gql,
     refusal, stream, subs, wire,
@@ -181,7 +182,7 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
         ("the fleet stream", subs::fleet_changed(&runner_type)),
         (
             "the users' maxima stream",
-            subs::user_max_priorities_changed(&[member.actor_id()]),
+            subs_max_priority::user_max_priorities_changed(&[member.actor_id()]),
         ),
     ] {
         let (status, body) = client
@@ -265,7 +266,7 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
             .post_raw(
                 "/graphql",
                 &bare,
-                json!({ "query": subs::user_max_priorities_changed(&[member.actor_id()]) }),
+                json!({ "query": subs_max_priority::user_max_priorities_changed(&[member.actor_id()]) }),
             )
             .await;
         anonymous_refusals.push(unauthenticated_refusal(

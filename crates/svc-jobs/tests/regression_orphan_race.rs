@@ -99,7 +99,7 @@ async fn a_creation_that_waits_for_a_payload_erased_meanwhile_is_refused_and_cre
         max_attempts: None,
         requested_priority: Priority::DEFAULT,
         initial_job_id: None,
-        requester: requester.clone(),
+        requester,
         passport: Some(service_passport()),
         payload: Some(JobPayload::Kept),
         call: None,

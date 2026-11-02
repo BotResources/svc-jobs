@@ -14,7 +14,8 @@ use support::fixture::{
 };
 use support::producer::{JobDeclaration, Producer};
 use support::refusal::{self, subscription_refusal};
-use support::{LONG, QUIET, SHORT, gql, priority, stream, subs, wire};
+use support::subs_max_priority;
+use support::{LONG, QUIET, SHORT, gql, priority, stream, wire};
 use uuid::Uuid;
 
 const FORBIDDEN: &str = "FORBIDDEN";
@@ -44,8 +45,12 @@ async fn administrators_read_users_maximums_with_their_affordances() {
     events
         .expect_one(wire::FACT_QUEUED, of_b.job_id, LONG)
         .await;
-    let mut own_b =
-        SseSubscription::open(fixture.url(), &user_b, &subs::my_max_priority_changed()).await;
+    let mut own_b = SseSubscription::open(
+        fixture.url(),
+        &user_b,
+        &subs_max_priority::my_max_priority_changed(),
+    )
+    .await;
     assert_eq!(
         priority::opening_max(&mut own_b, SHORT).await,
         wire::SERVICE_DEFAULT_MAX_PRIORITY
@@ -299,7 +304,7 @@ async fn the_maxima_read_answers_each_user_once_and_refuses_malformed_or_oversiz
                     ("X-Passport", super_user.to_header().as_str()),
                     ("Accept", "text/event-stream"),
                 ],
-                json!({ "query": subs::user_max_priorities_changed(&ids) }),
+                json!({ "query": subs_max_priority::user_max_priorities_changed(&ids) }),
             )
             .await;
         let frame = refusal::first_stream_frame(&body, what);
@@ -334,7 +339,7 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
     let mut watch = SseSubscription::open(
         fixture.url_of(1),
         super_user,
-        &subs::user_max_priorities_changed(&[a, b]),
+        &subs_max_priority::user_max_priorities_changed(&[a, b]),
     )
     .await;
 
@@ -420,7 +425,7 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
     let mut reconnected = SseSubscription::open(
         fixture.url_of(1),
         super_user,
-        &subs::user_max_priorities_changed(&[a, b]),
+        &subs_max_priority::user_max_priorities_changed(&[a, b]),
     )
     .await;
 
@@ -448,7 +453,7 @@ async fn an_administrators_view_of_users_maximums_follows_every_change_live() {
                     ("X-Passport", header.as_str()),
                     ("Accept", "text/event-stream"),
                 ],
-                json!({ "query": subs::user_max_priorities_changed(&[a, b]) }),
+                json!({ "query": subs_max_priority::user_max_priorities_changed(&[a, b]) }),
             )
             .await;
 
