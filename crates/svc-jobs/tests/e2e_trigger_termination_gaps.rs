@@ -9,7 +9,7 @@ use support::runner::{self, FakeRunner};
 use support::{LONG, gql, metrics, wire};
 
 #[tokio::test]
-async fn a_termination_that_beats_the_ledger_insert_by_450_ms_still_fails_the_run() {
+async fn a_termination_that_beats_the_ledger_insert_still_fails_the_run() {
     let fixture = JobsFixture::start().await;
     let client = fixture.gql();
     let admin = fixture.admin();
@@ -32,13 +32,20 @@ async fn a_termination_that_beats_the_ledger_insert_by_450_ms_still_fails_the_ru
     let job_id = declaration.job_id;
     producer.declare(&declaration).await;
     let taken = consumer.next(LONG).await;
+    let probes = sqlx::PgPool::connect(fixture.database().admin_url())
+        .await
+        .expect("admin connects");
+    let database = fixture.database().db_name().to_owned();
+    await_the_insert_held_back(&probes, &database).await;
+    let before_the_termination = clock_of(&probes).await;
     taken.terminate().await;
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    await_a_ledger_lookup_after(&probes, &database, before_the_termination).await;
     held.commit().await.expect("the ledger insert is released");
 
     gql::wait_for_status(&client, admin, job_id, "FAILED", Duration::from_secs(8)).await;
     metrics::await_trigger_terminations(&client, "run_failed", 1.0).await;
 
+    probes.close().await;
     owner.close().await;
     fixture.shutdown().await;
 }
@@ -119,4 +126,58 @@ async fn await_a_write_waiting_on_the_competing_one(owner: &sqlx::PgPool) {
         "no write of the service ever waited on the competing one: the interleaving this \
          scenario needs never happened and it would prove nothing"
     );
+}
+
+async fn clock_of(admin: &sqlx::PgPool) -> chrono::DateTime<chrono::Utc> {
+    sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(admin)
+        .await
+        .expect("the database clock reads")
+}
+
+async fn await_the_insert_held_back(admin: &sqlx::PgPool, database: &str) {
+    const PROBES: u32 = 100;
+    for _ in 0..PROBES {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks lock \
+             JOIN pg_stat_activity backend ON backend.pid = lock.pid \
+             WHERE NOT lock.granted AND backend.datname = $1 \
+               AND backend.query LIKE 'INSERT INTO run_triggers%'",
+        )
+        .bind(database)
+        .fetch_one(admin)
+        .await
+        .expect("the lock-wait probe runs");
+        if waiting > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the ledger insert never waited for the lock: the gap this scenario needs never opened");
+}
+
+async fn await_a_ledger_lookup_after(
+    admin: &sqlx::PgPool,
+    database: &str,
+    since: chrono::DateTime<chrono::Utc>,
+) {
+    const PROBES: u32 = 100;
+    for _ in 0..PROBES {
+        let looked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = $2 AND pid <> pg_backend_pid() \
+               AND query LIKE 'SELECT r.job_id::uuid AS job_id, r.id::uuid AS run_id FROM run_triggers%' \
+               AND query_start > $1",
+        )
+        .bind(since)
+        .bind(database)
+        .fetch_one(admin)
+        .await
+        .expect("the lookup probe runs");
+        if looked > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the service never looked for the trigger in the ledger after the termination");
 }

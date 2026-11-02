@@ -26,6 +26,7 @@ pub mod gesture;
 pub mod gql;
 pub mod infra;
 pub mod lineage;
+pub mod lock_wait;
 pub mod metrics;
 pub mod orphan_race;
 pub mod passports;

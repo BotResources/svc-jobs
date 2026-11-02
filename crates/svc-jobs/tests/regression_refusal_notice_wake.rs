@@ -1,7 +1,5 @@
 mod support;
 
-use std::time::Duration;
-
 use bc_jobs::domain::ids::{AgentId, JobId, RunId};
 use bc_jobs::domain::payload::CallMode;
 use bc_jobs::domain::runner::call_notices::CallNotices;
@@ -17,6 +15,7 @@ use support::clock;
 use support::contention::{
     Fixture, a_job_with_one_dispatched_run, a_registered_instance, metadata,
 };
+use support::lock_wait::await_a_lock_wait;
 
 const WAKES_OF_RUN: &str = "SELECT count(*) FROM restart_wakes WHERE run_id::text = $1";
 const REFUSALS_OF_RUN: &str = "SELECT count(*) FROM inbox_items \
@@ -103,7 +102,7 @@ async fn a_refusal_notice_written_while_the_run_ends_is_never_lost_to_the_restar
         .await
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    await_a_lock_wait(&fixture.pool, "the refusal").await;
     assert!(
         !refusal.is_finished(),
         "the refusal waits for the Tree while the Run ends"
