@@ -12,8 +12,9 @@ use sqlx::PgConnection;
 
 use crate::app::integration::message::{cancelled_message, failure_message};
 use crate::db::call_notices::{
-    Delivering, NoticeFor, call_notices_of, insert_notice, queue_position, result_of_run,
+    Delivering, call_notices_of, insert_notice, queue_position, result_of_run,
 };
+use crate::db::notice_target::NoticeFor;
 use crate::db::restart::wake_run;
 use crate::error::ServiceError;
 

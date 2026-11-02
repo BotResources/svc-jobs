@@ -11,7 +11,8 @@ use support::{LONG, wire};
 use uuid::Uuid;
 
 #[tokio::test]
-async fn every_kind_of_item_rings_the_live_run_and_a_runner_off_the_bus_loses_nothing() {
+async fn a_mail_a_copy_and_a_call_notice_ring_the_live_run_and_a_runner_off_the_bus_loses_nothing()
+{
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let gql = fixture.gql();

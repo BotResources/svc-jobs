@@ -84,7 +84,7 @@ fn refusal_notice(
         .refusal_notice(wire.job_id, refusal_words(wire.job_id, reason_code))?;
     Some(RefusalNotice {
         told,
-        source_key: metadata.causation_id.map(|command| command.to_string()),
+        command: metadata.causation_id,
     })
 }
 

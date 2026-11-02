@@ -4,8 +4,9 @@ use bc_jobs::ports::mail::{Minting, RefusedMail};
 
 use super::checks::guard_sender;
 use crate::db::PgStore;
-use crate::db::call_notices::{Delivering, NoticeFor, insert_notice};
+use crate::db::call_notices::{Delivering, insert_notice};
 use crate::db::hydrate::unavailable;
+use crate::db::notice_target::{DedupKey, NoticeFor};
 use crate::db::work::require_work;
 
 pub(super) async fn note_refusal(
@@ -29,7 +30,7 @@ pub(super) async fn note_refusal(
     let target = NoticeFor::mail_notice(
         context.run_id,
         request.from,
-        stored_key(&request.refusal.notice_key(request.mail_id)),
+        DedupKey::of_text(stored_key(&request.refusal.notice_key(request.mail_id))),
     );
     insert_notice(
         &mut tx,

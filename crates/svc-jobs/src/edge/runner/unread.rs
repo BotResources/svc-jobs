@@ -90,7 +90,7 @@ impl From<UnreadItem> for GqlInboxItem {
             accepted_at: item.accepted_at,
             mail_id: item
                 .mail_id
-                .or_else(|| notice.as_ref().and_then(|notice| notice.mail_id))
+                .or_else(|| notice.as_ref().and_then(|notice| notice.mail_id()))
                 .map(|id| id.as_uuid()),
             subject: item.subject,
             from: mail.as_ref().map(|mail| mail.from.as_uuid()),
@@ -101,7 +101,7 @@ impl From<UnreadItem> for GqlInboxItem {
             notice_type: notice.as_ref().map(|notice| notice.notice_type.into()),
             job_id: notice
                 .as_ref()
-                .and_then(|notice| notice.job_id)
+                .and_then(|notice| notice.job_id())
                 .map(|id| id.as_uuid()),
             position: notice
                 .as_ref()

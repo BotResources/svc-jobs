@@ -6,7 +6,8 @@ use bc_jobs::domain::keys::{InstanceKey, RunnerTypeKey};
 use bc_jobs::domain::mail::inbox::{Notice, NoticeType};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use svc_jobs::app::write::JobChange;
-use svc_jobs::db::call_notices::{Delivering, NoticeFor, insert_notice};
+use svc_jobs::db::call_notices::{Delivering, insert_notice};
+use svc_jobs::db::notice_target::NoticeFor;
 
 use support::clock;
 use support::contention::{

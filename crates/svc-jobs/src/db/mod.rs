@@ -21,6 +21,7 @@ pub mod lineage;
 pub mod list;
 pub mod logs;
 pub mod mail;
+pub mod notice_target;
 pub mod notify;
 pub mod partitions;
 pub mod priority;

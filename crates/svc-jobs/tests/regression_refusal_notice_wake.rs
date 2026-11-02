@@ -94,7 +94,7 @@ async fn a_refusal_notice_written_while_the_run_ends_is_never_lost_to_the_restar
                 params: json!({ "jobId": refused_job }),
                 notice: Some(RefusalNotice {
                     told,
-                    source_key: None,
+                    command: None,
                 }),
             },
             &metadata(),

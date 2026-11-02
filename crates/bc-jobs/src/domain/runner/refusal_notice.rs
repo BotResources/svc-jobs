@@ -62,7 +62,7 @@ mod tests {
             .expect("a notice");
         assert_eq!(told.address, address);
         assert_eq!(told.notice.notice_type, NoticeType::Refused);
-        assert_eq!(told.notice.job_id, JobId::new(job).ok());
+        assert_eq!(told.notice.job_id(), JobId::new(job).ok());
         assert_eq!(told.notice.message.as_deref(), Some("no"));
     }
 

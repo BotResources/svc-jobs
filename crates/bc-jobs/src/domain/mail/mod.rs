@@ -4,6 +4,7 @@ pub mod author;
 pub mod content;
 pub mod delivery;
 pub mod inbox;
+pub mod notice;
 pub mod refusal;
 pub mod refused;
 pub mod views;

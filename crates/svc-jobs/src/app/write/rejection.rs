@@ -7,15 +7,16 @@ use uuid::Uuid;
 
 use crate::app::integration;
 use crate::db::PgStore;
-use crate::db::call_notices::{Delivering, NoticeFor, insert_notice};
+use crate::db::call_notices::{Delivering, insert_notice};
 use crate::db::directory::{address_holder_in, tree_of_run};
+use crate::db::notice_target::{DedupKey, NoticeFor};
 use crate::db::restart::wake_run;
 use crate::db::tree_lock::lock_tree;
 use crate::error::ServiceError;
 
 pub struct RefusalNotice {
     pub told: Told,
-    pub source_key: Option<String>,
+    pub command: Option<Uuid>,
 }
 
 pub struct CreationRefusal<'a> {
@@ -50,7 +51,11 @@ pub async fn publish_rejection(
         let caller_run = refused.told.caller_run;
         let written = insert_notice(
             &mut tx,
-            NoticeFor::refusal(caller_run, refused.told.address, refused.source_key),
+            NoticeFor::refusal(
+                caller_run,
+                refused.told.address,
+                refused.command.map(DedupKey::of_command),
+            ),
             &refused.told.notice,
             Delivering { ids, metadata, at },
         )

@@ -39,7 +39,7 @@ fn unread_waiting() -> String {
     format!(
         "(EXISTS (SELECT 1 FROM inbox_items i WHERE i.address = d.agent_id \
                  AND i.read_at IS NULL \
-                 AND (i.kind = 'MAIL' OR {notice} OR {kinds})) \
+                 AND ({notice} OR {kinds})) \
           OR EXISTS (SELECT 1 FROM inbox_items i WHERE i.address IS NULL \
                  AND i.run_id = d.run_id AND i.read_at IS NULL AND {notice}))"
     )

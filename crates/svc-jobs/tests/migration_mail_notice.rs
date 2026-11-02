@@ -31,22 +31,23 @@ async fn agent_of(pool: &PgPool, run: Uuid, job: Uuid) -> Uuid {
     agent
 }
 
-async fn notice_item(
+async fn raw_item(
     pool: &PgPool,
     kind: &str,
     address: Option<Uuid>,
     run: Option<Uuid>,
     source_key: Option<Uuid>,
+    notice: &str,
 ) -> Result<(), sqlx::Error> {
     let sql = match source_key {
         Some(_) => {
             "INSERT INTO inbox_items \
                 (item_id, kind, address, run_id, notice, accepted_at, source_key) \
-             VALUES ($1, $2, $3, $4, '{\"type\":\"REFUSED\"}'::jsonb, $5, $6)"
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)"
         }
         None => {
             "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at) \
-             VALUES ($1, $2, $3, $4, '{\"type\":\"REFUSED\"}'::jsonb, $5)"
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6)"
         }
     };
     let query = sqlx::query(sql)
@@ -54,12 +55,36 @@ async fn notice_item(
         .bind(kind)
         .bind(address)
         .bind(run)
+        .bind(notice)
         .bind(Utc::now());
     let query = match source_key {
         Some(key) => query.bind(key),
         None => query,
     };
     query.execute(pool).await.map(|_| ())
+}
+
+fn refused_job() -> String {
+    format!(r#"{{"type":"REFUSED","job_id":"{}"}}"#, Uuid::now_v7())
+}
+
+fn refused_mail() -> String {
+    format!(r#"{{"type":"REFUSED","mail_id":"{}"}}"#, Uuid::now_v7())
+}
+
+async fn notice_item(
+    pool: &PgPool,
+    kind: &str,
+    address: Option<Uuid>,
+    run: Option<Uuid>,
+    source_key: Option<Uuid>,
+) -> Result<(), sqlx::Error> {
+    let notice = if kind == "MAIL_NOTICE" {
+        refused_mail()
+    } else {
+        refused_job()
+    };
+    raw_item(pool, kind, address, run, source_key, &notice).await
 }
 
 #[tokio::test]
@@ -97,21 +122,58 @@ async fn items_kept_before_the_mail_notice_stay_and_a_mail_notice_has_its_own_sh
         .await
         .expect("the key reads");
     assert_eq!(no_key, None, "an old item has no source key");
-    notice_item(&pool, "MAIL_NOTICE", Some(agent), Some(run), None)
+    let key = Some(Uuid::now_v7());
+    notice_item(&pool, "MAIL_NOTICE", Some(agent), Some(run), key)
         .await
-        .expect("a mail notice has an address, a Run and a notice");
+        .expect("a mail notice has an address, a Run, a source key and a notice");
     assert!(
-        notice_item(&pool, "MAIL_NOTICE", None, Some(run), None)
+        notice_item(&pool, "MAIL_NOTICE", None, Some(run), key)
             .await
             .is_err(),
         "a mail notice has an address"
     );
     assert!(
-        notice_item(&pool, "MAIL_NOTICE", Some(agent), None, None)
+        notice_item(&pool, "MAIL_NOTICE", Some(agent), None, key)
             .await
             .is_err(),
         "a mail notice has a Run"
     );
+    assert!(
+        notice_item(&pool, "MAIL_NOTICE", Some(agent), Some(run), None)
+            .await
+            .is_err(),
+        "a mail notice has a source key"
+    );
+    for (what, notice) in [
+        ("a refusal", r#"{"type":"REFUSED"}"#.to_owned()),
+        ("a Job", refused_job()),
+        (
+            "another notice type",
+            format!(r#"{{"type":"STARTED","mail_id":"{}"}}"#, Uuid::now_v7()),
+        ),
+        (
+            "both a Job and a mail",
+            format!(
+                r#"{{"type":"REFUSED","job_id":"{}","mail_id":"{}"}}"#,
+                Uuid::now_v7(),
+                Uuid::now_v7()
+            ),
+        ),
+    ] {
+        assert!(
+            raw_item(
+                &pool,
+                "MAIL_NOTICE",
+                Some(agent),
+                Some(run),
+                Some(Uuid::now_v7()),
+                &notice
+            )
+            .await
+            .is_err(),
+            "a mail notice is a refusal that names the mail and no Job, not {what}"
+        );
+    }
     let with_mail = sqlx::query(
         "INSERT INTO inbox_items (item_id, kind, address, run_id, mail_id, notice, accepted_at) \
          VALUES ($1, 'MAIL_NOTICE', $2, $3, $4, '{}'::jsonb, $5)",

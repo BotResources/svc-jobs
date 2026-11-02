@@ -64,14 +64,8 @@ impl MailRefusal {
 
 pub fn mail_notice(mail_id: MailId, refusal: &MailRefusal) -> Option<Notice> {
     refusal.leaves_a_mail_notice().then(|| Notice {
-        notice_type: NoticeType::Refused,
-        job_id: None,
-        mail_id: Some(mail_id),
-        position: None,
-        failure_report: None,
         message: Some(refusal.notice_words()),
-        answer: None,
-        result_id: None,
+        ..Notice::of_mail(NoticeType::Refused, mail_id)
     })
 }
 
@@ -97,8 +91,8 @@ mod tests {
             MailRefusal::BadAddresses(vec![]),
         ] {
             let notice = mail_notice(refused, &refusal).expect("a notice");
-            assert_eq!(notice.mail_id, Some(refused));
-            assert_eq!(notice.job_id, None);
+            assert_eq!(notice.mail_id(), Some(refused));
+            assert_eq!(notice.job_id(), None);
             assert_eq!(notice.notice_type, NoticeType::Refused);
             assert!(notice.message.is_some());
         }
