@@ -77,6 +77,16 @@ fn a_resolved_job_of_a_scrubbed_tree_loads() {
 }
 
 #[test]
+fn a_completed_job_whose_request_data_was_erased_loads() {
+    let job = JobBuilder::new()
+        .with_resolution(JobResolution::completed(resolution_id(), ts(100)))
+        .with_request_data_erased(ts(150))
+        .build();
+    assert_eq!(job.content_erased_at(), Some(ts(150)));
+    assert!(job.passport().is_none());
+}
+
+#[test]
 fn a_stored_job_queued_body_without_its_request_data_still_reads_back() {
     use crate::event::job::JobEvent;
     use crate::event::job_facts::JobQueued;

@@ -289,6 +289,9 @@ to `## Unreleased`).
   refused as a write race instead of putting erased content back in a Job of a
   scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
   A restart decided before the scrub creates no Job.
+- A read of Jobs sees one state of each Job. A read that ran while a cancel or a
+  scrub committed could meet a Job with its request data erased and no
+  resolution, and answered `INTERNAL` with the reason `corrupt_state`.
 - The chart renders every integer environment setting as a plain integer. An integer of one
   million or more (for example `savedState.maxBytes` at its default of
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
