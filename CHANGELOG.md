@@ -25,6 +25,10 @@ form to decide whether a version ships.
   (a mail notice in version 2 only). A failure, cancel, refusal or mail notice
   wakes a finished restartable agent and, left unread at the end of a
   successful Run, starts the restart at once.
+- A create repeated identically, and a finish, a fail or a cancel (version 3)
+  repeated with the same command id by an actor that may send it, get the event
+  of the first outcome again (`queued.v2`, `completed.v2`, `failed.v2`,
+  `cancel_accepted.v1`). A command Jobs refused is judged again.
 
 ### Changed
 

@@ -87,3 +87,18 @@ pub async fn act(fixture: &JobsFixture, verb: &str, job: Uuid, acting: &Work) {
         )
         .await;
 }
+
+pub async fn act_as(fixture: &JobsFixture, command_id: Uuid, verb: &str, job: Uuid, acting: &Work) {
+    Producer::new(fixture.fabric(), "projects")
+        .send_v3_as(
+            command_id,
+            Uuid::now_v7(),
+            verb,
+            json!({
+                "job_id": job.to_string(),
+                "acting_run_id": acting.run_id.to_string(),
+                "acting_instance_key": acting.instance_key,
+            }),
+        )
+        .await;
+}

@@ -15,6 +15,8 @@ use super::write::{self, JobChange};
 use super::{Jobs, resolve};
 use crate::error::ServiceError;
 
+mod repeat;
+
 pub async fn finish(
     jobs: &Jobs,
     wire: &FinishJobV3,
@@ -70,13 +72,22 @@ async fn try_finish(
 ) -> Result<(), ServiceError> {
     let job = jobs.require(JobId::new(wire.job_id)?).await?;
     let requester = resolution_requester(jobs, &job, wire.acting(), metadata).await?;
+    let command_id = repeat::command_of(metadata);
+    if let Some(command_id) = command_id
+        && let Some(first) = job.repeat_of_finish(command_id, &requester)?
+    {
+        return repeat::resolution_again(jobs, &first, &job, None, metadata).await;
+    }
     let result = job.finish(FinishJob {
         resolution_id: ResolutionId::new(jobs.ids.next())?,
         requester,
     })?;
     let id = job.id();
-    jobs.commit(vec![JobChange::new(id, Some(job), result.events)], metadata)
-        .await
+    jobs.commit(
+        vec![JobChange::new(id, Some(job), result.events).remembering(command_id)],
+        metadata,
+    )
+    .await
 }
 
 async fn try_fail(
@@ -86,13 +97,23 @@ async fn try_fail(
 ) -> Result<(), ServiceError> {
     let job = jobs.require(JobId::new(wire.job_id)?).await?;
     let requester = resolution_requester(jobs, &job, wire.acting(), metadata).await?;
+    let command_id = repeat::command_of(metadata);
+    if let Some(command_id) = command_id
+        && let Some(first) = job.repeat_of_fail(command_id, &requester)?
+    {
+        return repeat::resolution_again(jobs, &first, &job, wire.note.as_deref(), metadata).await;
+    }
     let result = job.declare_failed(FailJob {
         resolution_id: ResolutionId::new(jobs.ids.next())?,
         requester,
     })?;
     let id = job.id();
     jobs.commit(
-        vec![JobChange::new(id, Some(job), result.events).with_note(wire.note.clone())],
+        vec![
+            JobChange::new(id, Some(job), result.events)
+                .with_note(wire.note.clone())
+                .remembering(command_id),
+        ],
         metadata,
     )
     .await
@@ -126,7 +147,10 @@ async fn try_cancel(
         job_id,
         ResolutionId::new(jobs.ids.next())?,
         requester,
-        accepted,
+        resolve::CancelAnswer {
+            accepted,
+            command_id: repeat::command_of(metadata),
+        },
         metadata,
     )
     .await

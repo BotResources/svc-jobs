@@ -27,8 +27,10 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
 - **Producers** create and control jobs through typed integration commands on
   the shared bus; every command is answered by a typed event (acceptance is
   `queued.v1`, refusal `creation_rejected.v1` — a producer never needs a
-  timeout to learn its command's fate). Identical redeliveries are absorbed;
-  conflicting reuse of an id is rejected.
+  timeout to learn its command's fate). A create repeated identically, and a
+  finish, a fail or a cancel (version 3) repeated with the same command id by an
+  actor that may send it, get the event of the first outcome again; a command
+  Jobs refused is judged again; conflicting reuse of an id is rejected.
 - **Runners** never touch the GraphQL surface. All runner ↔ jobs interaction
   rides the NATS runner transport below, governed by NATS credentials.
 - **State** is written once per fact: domain events land in `domain_events`

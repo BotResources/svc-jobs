@@ -124,6 +124,23 @@ to `## Unreleased`).
   another Instance is acknowledged and discarded; a
   started request with a start id for a Run held by that fact is refused
   `run_held`.
+- A repeated command of the current version (version 3) gets the outcome of the
+  first again. A create repeated identically, also after the Job was dispatched,
+  publishes `queued.v2` again. A finish, a fail or a cancel repeated with the
+  same command id by an actor that may send it publishes `completed.v2`,
+  `failed.v2` or `cancel_accepted.v1` again, whatever the Job became since, and
+  changes nothing: each repeat has its own event id and the correlation id of
+  the repeat. The sender is checked before the repeat is answered, so an actor
+  that may not send the command gets `command_rejected` and never the first
+  outcome. A first command that Jobs refused is not remembered: the repeat is
+  judged again, for example a create refused for a retired type is accepted
+  once the type is reactivated. A cancel by the owner or a declarant service on
+  a Job that the first command cancelled gets `cancel_accepted.v1`, not
+  `job_terminal`. A create repeated for a Job whose request data was erased
+  compares the runner type, the producer, the parent, the user, the Requester,
+  the source, the maximum attempts and the priority only. The versions 1 and 2
+  of the commands keep no memory of a command id and answer as before. The
+  command id is stored with the resolution of the Job (migration `0014`).
 
 ### Fixed
 

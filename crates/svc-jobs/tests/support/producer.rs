@@ -208,6 +208,25 @@ impl<'a> Producer<'a> {
         command
     }
 
+    pub async fn send_v3_as(
+        &self,
+        command_id: Uuid,
+        correlation_id: Uuid,
+        verb: &str,
+        payload: Value,
+    ) -> IntegrationCommand<Value> {
+        let command = wire::command_envelope_at(
+            command_id,
+            verb,
+            wire::CONTRACT_V3,
+            correlation_id,
+            self.account_id,
+            payload,
+        );
+        self.send_at(verb, wire::CONTRACT_V3, &command).await;
+        command
+    }
+
     pub async fn send_v1(&self, verb: &str, payload: Value) -> IntegrationCommand<Value> {
         let command = wire::command_envelope_at(
             Uuid::now_v7(),

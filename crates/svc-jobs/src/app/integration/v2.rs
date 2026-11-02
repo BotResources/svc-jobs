@@ -111,6 +111,41 @@ pub fn cancel_accepted(job_id: Uuid, lineage: Lineage) -> Result<Published, Serv
     )
 }
 
+pub fn queued_again(job: &Job) -> Result<Published, ServiceError> {
+    queued(
+        job.id().as_uuid(),
+        Lineage::of_job(job),
+        job.runner_type().as_str(),
+        requester_ref(job.requester(), job.producer().as_str()),
+        None,
+        job.predecessor_job_id().map(|id: JobId| id.as_uuid()),
+    )
+}
+
+fn queued(
+    job_id: Uuid,
+    lineage: Lineage,
+    runner_type: &str,
+    requester: wire::RequesterRef,
+    restart_of_job_id: Option<Uuid>,
+    retry_of_job_id: Option<Uuid>,
+) -> Result<Published, ServiceError> {
+    published(
+        contract_jobs::evt_job_queued_v2_coords(),
+        contract_jobs::event::EVENT_TYPE_QUEUED,
+        wire::EVENT_V2_SCHEMA_VERSION,
+        &wire::JobQueuedV2 {
+            job_id,
+            parent_job_id: lineage.parent_job_id,
+            initial_job_id: lineage.initial_job_id,
+            runner_type: runner_type.to_owned(),
+            requester,
+            restart_of_job_id,
+            retry_of_job_id,
+        },
+    )
+}
+
 pub fn of_event(
     event: &JobEvent,
     before: Option<&Job>,
@@ -124,19 +159,13 @@ pub fn of_event(
                 initial_job_id: fact.initial_job_id.map_or(job_id, |id: JobId| id.as_uuid()),
             };
             let requester = fact.requester.unwrap_or(Requester::Service(None));
-            Some(published(
-                contract_jobs::evt_job_queued_v2_coords(),
-                contract_jobs::event::EVENT_TYPE_QUEUED,
-                wire::EVENT_V2_SCHEMA_VERSION,
-                &wire::JobQueuedV2 {
-                    job_id,
-                    parent_job_id: lineage.parent_job_id,
-                    initial_job_id: lineage.initial_job_id,
-                    runner_type: fact.runner_type.as_str().to_owned(),
-                    requester: requester_ref(&requester, fact.producer.as_str()),
-                    restart_of_job_id: fact.restart_of_job_id.map(|id: JobId| id.as_uuid()),
-                    retry_of_job_id: fact.predecessor_job_id.map(|id: JobId| id.as_uuid()),
-                },
+            Some(queued(
+                job_id,
+                lineage,
+                fact.runner_type.as_str(),
+                requester_ref(&requester, fact.producer.as_str()),
+                fact.restart_of_job_id.map(|id: JobId| id.as_uuid()),
+                fact.predecessor_job_id.map(|id: JobId| id.as_uuid()),
             )?)
         }
         other => of_known_job_event(other, before, note)?,
