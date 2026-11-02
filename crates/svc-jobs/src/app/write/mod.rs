@@ -1,4 +1,5 @@
 mod change;
+mod erasure;
 mod fleet;
 mod guards;
 mod job_changes;

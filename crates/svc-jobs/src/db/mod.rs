@@ -9,6 +9,7 @@ pub mod directory_tree;
 pub mod dispatch_order;
 pub mod doorbell;
 pub mod due_work;
+pub mod erasure;
 pub mod fleet;
 pub mod hydrate;
 mod hydrate_sql;

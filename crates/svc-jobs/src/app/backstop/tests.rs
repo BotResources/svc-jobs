@@ -41,6 +41,17 @@ fn the_restart_wakes_run_after_every_safety_backstop() {
 }
 
 #[test]
+fn the_request_data_of_cancelled_jobs_is_erased_before_the_inactivity_check() {
+    let position = |wanted: Backstop| {
+        Backstop::SWEEP
+            .iter()
+            .position(|backstop| *backstop == wanted)
+            .expect("the backstop is in the sweep")
+    };
+    assert!(position(Backstop::CancelledRequestData) < position(Backstop::InactiveJobs));
+}
+
+#[test]
 fn no_backstop_runs_twice_in_the_sweep() {
     for backstop in Backstop::SWEEP {
         let occurrences = Backstop::SWEEP

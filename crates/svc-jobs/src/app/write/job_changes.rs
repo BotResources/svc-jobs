@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use super::change::JobChange;
+use super::erasure::erase_what_a_cancel_leaves_behind;
 use super::guards::{
     claim_source, guard_caller_addresses_still_held, guard_decision_still_holds,
     guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_restarts_still_due,
@@ -200,5 +201,5 @@ async fn apply_change(
         removal,
     )
     .await?;
-    Ok(())
+    erase_what_a_cancel_leaves_behind(tx, &change.events, limits, at).await
 }

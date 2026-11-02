@@ -57,9 +57,35 @@ to `## Unreleased`).
   notice `jobId` is null and `mailId` names the refused mail.
 - `inbox_items.source_key` and the kind `MAIL_NOTICE` (migration
   `0011_mail_notice.sql`).
+- The removal of Runs from the agent directory, by the failure or the cancel of
+  a Run or by the cancel of a Job, erases at once the Results addressed to the
+  removed Runs and the content of a mail whose sender and every recipient are
+  removed addresses (subject, body, author, source conversation and
+  attachments; the mail keeps its id and its recipients, so a repeat of the mail
+  is refused as another mail). A mail between a removed and a live address
+  keeps its content.
+- The cancel of a Job erases the Results of that Job.
+- The request data of a cancelled Job (the payload in any form, the Passport and
+  the runner configuration, the payload kept by Jobs and the same fields in the
+  stored creation fact) is erased `JOBS_CANCELLED_RETENTION_DAYS` days after the
+  cancel: in the cancel itself with the default of 0, otherwise by the backstop
+  sweep. A Job cancelled before this version is erased by the first sweep that
+  finds its delay passed. A failed or completed Job keeps its request data; a
+  cancel of a finished Job writes no cancel and starts no delay; the other Jobs
+  of the Tree keep theirs.
+- `jobs.content_erased_at`, `mails.content_erased_at` and
+  `cancelled_request_data` (migration `0012_content_erasure.sql`). The first
+  time Jobs erased the request data of a Job is the field `contentErasedAt` of
+  the Job view, which then shows no Passport, payload or configuration; a later
+  erasure never changes it.
+- An upload of a payload for a Job whose request data was erased is refused
+  `content_erased`, and an upload of an attachment for a mail whose content was
+  erased is refused `mail_content_erased`.
 
 ### Changed
 
+- The schema no longer carries a description on the fields `requestedPriority`,
+  `effectivePriority` and `forcedPriority` of the Job view.
 - A cancel keeps the notice of a cancelled called Job only for a Caller that
   stays in the agent directory. When one cancel reaches a called Job and its
   Caller (a Job above both, or the restart Job of the Caller), the Caller gets

@@ -16,6 +16,8 @@ pub mod delta;
 pub mod directory;
 pub mod dispatch;
 pub mod docs;
+pub mod erasure;
+pub mod erasure_scene;
 pub mod events;
 pub mod fixture;
 pub mod footprint;

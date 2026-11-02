@@ -114,6 +114,19 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   a Caller that the same cancel removes (a Job above both the Caller and the
   called Job, or the restart Job of the Caller), and no restart starts for it. A Result is
   kept 7 days.
+- **A removal of Runs from the agent directory erases at once.** The failure or
+  the cancel of a Run, and the cancel of a Job, remove the agents, the mail
+  addresses, the saved state, the unread items and the Results addressed to the
+  removed Runs, and erase the subject, body, author, source conversation and
+  attachments of a mail whose sender and recipients are all removed addresses
+  (a mail between a removed and a live address keeps its content). A cancel of
+  a Job also erases the Results of that Job. The request data of a cancelled
+  Job (payload, Passport, runner configuration) goes `JOBS_CANCELLED_RETENTION_DAYS`
+  days after the cancel, at once with the default of 0; the other Jobs of the
+  Tree keep theirs, and a cancel of a finished Job starts no delay. The Job
+  view then shows no Passport, payload or configuration and the time of the
+  first erasure (`contentErasedAt`); an upload for that Job is refused
+  `content_erased`.
 
 ## NATS surface
 
@@ -449,7 +462,7 @@ failing job by job.
 | `JOBS_PAYLOAD_INLINE_MAX_BYTES` | `524288` | The largest inline payload a creation may carry (message, attachment names, types and contents together); above it the creation is rejected with `payload_too_large`. A larger payload is kept by Jobs or sent by reference. |
 | `JOBS_SAVED_STATE_MAX_BYTES` | `1048576` (1 MiB) | The largest saved state a Run may store for one agent; above it the save is refused with `state_too_large`. The chart value is `savedState.maxBytes`. `/graphql` has no body limit of its own, so this limit and the others of the gestures are what bound a request. |
 | `JOBS_RETENTION_DAYS` | `30` | Days a Tree is kept after its last activity. From `1` to `395` (13 months); there is no off value. A value outside the bounds, or one that is not a whole number, refuses the boot and names the setting. The chart value is `retention.days`. |
-| `JOBS_CANCELLED_RETENTION_DAYS` | `0` (at once) | Days the request data of a cancelled Job is kept after the cancel. From `0` to `395`, never above `JOBS_RETENTION_DAYS`; a value outside the bounds, above `JOBS_RETENTION_DAYS`, or not a whole number refuses the boot and names the setting. The chart value is `retention.cancelledDays`. |
+| `JOBS_CANCELLED_RETENTION_DAYS` | `0` (at once) | Days the request data of a cancelled Job is kept after the cancel; the sweep erases it once they have passed. From `0` to `395`, never above `JOBS_RETENTION_DAYS`; a value outside the bounds, above `JOBS_RETENTION_DAYS`, or not a whole number refuses the boot and names the setting. The chart value is `retention.cancelledDays`. |
 | `SCOPE_DECLARATION_ENABLED` | `true` | Declares the scope `jobs:runner` at boot and gates readiness on its acceptance. |
 | `JOBS_RETRY_BASE_DELAY_SECONDS` | `10` | First automatic-retry delay. |
 | `JOBS_RETRY_MAX_DELAY_SECONDS` | `3600` | Backoff ceiling. |

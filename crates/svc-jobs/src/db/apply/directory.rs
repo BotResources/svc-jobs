@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
+use crate::db::erasure;
 use crate::db::hydrate::unavailable;
 
 pub async fn run_finished(
@@ -71,11 +72,14 @@ const REMOVE_TREE: &str = "\
           AND (run_id IN (SELECT run_id FROM tree) \
                OR address IN (SELECT agent_id FROM directory_agents \
                               WHERE run_id IN (SELECT run_id FROM tree)))), \
+     results AS ( \
+        DELETE FROM job_results WHERE addressed_run_id IN (SELECT run_id FROM tree)), \
      wakes AS ( \
         DELETE FROM restart_wakes WHERE run_id IN (SELECT run_id FROM tree)), \
      states AS ( \
         DELETE FROM saved_states WHERE run_id IN (SELECT run_id FROM tree)) \
-     DELETE FROM directory_agents WHERE run_id IN (SELECT run_id FROM tree)";
+     DELETE FROM directory_agents WHERE run_id IN (SELECT run_id FROM tree) \
+     RETURNING agent_id::uuid AS agent_id";
 
 pub async fn remove_run_subtree(
     tx: &mut PgConnection,
@@ -90,13 +94,13 @@ pub async fn remove_run_subtree(
             JOIN jobs j ON j.parent_run_id = t.run_id \
             JOIN runs r ON r.job_id = j.id), {REMOVE_TREE}"
     );
-    sqlx::query(&sql)
+    let removed = sqlx::query_scalar(&sql)
         .bind(run_id)
         .bind(at)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(unavailable)?;
-    Ok(())
+    erasure::erase_mail_content_between_removed_addresses(tx, &removed, at).await
 }
 
 pub fn job_subtree_head() -> String {
@@ -114,11 +118,11 @@ pub async fn remove_job_subtree(
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
     let sql = format!("{head}, {REMOVE_TREE}", head = job_subtree_head());
-    sqlx::query(&sql)
+    let removed = sqlx::query_scalar(&sql)
         .bind(vec![job_id])
         .bind(at)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(unavailable)?;
-    Ok(())
+    erasure::erase_mail_content_between_removed_addresses(tx, &removed, at).await
 }
