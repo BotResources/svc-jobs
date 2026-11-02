@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::payload::{JobPayload, PayloadAttachment};
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::kept_payload::{
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 use super::PgStore;
 use super::hydrate::unavailable;
+use super::tree_lock::lock_tree;
 use super::work::require_work;
 
 pub const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
@@ -93,6 +95,11 @@ impl KeptPayloads for PgStore {
             },
         };
         lock_kept_payload(&mut tx, for_job_id).await?;
+        if let Ok(job_id) = JobId::new(for_job_id)
+            && let Some(tree) = PgStore::initial_job_of(&mut tx, job_id).await?
+        {
+            lock_tree(&mut tx, tree).await?;
+        }
         let job = existing_job(&mut tx, for_job_id).await?;
         let known = stored(&mut tx, for_job_id).await?;
         let admission = match decide_upload(&uploader, &payload, job.as_ref(), known.as_ref()) {
