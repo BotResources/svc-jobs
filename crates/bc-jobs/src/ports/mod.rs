@@ -1,3 +1,4 @@
+pub mod auto_finish;
 pub mod directory;
 pub mod environment;
 pub mod fleet;

@@ -62,10 +62,20 @@ impl DeclarationClaim {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinishVerdict(());
+
+impl FinishVerdict {
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionRequester {
     LegacyOwner(DeclarationClaim),
     Declarant,
     Caller { caller: Caller, acts_for: ActsFor },
+    Rule(FinishVerdict),
 }
 
 impl ResolutionRequester {
@@ -74,7 +84,15 @@ impl ResolutionRequester {
             Self::LegacyOwner(claim) => claim.guard_owns_the_job(),
             Self::Declarant => guard_service_requested(job_requester),
             Self::Caller { caller, acts_for } => job_requester.guard_resolves(caller, acts_for),
+            Self::Rule(_) => guard_run_requested(job_requester),
         }
+    }
+}
+
+fn guard_run_requested(job_requester: &Requester) -> Result<(), JobsError> {
+    match job_requester {
+        Requester::Run(_) => Ok(()),
+        Requester::Service(_) => Err(JobsError::NotRequester),
     }
 }
 
@@ -153,6 +171,19 @@ mod tests {
         assert_eq!(
             requester.guard_may_resolve(&Requester::Service(None)),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn a_finish_by_rule_reaches_only_a_job_that_a_run_requested() {
+        let by_rule = ResolutionRequester::Rule(FinishVerdict::granted());
+        assert_eq!(
+            by_rule.guard_may_resolve(&Requester::Run(crate::fixtures::run_id())),
+            Ok(())
+        );
+        assert_eq!(
+            by_rule.guard_may_resolve(&Requester::Service(Some(actor()))),
+            Err(JobsError::NotRequester)
         );
     }
 

@@ -1,3 +1,4 @@
+pub mod auto_finish;
 pub mod backstop;
 pub mod cancellation;
 pub mod create;

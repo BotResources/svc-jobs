@@ -25,6 +25,16 @@ impl RunBuilder {
         }
     }
 
+    pub fn dispatched_at(mut self, at: DateTime<Utc>) -> Self {
+        self.state.dispatched_at = at;
+        self
+    }
+
+    pub fn with_id(mut self, id: RunId) -> Self {
+        self.state.id = id;
+        self
+    }
+
     pub fn retry_of_schedule(mut self, id: RetryScheduleId) -> Self {
         self.state.automatic_retry_schedule_id = Some(id);
         self
