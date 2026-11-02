@@ -163,9 +163,17 @@ to `## Unreleased`).
   nine indexes without the concurrent option, one of them over the whole
   history of published integration events: the first boot of this version takes
   longer on a large history, and writes wait while an index is built.
+- The Initial Job of a scrubbed Tree is marked (`jobs.tree_scrubbed_at`, migration
+  `0013_tree_scrub.sql`) in the transaction of the scrub, and `jobs_initial_created`
+  holds only the Trees not yet scrubbed, so a sweep reads only those.
+- A Job is marked settled (`jobs.settled_at`, migration `0016_called_jobs_open.sql`) in
+  the transaction of its resolution or deletion, and `jobs_called_open` holds the
+  Jobs called by a Run that are not settled, so the sweep that finishes called Jobs
+  reads only those.
 - `jobs_scrub_failures_total`: the number of Trees whose scrub failed since the
   process started, at zero from the first scrape. A series that keeps rising
-  means a Tree cannot be scrubbed.
+  means a Tree cannot be scrubbed. A Tree that another writer holds past the bounded
+  wait is left for the next sweep and is not counted.
 - The sweep of uploads that no Job or mail uses and the creation of a Job from
   a kept payload (or the send of a mail with attachments) no longer race: a
   payload or an attachment is never erased while the Job or the mail that uses
@@ -264,6 +272,14 @@ to `## Unreleased`).
 
 ### Fixed
 
+- The last activity of a Tree includes the due time of a retry of its Jobs: a
+  Job cancelled while it waits for a retry due in 40 days is scrubbed
+  `JOBS_RETENTION_DAYS` days after that due time.
+- A payload uploaded for a Job whose Tree a scrub is erasing waits for the scrub
+  and is then refused `request_data_erased`, instead of being stored on an erased
+  Job. A cancel and a creation that names a kept payload take the lock of the kept
+  payload before the lock of the Tree, so they no longer wait for the deadlock
+  detector.
 - A manual retry decided before the scrub of its Tree and committed after it is
   refused as a write race instead of putting erased content back in a Job of a
   scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
