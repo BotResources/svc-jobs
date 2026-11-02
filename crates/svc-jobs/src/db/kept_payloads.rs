@@ -28,6 +28,15 @@ pub const PAYLOAD_SOURCE_SQL: &str = "WITH RECURSIVE src(job_id, depth) AS ( \
     SELECT kp.job_id FROM src s JOIN kept_payloads kp ON kp.job_id = s.job_id \
     ORDER BY s.depth LIMIT 1";
 
+pub async fn lock_kept_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<(), PortError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("kept_payload:{job_id}"))
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    Ok(())
+}
+
 fn corrupt(error: serde_json::Error) -> PortError {
     PortError::Unavailable {
         detail: error.to_string(),
@@ -72,11 +81,7 @@ impl KeptPayloads for PgStore {
                 Err(refusal) => return Ok(Err(refusal.into())),
             },
         };
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("kept_payload:{for_job_id}"))
-            .execute(&mut *tx)
-            .await
-            .map_err(unavailable)?;
+        lock_kept_payload(&mut tx, for_job_id).await?;
         let job = existing_job(&mut tx, for_job_id).await?;
         let known = stored(&mut tx, for_job_id).await?;
         let admission = match decide_upload(&uploader, &payload, job.as_ref(), known.as_ref()) {

@@ -18,7 +18,7 @@ pub async fn erase_what_a_cancel_leaves_behind(
         };
         let job_id = fact.job_id.as_uuid();
         erase_results_of_job(&mut *tx, job_id).await?;
-        if limits.retention().erases_cancelled_request_data_at_once() {
+        if limits.retention().cancelled_request_data_is_due(at, at) {
             erase_request_data(&mut *tx, job_id, at).await?;
         } else {
             await_request_data_erasure(&mut *tx, job_id).await?;

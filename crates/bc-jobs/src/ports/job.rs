@@ -63,3 +63,18 @@ pub trait DueWorkReader: Send + Sync {
 
     async fn jobs_idle_since(&self, at: DateTime<Utc>) -> Result<Vec<Job>, PortError>;
 }
+
+#[async_trait]
+pub trait CancelledRequestData: Send + Sync {
+    async fn cancelled_jobs_awaiting_erasure(
+        &self,
+        cancelled_before: DateTime<Utc>,
+        batch: usize,
+    ) -> Result<Vec<JobId>, PortError>;
+
+    async fn erase_request_data_of(
+        &self,
+        job_id: JobId,
+        at: DateTime<Utc>,
+    ) -> Result<bool, PortError>;
+}

@@ -56,8 +56,8 @@ impl Retention {
         self.cancelled
     }
 
-    pub fn erases_cancelled_request_data_at_once(&self) -> bool {
-        self.cancelled.is_zero()
+    pub fn cancelled_request_data_due_before(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        now - self.cancelled
     }
 
     pub fn cancelled_request_data_is_due(
@@ -65,7 +65,7 @@ impl Retention {
         cancelled_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> bool {
-        cancelled_at + self.cancelled <= now
+        cancelled_at <= self.cancelled_request_data_due_before(now)
     }
 }
 

@@ -1,12 +1,15 @@
-use bc_jobs::domain::job::Job;
+use async_trait::async_trait;
+use bc_jobs::domain::ids::JobId;
 use bc_jobs::event::job::JOB_AGGREGATE_TYPE;
 use bc_jobs::ports::PortError;
+use bc_jobs::ports::job::CancelledRequestData;
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
+use crate::db::kept_payloads::lock_kept_payload;
 
 pub async fn erase_results_of_job(tx: &mut PgConnection, job_id: Uuid) -> Result<(), PortError> {
     sqlx::query("DELETE FROM job_results WHERE job_id = $1")
@@ -22,6 +25,7 @@ pub async fn erase_request_data(
     job_id: Uuid,
     at: DateTime<Utc>,
 ) -> Result<(), PortError> {
+    lock_kept_payload(&mut *tx, job_id).await?;
     sqlx::query(
         "UPDATE jobs SET config = NULL, passport = NULL, payload = NULL, \
             content_erased_at = coalesce(content_erased_at, $2) \
@@ -66,33 +70,43 @@ pub async fn await_request_data_erasure(
     Ok(())
 }
 
-impl PgStore {
-    pub async fn cancelled_jobs_awaiting_erasure(
+#[async_trait]
+impl CancelledRequestData for PgStore {
+    async fn cancelled_jobs_awaiting_erasure(
         &self,
         cancelled_before: DateTime<Utc>,
-        batch: i64,
-    ) -> Result<Vec<Job>, PortError> {
+        batch: usize,
+    ) -> Result<Vec<JobId>, PortError> {
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT p.job_id::uuid FROM cancelled_request_data p \
              JOIN job_resolutions r ON r.job_id = p.job_id \
-             WHERE r.occurred_at <= $1 ORDER BY r.occurred_at LIMIT $2",
+             WHERE r.kind = 'CANCELLED' AND r.occurred_at <= $1 \
+             ORDER BY r.occurred_at, p.job_id LIMIT $2",
         )
         .bind(cancelled_before)
-        .bind(batch)
+        .bind(i64::try_from(batch).unwrap_or(i64::MAX))
         .fetch_all(self.pool())
         .await
         .map_err(unavailable)?;
-        self.load_batch(&ids).await
+        ids.into_iter()
+            .map(|id| JobId::new(id).map_err(PortError::from))
+            .collect()
     }
 
-    pub async fn erase_request_data_of(
+    async fn erase_request_data_of(
         &self,
-        job_id: Uuid,
+        job_id: JobId,
         at: DateTime<Utc>,
     ) -> Result<bool, PortError> {
+        let job_id = job_id.as_uuid();
         let mut tx = self.begin().await?;
+        lock_kept_payload(&mut tx, job_id).await?;
         let pending: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id::uuid FROM jobs WHERE id = $1 AND content_erased_at IS NULL FOR UPDATE",
+            "SELECT j.id::uuid FROM jobs j \
+             WHERE j.id = $1 AND j.content_erased_at IS NULL \
+               AND EXISTS (SELECT 1 FROM job_resolutions r \
+                           WHERE r.job_id = j.id AND r.kind = 'CANCELLED') \
+             FOR UPDATE OF j",
         )
         .bind(job_id)
         .fetch_optional(&mut *tx)
