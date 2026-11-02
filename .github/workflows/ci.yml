@@ -353,6 +353,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: e2e-jobs
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: azure/setup-helm@v4
         with:
@@ -362,6 +369,4 @@ jobs:
         run: bash scripts/provision-e2e-infra.sh
 
       - name: e2e reality chains
-        run: >
-          cargo test -p svc-jobs --locked --no-fail-fast --tests
-          -- --test-threads=1
+        run: cargo nextest run -p svc-jobs --locked --no-fail-fast -j 3
