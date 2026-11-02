@@ -201,8 +201,12 @@ causation id to the id of the command.
 
 Events published on the `INTEGRATION_EVT` stream through the transactional
 outbox: `integration.evt.jobs.job.{queued, creation_rejected, started,
-plan_declared, step_started, completed, failed, cancelled}.v1` — every event
-carries the caller-supplied job id.
+plan_declared, step_started, completed, failed, cancelled}` in versions 1 and 2,
+published together for each fact, `integration.evt.jobs.job.cancel_accepted.v1`
+and `integration.evt.jobs.job.command_rejected.v1` (the answers to the version 3
+commands), and `integration.evt.jobs.run.item_arrived` in versions 1 and 2 (see
+the arrival doorbell below) — every job event carries the caller-supplied job
+id.
 
 A malformed command payload is never redelivered forever: an unreadable
 creation that still names a job id is answered by a rejection event — a

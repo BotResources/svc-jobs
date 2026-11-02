@@ -19,7 +19,8 @@ Postgres DSNs must exist in Secret "{{ .Values.postgres.existingSecret }}" under
 
 NATS at {{ .Values.nats.url }} must already carry the declared JetStream
 topology — streams INTEGRATION_CMD, INTEGRATION_EVT, JOBS_TRIGGER, JOBS_STATUS,
-JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE. svc-jobs binds them and
+JOBS_LOG and KV buckets JOBS_CANCEL, JOBS_PRESENCE and PUBLISHED_LANGUAGE.
+svc-jobs binds them and
 fails the boot loudly when one is absent; it never creates them. Keep the
 JOBS_CANCEL bucket's TTL at least as long as the longest maximum run duration
 any runner type is set to (a new type starts at JOBS_RUN_MAX_DURATION_SECONDS,
