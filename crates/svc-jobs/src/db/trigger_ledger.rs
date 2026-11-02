@@ -11,7 +11,7 @@ use super::PgStore;
 use super::hydrate::unavailable;
 
 const RECORD: &str = "INSERT INTO run_triggers (run_id, stream_sequence) VALUES ($1, $2) \
-     ON CONFLICT (run_id) DO UPDATE SET stream_sequence = EXCLUDED.stream_sequence";
+     ON CONFLICT (run_id) DO NOTHING";
 
 const AWAITING: &str = "SELECT r.job_id::uuid AS job_id, r.id::uuid AS run_id \
      FROM run_triggers t JOIN runs r ON r.id = t.run_id \
@@ -27,24 +27,33 @@ impl TriggerLedger for PgStore {
     ) -> Result<(), PortError> {
         sqlx::query(RECORD)
             .bind(run_id.as_uuid())
-            .bind(i64::try_from(sequence.get()).unwrap_or(i64::MAX))
+            .bind(stored(sequence)?)
             .execute(self.pool())
             .await
             .map_err(unavailable)?;
         Ok(())
     }
 
-    async fn run_awaiting_trigger(
+    async fn run_of_trigger_sequence(
         &self,
         sequence: TriggerSequence,
     ) -> Result<Option<AwaitedRun>, PortError> {
         let row = sqlx::query(AWAITING)
-            .bind(i64::try_from(sequence.get()).unwrap_or(i64::MAX))
+            .bind(stored(sequence)?)
             .fetch_optional(self.pool())
             .await
             .map_err(unavailable)?;
         row.map(|row| awaited(&row)).transpose()
     }
+}
+
+fn stored(sequence: TriggerSequence) -> Result<i64, PortError> {
+    i64::try_from(sequence.get()).map_err(|error| PortError::Unavailable {
+        detail: format!(
+            "the stream sequence {} does not fit the ledger: {error}",
+            sequence.get()
+        ),
+    })
 }
 
 fn awaited(row: &PgRow) -> Result<AwaitedRun, PortError> {

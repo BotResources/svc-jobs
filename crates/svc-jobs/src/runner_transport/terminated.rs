@@ -7,6 +7,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 
 use super::RunnerChannels;
+use crate::app::trigger_outcomes::{self, Outcome};
 use crate::app::{Jobs, terminated_trigger};
 use crate::error::ServiceError;
 use crate::supervision::Established;
@@ -68,6 +69,7 @@ async fn subscribe(client: &async_nats::Client) -> Result<async_nats::Subscriber
 async fn serve(mut advisories: async_nats::Subscriber, jobs: &Arc<Jobs>) {
     while let Some(message) = advisories.next().await {
         let Some(sequence) = terminated_sequence(&message.payload) else {
+            trigger_outcomes::record(Outcome::Unreadable);
             tracing::warn!(
                 subject = %message.subject,
                 "a trigger termination advisory this service cannot read was ignored"
@@ -76,14 +78,19 @@ async fn serve(mut advisories: async_nats::Subscriber, jobs: &Arc<Jobs>) {
         };
         let jobs = Arc::clone(jobs);
         tokio::spawn(async move {
-            if let Err(error) = terminated_trigger::terminated(&jobs, sequence).await {
-                tracing::warn!(
-                    sequence = sequence.get(),
-                    error = %error,
-                    "failing the run of a terminated trigger did not complete; the run stays \
-                     pending because the advisory is delivered at most once"
-                );
-            }
+            let outcome = match terminated_trigger::terminated(&jobs, sequence).await {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    tracing::warn!(
+                        sequence = sequence.get(),
+                        error = %error,
+                        "failing the run of a terminated trigger did not complete; the run stays \
+                         pending because the advisory is delivered at most once"
+                    );
+                    Outcome::Unsettled
+                }
+            };
+            trigger_outcomes::record(outcome);
         });
     }
     tracing::warn!("the trigger termination subscription ended; it is subscribed again");

@@ -2,11 +2,15 @@ mod support;
 
 use std::borrow::Cow;
 
+use bc_jobs::domain::ids::RunId;
+use bc_jobs::ports::transport::TriggerSequence;
+use bc_jobs::ports::trigger_ledger::TriggerLedger;
 use br_test_harness::E2eDatabase;
 use chrono::Utc;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
 use support::fixture::{APP_PASSWORD, APP_ROLE, require_provisioned_infrastructure};
+use svc_jobs::db::PgStore;
 use uuid::Uuid;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -128,5 +132,37 @@ async fn runs_dispatched_before_the_migration_have_no_stored_sequence_and_new_on
         !store(&pool, unseeded, 0).await,
         "a stream sequence starts at one"
     );
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn a_second_sequence_recorded_for_a_run_leaves_the_first_in_place() {
+    require_provisioned_infrastructure();
+    let db = E2eDatabase::create(true, &[])
+        .await
+        .with_app_role(APP_ROLE, APP_PASSWORD)
+        .await;
+    let pool = PgPool::connect(&db.owner_migration_url())
+        .await
+        .expect("the owner connection opens");
+    apply_all(&pool).await;
+    let run = seed_run(&pool).await;
+    let store = PgStore::new(pool.clone());
+    let run_id = RunId::new(run).expect("a v7 run id");
+
+    for sequence in [41, 42] {
+        store
+            .record_trigger_sequence(run_id, TriggerSequence::new(sequence).expect("positive"))
+            .await
+            .expect("recording a sequence never fails on a repeat");
+    }
+
+    let kept: i64 =
+        sqlx::query_scalar("SELECT stream_sequence FROM run_triggers WHERE run_id = $1")
+            .bind(run)
+            .fetch_one(&pool)
+            .await
+            .expect("the sequence reads");
+    assert_eq!(kept, 41, "a run keeps the sequence it was dispatched under");
     pool.close().await;
 }

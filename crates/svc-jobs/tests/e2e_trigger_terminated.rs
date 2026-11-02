@@ -6,7 +6,7 @@ use support::events::EventLog;
 use support::fixture::JobsFixture;
 use support::producer::{JobDeclaration, Producer};
 use support::runner::{self, FakeRunner};
-use support::{LONG, QUIET, gql, wire};
+use support::{LONG, QUIET, gql, metrics, wire};
 
 #[tokio::test]
 async fn a_trigger_terminated_before_its_start_fails_its_run_for_good() {
@@ -27,7 +27,7 @@ async fn a_trigger_terminated_before_its_start_fails_its_run_for_good() {
     let taken = consumer.next(LONG).await;
     let run = runner::run_id(&taken.payload);
     durable
-        .assert_count(
+        .await_count(
             db::TRIGGERS_OF_RUN,
             run,
             1,
@@ -38,6 +38,7 @@ async fn a_trigger_terminated_before_its_start_fails_its_run_for_good() {
     taken.terminate().await;
 
     gql::wait_for_status(&client, admin, job_id, "FAILED", LONG).await;
+    metrics::await_trigger_terminations(&client, "run_failed", 1.0).await;
     durable
         .assert_count(
             db::FAILURES_OF_RUN_FOR_REASON,
@@ -116,6 +117,7 @@ async fn a_run_that_started_before_the_termination_is_left_alone() {
     gql::wait_for_status(&client, admin, job_id, "IN_PROGRESS", LONG).await;
 
     taken.terminate().await;
+    metrics::await_trigger_terminations(&client, "ignored", 1.0).await;
     tokio::time::sleep(QUIET).await;
 
     assert_eq!(gql::status_of(&client, admin, job_id).await, "IN_PROGRESS");
@@ -183,8 +185,15 @@ async fn a_termination_that_names_no_run_changes_nothing_and_the_next_one_is_sti
         .assert_count(db::TERMINALS_OF_RUN, run, 0, "the pending run is untouched")
         .await;
 
+    metrics::await_trigger_terminations(&client, "no_run", 1.0).await;
+
     taken.terminate().await;
     gql::wait_for_status(&client, admin, job_id, "FAILED", LONG).await;
+    metrics::await_trigger_terminations(&client, "run_failed", 1.0).await;
+    assert!(
+        (metrics::trigger_terminations(&client, "no_run").await - 1.0).abs() < f64::EPSILON,
+        "the termination of the pending run is not counted as naming no run"
+    );
 
     durable.close().await;
     fixture.shutdown().await;

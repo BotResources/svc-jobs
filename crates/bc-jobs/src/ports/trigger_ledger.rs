@@ -18,7 +18,7 @@ pub trait TriggerLedger: Send + Sync {
         sequence: TriggerSequence,
     ) -> Result<(), PortError>;
 
-    async fn run_awaiting_trigger(
+    async fn run_of_trigger_sequence(
         &self,
         sequence: TriggerSequence,
     ) -> Result<Option<AwaitedRun>, PortError>;

@@ -33,6 +33,8 @@ pub mod runner_type_settings;
 pub mod started;
 pub mod terminated_trigger;
 pub mod tree_directory;
+pub mod trigger_dispatch;
+pub mod trigger_outcomes;
 pub mod user_max_priorities;
 pub mod user_max_priorities_live;
 pub mod write;
@@ -161,7 +163,7 @@ impl Jobs {
                 JobEvent::RunDispatched(fact) => match job.find_run(fact.run_id) {
                     Ok(run) => match RunTrigger::of_job(job, fact.run_id, run.attempt_number()) {
                         Ok(trigger) => {
-                            terminated_trigger::dispatch(self, fact.run_id, &trigger).await
+                            trigger_dispatch::dispatch(self, fact.run_id, &trigger).await
                         }
                         Err(JobsError::PassportRequired) => {
                             if let Err(error) =

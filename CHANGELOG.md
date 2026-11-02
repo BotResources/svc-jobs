@@ -43,6 +43,10 @@ form to decide whether a version ships.
   the refusal is logged at warn and counted in
   `jobs_nats_server_errors_total`. The listener subscribes again every five
   seconds only after a subscription error or the end of the subscription.
+  Each termination is counted by outcome in `jobs_trigger_terminations_total`.
+  The stream sequence of a trigger is stored with three attempts, and a
+  termination looks for its Run for about one second before it counts the
+  sequence as naming no Run.
 
 ### Changed
 
