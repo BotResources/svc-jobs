@@ -290,7 +290,7 @@ fn the_run_that_requested_a_job_repeating_a_resolution_gets_the_first_outcome_ag
     let requesting = run_id();
     let (caller, acts_for) = calling_run(requesting);
     let resolution = ResolutionRequester::Caller {
-        caller: caller.clone(),
+        caller,
         acts_for: acts_for.clone(),
     };
     let finished = JobBuilder::new()
