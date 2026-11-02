@@ -10,8 +10,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-01
 
-- `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs acted for
-  and the mail addresses that one cancel removes from the agent directory, and
+- `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs that
+  its removed agents were restarted from, and the mail addresses that one cancel removes from the agent directory, and
   `removes_the_caller_of(&CallNotices)`, the decision that a Caller removed by
   the same cancel keeps no notice.
 - `Job::record_run_started_request`, `commands::job::run_start_request::StartRequestFact`

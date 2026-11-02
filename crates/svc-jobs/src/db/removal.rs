@@ -12,6 +12,7 @@ const REMOVED_BY_SQL_TAIL: &str = ", \
         SELECT ro.restarts_run_id FROM tree t \
         JOIN runs r ON r.id = t.run_id \
         JOIN restart_origins ro ON ro.job_id = r.job_id \
+        WHERE EXISTS (SELECT 1 FROM directory_agents d WHERE d.run_id = t.run_id) \
       UNION \
         SELECT ro.restarts_run_id FROM acting_for a \
         JOIN runs r ON r.id = a.run_id \

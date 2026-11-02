@@ -67,7 +67,10 @@ const REMOVE_TREE: &str = "\
         ON CONFLICT (agent_id) DO NOTHING), \
      notices AS ( \
         DELETE FROM inbox_items \
-        WHERE kind = 'NOTICE' AND run_id IN (SELECT run_id FROM tree)), \
+        WHERE kind IN ('NOTICE', 'MAIL_NOTICE') \
+          AND (run_id IN (SELECT run_id FROM tree) \
+               OR address IN (SELECT agent_id FROM directory_agents \
+                              WHERE run_id IN (SELECT run_id FROM tree)))), \
      wakes AS ( \
         DELETE FROM restart_wakes WHERE run_id IN (SELECT run_id FROM tree)), \
      states AS ( \

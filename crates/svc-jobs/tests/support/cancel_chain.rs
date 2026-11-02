@@ -11,10 +11,10 @@ use super::runner::{self, FakeRunner};
 use super::surface::{self, Agent};
 use super::{LONG, gql};
 
-pub const CANCEL_NOTICES_OF_RUN: &str = "SELECT count(*) FROM inbox_items \
-     WHERE run_id = $1 AND notice ->> 'type' = 'JOB_CANCELLED'";
-pub const CANCEL_NOTICES_AT: &str = "SELECT count(*) FROM inbox_items \
-     WHERE address = $1 AND notice ->> 'type' = 'JOB_CANCELLED'";
+pub const NOTICES_OF_RUN: &str = "SELECT count(*) FROM inbox_items \
+     WHERE run_id = $1 AND kind IN ('NOTICE', 'MAIL_NOTICE')";
+pub const NOTICES_AT: &str = "SELECT count(*) FROM inbox_items \
+     WHERE address = $1 AND kind IN ('NOTICE', 'MAIL_NOTICE')";
 pub const REMOVED_RUN: &str = "SELECT count(*) FROM directory_removed_runs WHERE run_id = $1";
 pub const WAKES_OF_RUN: &str = "SELECT count(*) FROM restart_wakes WHERE run_id = $1";
 
@@ -132,6 +132,14 @@ impl Chain<'_> {
         );
         let restart = self.b.next_trigger(LONG).await;
         self.b.start_applied(fixture, &restart).await;
+        let registered = surface::register(
+            fixture.nats(),
+            &self.b,
+            runner::run_id(&restart),
+            &[Agent::with_inbox().with_id(self.b_address)],
+        )
+        .await;
+        assert_eq!(registered["accepted"], true, "{registered}");
         restart
     }
 

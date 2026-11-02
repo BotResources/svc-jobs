@@ -67,7 +67,7 @@ to `## Unreleased`).
   published for it. A cancel of the called Job alone, or the called runner
   cancelling itself, still tells its Caller.
 - The removal of Runs from the agent directory also deletes the queued restarts
-  of those Runs, and marks a Run that had completed as removed, so a late fact
+  of those Runs and the notices waiting at the addresses it removes, and marks a Run that had completed as removed, so a late fact
   cannot leave a notice for it. A removed Run that had completed now answers
   `run_removed` instead of `run_ended` on the runner surface.
 - A background call whose called Job is cancelled now tells the Caller by a

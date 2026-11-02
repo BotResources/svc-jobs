@@ -1,9 +1,7 @@
 mod support;
 
 use support::call_notices::wait_for_job_notice;
-use support::cancel_chain::{
-    CANCEL_NOTICES_AT, CANCEL_NOTICES_OF_RUN, REMOVED_RUN, WAKES_OF_RUN, chain,
-};
+use support::cancel_chain::{NOTICES_AT, NOTICES_OF_RUN, REMOVED_RUN, WAKES_OF_RUN, chain};
 use support::db::Durable;
 use support::fixture::JobsFixture;
 use support::lineage::act;
@@ -62,18 +60,18 @@ async fn the_cancel_of_a_job_above_a_finished_background_caller_leaves_it_no_not
     {
         durable
             .assert_count(
-                CANCEL_NOTICES_OF_RUN,
+                NOTICES_OF_RUN,
                 run,
                 0,
-                &format!("no cancel notice stays for the Run of {what}"),
+                &format!("no notice stays for the Run of {what}"),
             )
             .await;
         durable
             .assert_count(
-                CANCEL_NOTICES_AT,
+                NOTICES_AT,
                 address,
                 0,
-                &format!("no cancel notice stays at the address of {what}"),
+                &format!("no notice stays at the address of {what}"),
             )
             .await;
         durable
@@ -127,10 +125,10 @@ async fn the_cancel_of_a_job_above_a_caller_whose_restart_runs_rings_nothing_for
     );
     durable
         .assert_count(
-            CANCEL_NOTICES_AT,
+            NOTICES_AT,
             chain.b_address,
             0,
-            "no cancel notice stays at the address of B",
+            "no notice stays at the address of B",
         )
         .await;
     durable
@@ -160,7 +158,7 @@ async fn the_cancel_of_a_job_above_a_sync_caller_and_its_called_job_leaves_no_no
 
     durable
         .assert_count(
-            CANCEL_NOTICES_OF_RUN,
+            NOTICES_OF_RUN,
             chain.b_work.run_id,
             0,
             "no notice stays for the Run of B",
@@ -268,14 +266,14 @@ async fn the_called_runner_that_cancels_itself_and_everything_below_tells_its_ca
     assert_eq!(cancel_notices(&seen).len(), 1, "{seen:?}");
     durable
         .assert_count(
-            CANCEL_NOTICES_OF_RUN,
+            NOTICES_OF_RUN,
             chain.b_work.run_id,
             0,
             "B keeps no notice of C",
         )
         .await;
     durable
-        .assert_count(CANCEL_NOTICES_AT, chain.b_address, 0, "nor at its address")
+        .assert_count(NOTICES_AT, chain.b_address, 0, "nor at its address")
         .await;
     assert_eq!(
         gql::status_of(&fixture.gql(), fixture.admin(), chain.a_job).await,
@@ -305,18 +303,18 @@ async fn the_cancel_of_the_restart_job_of_a_caller_alone_leaves_the_caller_no_no
     chain.b.expect_no_trigger(QUIET).await;
     durable
         .assert_count(
-            CANCEL_NOTICES_AT,
+            NOTICES_AT,
             chain.b_address,
             0,
-            "no cancel notice stays at the address of B",
+            "no notice stays at the address of B",
         )
         .await;
     durable
         .assert_count(
-            CANCEL_NOTICES_OF_RUN,
+            NOTICES_OF_RUN,
             chain.b_work.run_id,
             0,
-            "no cancel notice stays for the first Run of B",
+            "no notice stays for the first Run of B",
         )
         .await;
     durable
