@@ -173,3 +173,63 @@ async fn a_failed_job_keeps_its_request_data_and_has_no_time_of_erasure() {
     durable.close().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn the_cancel_of_a_retry_erases_nothing_of_the_failed_job_whose_kept_payload_it_shares() {
+    let fixture = JobsFixture::start_with(Knobs {
+        backstop_interval_seconds: NO_SWEEP_IN_THE_TEST,
+        ..Knobs::default()
+    })
+    .await;
+    let durable = Durable::open(&fixture.app_url()).await;
+    let mut x = live_runner(&fixture, "shared-kept").await;
+    let (origin, trigger) = started_job_with_request_data(&fixture, &mut x, 1).await;
+    x.fail_run(&trigger, "PERMANENT", "provider_refused", None)
+        .await;
+    gql::wait_for_status(&fixture.gql(), fixture.admin(), origin, "FAILED", LONG).await;
+    let resolution = Uuid::parse_str(
+        gql::job_view(&fixture.gql(), fixture.admin(), origin).await["job"]["resolution"]["id"]
+            .as_str()
+            .expect("a failed job names its resolution"),
+    )
+    .unwrap();
+    let successor = Uuid::now_v7();
+    let retried = gql::manual_retry_job(
+        &fixture.gql(),
+        fixture.admin(),
+        Uuid::now_v7(),
+        origin,
+        successor,
+        resolution,
+    )
+    .await;
+    assert!(
+        retried.get("errors").is_none_or(|e| e.is_null()),
+        "{retried}"
+    );
+    let retry = x.next_trigger(LONG).await;
+    assert_eq!(support::runner::job_id(&retry), successor);
+
+    gql::cancel_job(&fixture.gql(), fixture.admin(), Uuid::now_v7(), successor).await;
+    gql::wait_for_status(
+        &fixture.gql(),
+        fixture.admin(),
+        successor,
+        "CANCELLED",
+        LONG,
+    )
+    .await;
+
+    assert_request_data_erased(&fixture, &durable, successor, "the cancelled retry").await;
+    durable
+        .assert_count(
+            support::erasure::KEPT_PAYLOADS_OF_JOB,
+            origin,
+            1,
+            "the kept payload of the failed Job is not the retry's to erase",
+        )
+        .await;
+    assert_request_data_held(&fixture, &durable, origin, "the failed Job it retried").await;
+    durable.close().await;
+    fixture.shutdown().await;
+}
