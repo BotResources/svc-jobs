@@ -8,12 +8,15 @@ use bc_jobs::ports::auto_finish::AutoFinishReader;
 use br_core_events::{Actor, EventMetadata, ServiceAccountId};
 use chrono::TimeDelta;
 use sqlx::PgPool;
+use std::time::Duration;
 use support::auto_finish::{
-    Restartable, complete, mark_the_mail, reply_to, restartable, send_answer,
+    Restartable, complete, mark_the_mail, mark_the_notice, reply_to, restartable, send_answer,
+    stays, sync_call,
 };
 use support::call_notices::{Caller, caller};
 use support::fixture::{JobsFixture, Knobs};
 use support::restart::RESTARTS_OF_RUN;
+use support::tree_hold::TreeHold;
 use support::{LONG, clock, gql};
 use svc_jobs::ServiceError;
 use svc_jobs::app::environment::UuidV7Factory;
@@ -207,5 +210,80 @@ async fn a_restart_that_became_due_between_the_scan_and_the_commit_blocks_the_fi
         LONG,
     )
     .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_finish_by_rule_waits_for_the_tree_lock_and_lands_once_it_is_free() {
+    let fixture = quiet_fixture().await;
+    let store = store_of(&fixture).await;
+    let mut caller = caller(&fixture, "auto-lock").await;
+    let m = answered_and_read(&fixture, &mut caller).await;
+    let hold = TreeHold::take(&fixture.app_url(), caller.root).await;
+
+    let waited =
+        tokio::time::timeout(Duration::from_secs(2), stale_finish(&store, &m, &caller)).await;
+
+    assert!(
+        waited.is_err(),
+        "the finish waits while the Tree is held: {waited:?}"
+    );
+    assert_eq!(
+        gql::status_of(&fixture.gql(), fixture.admin(), m.called.job).await,
+        "IN_PROGRESS"
+    );
+    hold.release().await;
+    stale_finish(&store, &m, &caller)
+        .await
+        .expect("the finish lands once the Tree is free");
+    gql::wait_for_status(
+        &fixture.gql(),
+        fixture.admin(),
+        m.called.job,
+        "COMPLETED",
+        LONG,
+    )
+    .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_candidates_are_read_page_after_page_in_job_order() {
+    let fixture = quiet_fixture().await;
+    let store = store_of(&fixture).await;
+    let mut caller = caller(&fixture, "auto-pages").await;
+    let read = sync_call(&fixture, &mut caller).await;
+    complete(&caller, &read).await;
+    let mut unread = Vec::new();
+    for _ in 0..3 {
+        let called = sync_call(&fixture, &mut caller).await;
+        complete(&caller, &called).await;
+        unread.push(called);
+    }
+    mark_the_notice(&fixture, &caller, &read).await;
+    caller.pair.parent.complete_run(&caller.trigger).await;
+    gql::wait_for_status(&fixture.gql(), fixture.admin(), read.job, "COMPLETED", LONG).await;
+    let unread: Vec<Uuid> = unread.iter().map(|called| called.job).collect();
+    stays(&fixture, &unread, "IN_PROGRESS").await;
+
+    let mut pages = Vec::new();
+    let mut after = None;
+    loop {
+        let page = store
+            .candidates_after(after, 2)
+            .await
+            .expect("a page of candidates");
+        let Some(last) = page.last().copied() else {
+            break;
+        };
+        after = Some(last);
+        pages.push(page);
+    }
+
+    let mut expected = unread.clone();
+    expected.sort();
+    let found: Vec<Uuid> = pages.iter().flatten().map(|job| job.as_uuid()).collect();
+    assert_eq!(found, expected, "every candidate once, in job order");
+    assert_eq!(pages.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 1]);
     fixture.shutdown().await;
 }

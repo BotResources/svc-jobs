@@ -50,7 +50,7 @@ pub async fn background(fixture: &JobsFixture, caller: &mut Caller<'_>) -> Calle
     }
 }
 
-pub async fn mail_the_answer(fixture: &JobsFixture, caller: &Caller<'_>, called: &Called) -> Uuid {
+pub async fn register_author(fixture: &JobsFixture, caller: &Caller<'_>, called: &Called) -> Uuid {
     let author = Agent::with_inbox();
     let author_id = author.agent_id;
     surface::register(
@@ -60,7 +60,12 @@ pub async fn mail_the_answer(fixture: &JobsFixture, caller: &Caller<'_>, called:
         &[author],
     )
     .await;
-    send_answer(fixture, caller, called, author_id).await
+    author_id
+}
+
+pub async fn mail_the_answer(fixture: &JobsFixture, caller: &Caller<'_>, called: &Called) -> Uuid {
+    let author = register_author(fixture, caller, called).await;
+    send_answer(fixture, caller, called, author).await
 }
 
 pub async fn send_answer(
