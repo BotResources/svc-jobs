@@ -10,8 +10,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-02
 
-- `commands::job::auto_finish::AutoFinishFacts` and its `decide`: the decision
-  that a called Job is finished by rule, from the facts of the Job, of its
+- `domain::auto_finish::AutoFinishFacts` and its `decide`
+  (`commands::job::auto_finish`): the decision that a called Job is finished by rule, from the facts of the Job, of its
   restart Jobs, of the answers its Caller read and of the Caller Runs. It
   returns `FinishByRule` (the Job, the restart Jobs to finish and the premise
   the commit must still find true) or an `AutoFinishWait` with a stable
@@ -22,19 +22,21 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   Jobs called from the Tree of a given restart Job.
 - `commands::job::restart::refusal_ends_the_wake`: whether a refused restart
   leaves no wake behind.
-- `Job::content_erased_at`, `Job::has_request_data_erased` and
-  `Job::request_data_erasure_due(Retention, now)`: the decision that the request
-  data of a cancelled Job is due (never for a Job that is not cancelled, for a
-  Job already erased, or before the delay has passed). `JobState::content_erased_at`
-  is the stored first erasure time; a Job marked erased that still holds a
-  payload, a Passport or a configuration cannot be loaded.
+- `Job::content_erased_at`: the first erasure time of the request data of a Job,
+  `None` until it was erased. `JobState::content_erased_at` is the stored value; a
+  Job marked erased that still holds a payload, a Passport or a configuration
+  cannot be loaded.
 - `JobEvent::JobContentErased` (`event_type` `JobContentErased`, fact
   `JobContentErased { job_id, at }`): the first erasure of the request data of a
   Job by the sweep. It reaches the clients and changes no other state.
 - `ports::job::ContentErasure` carries the time, the event id and the metadata
   of that erasure to `CancelledRequestData::erase_request_data_of`.
-- `Retention::erases_cancelled_request_data_at_once` and
-  `Retention::cancelled_request_data_is_due`.
+- `Retention::cancelled_request_data_is_due(cancelled_at, now)` and
+  `Retention::cancelled_request_data_due_before(now)`: the request data of a
+  cancelled Job is due once the cancelled retention has passed since the cancel
+  (at once with a cancelled retention of 0). The Jobs that wait for the erasure
+  are the ones `ports::job::CancelledRequestData::cancelled_jobs_awaiting_erasure`
+  returns.
 - `domain::erasure::{ERASED_TEXT, ERASED_CONVERSATION_ID}`: the fixed values that
   replace the author and the source conversation of an erased mail; both pass
   the checks that load a mail.
@@ -70,12 +72,14 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   existed).
 - `Job::record_run_started` (status-stream fact) now discards a Run reserved
   for another Instance as `CommandWarning::FactDiscardedReservedElsewhere`
-  instead of returning an error.
+  instead of returning an error. Breaking: `JobsError::RunReservedElsewhere`
+  (code `run_reserved_elsewhere`) is removed from `JobsError`; the started request
+  refuses with `StartRefusal::RunReservedElsewhere` and the same code.
 - `domain::mail::inbox::ItemKind::MailNotice` (database word `MAIL_NOTICE`) and
   `NoticeType::Refused`; `Notice::job_id` is optional and `Notice::mail_id` names
   the refused mail of a mail notice. `ItemKind::WAKING`, `NoticeType::WAKING`
   and `NoticeType::starts_a_restart` give the one list of the notices that start
-  a restart. `Notice::of_job` and `Notice::new` build a notice.
+  a restart. `Notice::of_job` and `Notice::of_mail` build a notice.
 - `domain::mail::refused::mail_notice` and `MailRefusal::leaves_a_mail_notice`,
   `notice_words` and `notice_key`: which mail refusals leave a mail notice, its
   words and the key that makes a repeated refusal leave one notice.
