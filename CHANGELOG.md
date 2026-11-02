@@ -36,8 +36,10 @@ form to decide whether a version ships.
   unchanged. The advisory is delivered at most once: a lost advisory leaves the
   Run pending and its Job waiting. A Run dispatched before this release has no
   stored sequence and is not covered. The NATS user of Jobs must be allowed to
-  subscribe to the advisory subject; a refused subscription is silent on the
-  broker side, so the pod stays ready and no Run is failed.
+  subscribe to the advisory subject. The listener does not take part in
+  readiness: a pod is ready whether or not the subscription is granted, the
+  listener subscribes again every five seconds after a failure or an end, and
+  without the right no Run is failed by a termination.
 
 ### Changed
 

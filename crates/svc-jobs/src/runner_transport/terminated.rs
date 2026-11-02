@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use bc_jobs::ports::transport::TriggerSequence;
 use contract_jobs::runner as wire;
@@ -11,6 +12,8 @@ use crate::error::ServiceError;
 use crate::supervision::Established;
 
 pub const TERMINATION_QUEUE_GROUP: &str = "svc_jobs_trigger_terminated";
+
+const RESUBSCRIBE_PAUSE: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
 struct Terminated {
@@ -37,8 +40,21 @@ pub async fn listen(
     jobs: Arc<Jobs>,
     established: Established,
 ) -> Result<(), ServiceError> {
+    established.signal();
     let client = channels.client();
-    let mut advisories = client
+    loop {
+        match subscribe(&client).await {
+            Ok(advisories) => serve(advisories, &jobs).await,
+            Err(error) => {
+                tracing::warn!(error = %error, "the trigger termination advisory could not be subscribed");
+            }
+        }
+        tokio::time::sleep(RESUBSCRIBE_PAUSE).await;
+    }
+}
+
+async fn subscribe(client: &async_nats::Client) -> Result<async_nats::Subscriber, ServiceError> {
+    let advisories = client
         .queue_subscribe(advisory_filter(), TERMINATION_QUEUE_GROUP.to_owned())
         .await
         .map_err(|error| ServiceError::Infra(error.to_string()))?;
@@ -46,7 +62,10 @@ pub async fn listen(
         .flush()
         .await
         .map_err(|error| ServiceError::Infra(error.to_string()))?;
-    established.signal();
+    Ok(advisories)
+}
+
+async fn serve(mut advisories: async_nats::Subscriber, jobs: &Arc<Jobs>) {
     while let Some(message) = advisories.next().await {
         let Some(sequence) = terminated_sequence(&message.payload) else {
             tracing::warn!(
@@ -55,7 +74,7 @@ pub async fn listen(
             );
             continue;
         };
-        let jobs = Arc::clone(&jobs);
+        let jobs = Arc::clone(jobs);
         tokio::spawn(async move {
             if let Err(error) = terminated_trigger::terminated(&jobs, sequence).await {
                 tracing::warn!(
@@ -67,10 +86,7 @@ pub async fn listen(
             }
         });
     }
-    Err(ServiceError::Infra(
-        "the trigger termination subscription ended; the listener restarts and resubscribes"
-            .to_owned(),
-    ))
+    tracing::warn!("the trigger termination subscription ended; it is subscribed again");
 }
 
 #[cfg(test)]
