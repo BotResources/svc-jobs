@@ -1,4 +1,3 @@
-use bc_jobs::domain::erasure::{ERASED_CONVERSATION_ID, ERASED_TEXT};
 use bc_jobs::domain::job::Job;
 use bc_jobs::event::job::JOB_AGGREGATE_TYPE;
 use bc_jobs::ports::PortError;
@@ -6,46 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::PgStore;
-use super::hydrate::unavailable;
-
-const ERASABLE_MAILS: &str = "\
-    WITH erasable AS ( \
-        SELECT m.mail_id FROM mails m \
-        WHERE m.content_erased_at IS NULL \
-          AND (m.sender_address = ANY($1) \
-               OR EXISTS (SELECT 1 FROM mail_recipients r \
-                          WHERE r.mail_id = m.mail_id AND r.address = ANY($1))) \
-          AND EXISTS (SELECT 1 FROM directory_removed_addresses d \
-                      WHERE d.agent_id = m.sender_address) \
-          AND NOT EXISTS (SELECT 1 FROM mail_recipients r \
-                          WHERE r.mail_id = m.mail_id \
-                            AND NOT EXISTS (SELECT 1 FROM directory_removed_addresses d \
-                                            WHERE d.agent_id = r.address))), \
-     blanked AS ( \
-        UPDATE mails SET author = $3, source_conversation_id = $4, subject = '', body = '', \
-            content_erased_at = $2 \
-        WHERE mail_id IN (SELECT mail_id FROM erasable)) \
-     DELETE FROM mail_attachments WHERE mail_id IN (SELECT mail_id FROM erasable)";
-
-pub async fn erase_mail_content_between_removed_addresses(
-    tx: &mut PgConnection,
-    removed: &[Uuid],
-    at: DateTime<Utc>,
-) -> Result<(), PortError> {
-    if removed.is_empty() {
-        return Ok(());
-    }
-    sqlx::query(ERASABLE_MAILS)
-        .bind(removed)
-        .bind(at)
-        .bind(ERASED_TEXT)
-        .bind(ERASED_CONVERSATION_ID)
-        .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-    Ok(())
-}
+use crate::db::PgStore;
+use crate::db::hydrate::unavailable;
 
 pub async fn erase_results_of_job(tx: &mut PgConnection, job_id: Uuid) -> Result<(), PortError> {
     sqlx::query("DELETE FROM job_results WHERE job_id = $1")

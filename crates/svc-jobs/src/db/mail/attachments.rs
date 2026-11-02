@@ -57,7 +57,7 @@ impl AttachmentStore for PgStore {
             return Ok(Err(refusal.into()));
         }
         let erased: Option<bool> = sqlx::query_scalar(
-            "SELECT content_erased_at IS NOT NULL FROM mails WHERE mail_id = $1",
+            "SELECT content_erased_at IS NOT NULL FROM mails WHERE mail_id = $1 FOR SHARE",
         )
         .bind(request.mail_id.as_uuid())
         .fetch_optional(&mut *tx)
