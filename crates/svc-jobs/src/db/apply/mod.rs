@@ -4,6 +4,7 @@ pub mod fleet;
 pub mod job;
 pub mod refs;
 pub mod run;
+pub mod settled;
 pub mod user;
 pub mod waiting;
 

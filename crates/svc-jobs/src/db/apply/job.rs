@@ -210,6 +210,7 @@ async fn resolution(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
+    super::settled::settle(tx, job_id, at).await?;
     super::waiting::end_waiting(tx, job_id).await
 }
 
@@ -250,5 +251,5 @@ pub async fn deleted(
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
-    Ok(())
+    super::settled::settle(tx, fact.job_id.as_uuid(), at).await
 }

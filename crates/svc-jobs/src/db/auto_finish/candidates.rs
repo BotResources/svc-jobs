@@ -9,6 +9,8 @@ use crate::db::jobs::NOT_RESOLVED;
 const CALLED_BY_A_RUN: &str = "j.requester ? 'Run' AND j.call IS NOT NULL \
      AND NOT EXISTS (SELECT 1 FROM restart_origins ro WHERE ro.job_id = j.id)";
 
+const STILL_OPEN: &str = "j.requester ? 'Run' AND j.call IS NOT NULL AND j.settled_at IS NULL";
+
 const A_CALLER_RUN_COMPLETED: &str = "EXISTS ( \
         WITH RECURSIVE acting(run_id) AS ( \
             SELECT (j.requester ->> 'Run')::uuid \
@@ -22,13 +24,12 @@ const A_CALLER_RUN_COMPLETED: &str = "EXISTS ( \
 const A_RUN_OF_THE_JOB_COMPLETED: &str = "EXISTS (SELECT 1 FROM runs r \
      JOIN run_terminals t ON t.run_id = r.id AND t.kind = 'COMPLETED' WHERE r.job_id = j.id)";
 
-const A_READ_MARKER_EXISTS: &str = "(EXISTS (SELECT 1 FROM inbox_items i \
-     WHERE i.read_at IS NOT NULL AND i.kind = 'NOTICE' AND i.address IS NULL \
-       AND i.run_id = (j.requester ->> 'Run')::uuid \
-       AND i.notice ->> 'type' = 'RUN_COMPLETED') \
-     OR EXISTS (SELECT 1 FROM inbox_items i \
-     WHERE i.read_at IS NOT NULL AND i.kind = 'MAIL' \
-       AND i.address = (j.call ->> 'caller_address')::uuid))";
+const A_READ_MARKER_EXISTS: &str = "EXISTS (SELECT 1 FROM inbox_items i \
+     WHERE i.read_at IS NOT NULL \
+       AND ((i.kind = 'NOTICE' AND i.address IS NULL \
+             AND i.run_id = (j.requester ->> 'Run')::uuid \
+             AND i.notice ->> 'type' = 'RUN_COMPLETED') \
+         OR (i.kind = 'MAIL' AND i.address = (j.call ->> 'caller_address')::uuid)))";
 
 const STEMS_CTE: &str = "WITH RECURSIVE stems(job_id) AS ( \
         SELECT unnest($1::uuid[]) \
@@ -44,7 +45,8 @@ pub async fn candidates_after(
 ) -> Result<Vec<JobId>, PortError> {
     let sql = format!(
         "SELECT j.id::uuid FROM jobs j \
-         WHERE ($1::uuid IS NULL OR j.id > $1) AND {CALLED_BY_A_RUN} AND {NOT_RESOLVED} \
+         WHERE ($1::uuid IS NULL OR j.id > $1) AND {STILL_OPEN} AND {CALLED_BY_A_RUN} \
+           AND {NOT_RESOLVED} \
            AND {A_RUN_OF_THE_JOB_COMPLETED} AND {A_CALLER_RUN_COMPLETED} \
            AND {A_READ_MARKER_EXISTS} \
          ORDER BY j.id LIMIT $2"
