@@ -21,8 +21,6 @@ const CLAIM_WAIT: Duration = Duration::from_secs(4);
 
 #[tokio::test]
 async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
-    // Given: a service default maximum of 5, and a super user capping a user at 3, the user
-    // watching their own maximum
     let fixture = JobsFixture::start_with(Knobs {
         default_max_priority: Some(5),
         ..Knobs::default()
@@ -64,7 +62,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: a job on the user's behalf requests 5 through job.create.v2
     let declaration = JobDeclaration::new(&runner_type)
         .triggered_by_user(user_id)
         .with_priority(5)
@@ -72,7 +69,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
     let job_id = declaration.job_id;
     producer.declare_v2(&declaration).await;
 
-    // Then: the job is accepted with the unchanged job.queued.v1 payload
     let accepted = events.expect_one(wire::FACT_QUEUED, job_id, LONG).await;
     assert_eq!(
         accepted.payload(),
@@ -83,7 +79,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         .expect_none(wire::FACT_CREATION_REJECTED, job_id, QUIET)
         .await;
 
-    // Then: every read carries requested 5, effective 3, nothing forced
     let queued = stream::await_delta(&mut listing, JOBS_CHANGED, wire::EVT_QUEUED, LONG).await;
     let row = delta::assert_upserted_summary(&queued, job_id, "PENDING");
     priority::assert_priorities(&row["job"], 5, 3, None, "the queued list row");
@@ -108,7 +103,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         "the list read",
     );
 
-    // When: a producer requests a level outside 1..=5
     for level in [0, 6, -1] {
         let out_of_range = JobDeclaration::new(&runner_type)
             .triggered_by_user(user_id)
@@ -116,7 +110,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         let refused_id = out_of_range.job_id;
         producer.declare_v2(&out_of_range).await;
 
-        // Then: a definite refusal under its stable reason, and no job anywhere
         let rejected = events
             .expect_one(wire::FACT_CREATION_REJECTED, refused_id, LONG)
             .await;
@@ -147,7 +140,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
             .await;
     }
 
-    // When: the job fails for good, the super user lowers the cap to 2, then retries it manually
     let mut instance = FakeRunner::new(fixture.nats(), &runner_type, "instance-a");
     instance.connect().await;
     let trigger = instance.next_trigger(LONG).await;
@@ -193,7 +185,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
         "an administrator manually retries the failed job",
     );
 
-    // Then: the successor copies the requested 5 and is capped again, at today's 2
     let successor_trigger = instance.next_trigger(LONG).await;
     assert_eq!(runner::job_id(&successor_trigger), successor_id);
     priority::assert_priorities(
@@ -218,7 +209,6 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
 
 #[tokio::test]
 async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_default_maximum() {
-    // Given: the service default maximum set to 4, and a user who has no maximum of their own
     let fixture = JobsFixture::start_with(Knobs {
         default_max_priority: Some(4),
         ..Knobs::default()
@@ -253,8 +243,6 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
     .await;
     stream::snapshot(&mut listing, JOBS_CHANGED, SHORT).await;
 
-    // When: jobs are created by v1, by v2 without a priority, and by v2 above the default maximum,
-    // with and without a triggering user
     let by_v1 = JobDeclaration::new(&runner_type).triggered_by_user(user_id);
     producer.declare(&by_v1).await;
     let by_v2 = JobDeclaration::new(&runner_type).triggered_by_user(user_id);
@@ -268,7 +256,6 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
     let autonomous_low = JobDeclaration::new(&runner_type).with_priority(2);
     producer.declare_v2(&autonomous_low).await;
 
-    // Then: each is admitted at the level the default rules give it
     let admitted = [
         by_v1.job_id,
         by_v2.job_id,
@@ -339,7 +326,6 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
         );
     }
 
-    // Then: reading the defaults changed nothing about the user's own maximum
     stream::expect_total_silence(
         &mut own,
         "admitting jobs never changes the maximum of the user they run for",
@@ -354,8 +340,6 @@ async fn a_job_without_priority_requests_three_and_an_uncapped_user_meets_the_de
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn children_wait_at_their_parents_effective_priority_whatever_they_request() {
-    // Given: a service default maximum of 5, a parent at effective priority 5 executing on its own
-    // type, and a CLAIM type its children target, on which an unrelated root at 4 already waits
     let fixture = JobsFixture::start_with(Knobs {
         default_max_priority: Some(5),
         ..Knobs::default()
@@ -436,8 +420,6 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
         .await;
     let children = [lowest.job_id, for_capped_user.job_id, by_v1.job_id];
 
-    // Then: every child stores its parent's effective priority as both requested and effective,
-    // nothing forced
     let queued_rows = stream::await_deltas_of_each(
         &mut listing,
         JOBS_CHANGED,
@@ -463,7 +445,6 @@ async fn children_wait_at_their_parents_effective_priority_whatever_they_request
         );
     }
 
-    // Then: the free slots serve the three children before the unrelated root at 4
     let mut served = Vec::new();
     for slot in &slots {
         let answer = claim::claim(fixture.nats(), slot, CLAIM_WAIT).await;

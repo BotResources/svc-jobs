@@ -24,8 +24,6 @@ const UNAUTHENTICATED: &str = "UNAUTHENTICATED";
 
 #[tokio::test]
 async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only() {
-    // Given: JOBS_DEFAULT_MAX_PRIORITY left unset (service default 3), a CLAIM type, a user capped
-    // at 2, and another user without a maximum
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
@@ -63,7 +61,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "with JOBS_DEFAULT_MAX_PRIORITY unset, a user without a maximum has 3",
     );
 
-    // Given: one of the capped user's jobs already executing — it no longer waits
     let running = JobDeclaration::new(&runner_type)
         .triggered_by_user(capped.actor_id())
         .with_priority(5);
@@ -79,7 +76,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         .expect_one(wire::FACT_STARTED, running_id, LONG)
         .await;
 
-    // Given: three waiting jobs of the capped user — one of them forced to 5 — and one of the other
     let raised = JobDeclaration::new(&runner_type)
         .triggered_by_user(capped.actor_id())
         .with_priority(4);
@@ -104,8 +100,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a super user forces one of the capped user's jobs to 5",
     );
 
-    // Given: two waiting children of the job about to be recalculated — one inheriting its
-    // parent's level, one forced down to 1
     let inheriting = JobDeclaration::new(&runner_type).with_parent(raised.job_id);
     let forced_child = JobDeclaration::new(&runner_type).with_parent(raised.job_id);
     for declaration in [&inheriting, &forced_child] {
@@ -143,7 +137,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     let opening = stream::snapshot(&mut watch, JOB_CHANGED, SHORT).await;
     priority::assert_priorities(&opening["job"], 4, 2, None, "a job capped at admission");
 
-    // When: the super user raises the capped user's maximum to 4
     let raise = priority::set_user_max_priority(&client, admin, capped.actor_id(), 4).await;
     gql::expect_success(
         &raise,
@@ -151,7 +144,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a super user raises the user's maximum",
     );
 
-    // Then: the one waiting, unforced job capped below its request is recalculated, on its stream
     let recalculated = stream::await_delta_of(
         &mut watch,
         JOB_CHANGED,
@@ -191,8 +183,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "the list row",
     );
 
-    // Then: the recalculation cascades to the waiting, unforced child that inherits from it —
-    // requested and effective both take the root's new effective priority
     priority::assert_priorities(
         &delta::assert_upserted_summary(&listed[1], inheriting.job_id, "PENDING")["job"],
         4,
@@ -208,7 +198,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a waiting, non-forced descendant follows its recalculated root",
     );
 
-    // Then: no other job moved — forced, already under the cap, another user's, or executing
     stream::expect_no_delta(
         &mut listing,
         JOBS_CHANGED,
@@ -256,7 +245,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         );
     }
 
-    // Then: the capped user sees their own new maximum; the other user hears nothing
     priority::await_max_change(&mut capped_own, 4, LONG).await;
     assert_eq!(priority::my_max_priority(&client, &capped).await, 4);
     stream::expect_total_silence(
@@ -269,14 +257,12 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         .expect_exactly(wire::FACT_QUEUED, raised.job_id, 1, QUIET)
         .await;
 
-    // When: the super user clears the maximum — the user falls back to the default, 3
     gql::expect_success(
         &priority::clear_user_max_priority(&client, admin, capped.actor_id()).await,
         wire::FIELD_CLEAR_USER_MAX_PRIORITY,
         "a super user clears the user's maximum",
     );
 
-    // Then: the same job is recalculated to the default, the others stay put
     let cleared = stream::await_delta_of(
         &mut watch,
         JOB_CHANGED,
@@ -317,7 +303,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         "a forced job still keeps its forced level",
     );
 
-    // When: the super user sets a maximum outside 1..=5
     for level in [0, 6] {
         let refused =
             priority::set_user_max_priority(&client, admin, capped.actor_id(), level).await;
@@ -327,7 +312,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         );
     }
 
-    // Then: nothing moved
     stream::expect_total_silence(&mut capped_own, "a refused maximum changes nothing", QUIET).await;
     stream::expect_no_delta(
         &mut listing,
@@ -338,7 +322,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
     .await;
     assert_eq!(priority::my_max_priority(&client, &capped).await, 3);
 
-    // When: the super user caps a user no job has ever named, then that user's first job arrives
     let newcomer = Uuid::now_v7();
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, newcomer, 2).await,
@@ -353,7 +336,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
         .expect_one(wire::FACT_QUEUED, first_of_newcomer.job_id, LONG)
         .await;
 
-    // Then: the cap set in advance applies to that first job
     let arrived = stream::await_delta_of(
         &mut listing,
         JOBS_CHANGED,
@@ -383,7 +365,6 @@ async fn raising_a_users_maximum_recalculates_their_waiting_unforced_jobs_only()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_the_queue() {
-    // Given: a CLAIM type with five free slots, a user capped at 2 and an uncapped one
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
@@ -413,8 +394,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "a super user caps a user at 2",
     );
 
-    // Given: a competitor at 4, then the capped user's job at 2 with waiting children and a
-    // waiting grandchild, and one child already reserved on another type
     let competitor = JobDeclaration::new(&runner_type)
         .triggered_by_user(uncapped.actor_id())
         .with_priority(4);
@@ -491,14 +470,12 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
     .await;
     stream::snapshot(&mut reserved_watch, JOB_CHANGED, SHORT).await;
 
-    // When: the super user forces the job to 5, above its user's maximum
     gql::expect_success(
         &priority::force_job_priority(&client, admin, job.job_id, 5).await,
         wire::FIELD_FORCE_JOB_PRIORITY,
         "a super user forces a waiting job to 5",
     );
 
-    // Then: the job and every waiting descendant are forced to 5, each on its own stream
     for (job_id, watch) in watches.iter_mut() {
         let forced =
             stream::await_delta_of(watch, JOB_CHANGED, wire::EVT_PRIORITY_FORCED, *job_id, LONG)
@@ -522,7 +499,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "the forced job",
     );
 
-    // Then: the competitor, the reserved child and the user's maximum are untouched
     stream::expect_no_delta_of(
         &mut listing,
         JOBS_CHANGED,
@@ -559,7 +535,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "forcing a job never changes the maximum of its user",
     );
 
-    // When: a slot frees, then the super user forces the second child down to 1
     let first = claim::claim(fixture.nats(), &slots[0], CLAIM_WAIT)
         .await
         .expect_run("the first free slot");
@@ -600,8 +575,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "the list row follows the second force",
     );
 
-    // Then: the forced job runs first, its forced descendants next, the competitor, then the
-    // child forced down
     let mut served = vec![runner::job_id(&first)];
     for slot in &slots[1..] {
         served.push(runner::job_id(
@@ -622,7 +595,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         "dispatch follows the forced levels, then creation time under the one root",
     );
 
-    // When: the super user forces a terminal job, an unknown job, or outside 1..=5
     let cancelled = JobDeclaration::new(&side_type);
     producer.declare_v2(&cancelled).await;
     events
@@ -670,7 +642,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
         assert_eq!(gql::mutation_error_reason(&refused, what), reason, "{what}");
     }
 
-    // Then: nothing moved
     stream::expect_no_delta(&mut listing, JOBS_CHANGED, wire::EVT_PRIORITY_FORCED, QUIET).await;
     assert_eq!(
         priority::job_view(&client, admin, cancelled.job_id).await,
@@ -689,7 +660,6 @@ async fn a_super_user_forces_a_waiting_job_and_its_waiting_descendants_ahead_of_
 
 #[tokio::test]
 async fn only_super_users_force_a_priority_or_set_a_maximum() {
-    // Given: a user capped at 2 with one waiting job, watched on every channel
     let fixture = JobsFixture::start().await;
     let events = EventLog::open(fixture.fabric()).await;
     let client = fixture.gql();
@@ -734,10 +704,6 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
     let before = priority::job_view(&client, admin, job_id).await;
     priority::assert_priorities(&before["job"], 4, 2, None, "before the attack");
 
-    // When: every caller who is not a super user forces the job, sets, or clears a maximum —
-    // against a target that exists and one that does not.
-    // The Passport carries one administrator bit (is_super_admin); "a platform administrator who
-    // is not a super user" cannot be forged until that population is defined — open question.
     let hostile = [
         (member.clone(), "the capped user themselves"),
         (fixture::ordinary_member(), "another ordinary user"),
@@ -781,7 +747,6 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
         );
     }
 
-    // When: a caller presents no passport, or one the edge cannot decode
     for forged in [None, Some("not-a-passport")] {
         for (document, input) in [
             (
@@ -822,7 +787,6 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
         }
     }
 
-    // Then: nothing moved on any channel
     stream::expect_total_silence(&mut watch, "a refused caller reaches no job stream", QUIET).await;
     stream::expect_total_silence(&mut listing, "a refused caller reaches no list", QUIET).await;
     stream::expect_total_silence(&mut own, "a refused caller changes no maximum", QUIET).await;
@@ -832,7 +796,6 @@ async fn only_super_users_force_a_priority_or_set_a_maximum() {
         .expect_exactly(wire::FACT_QUEUED, job_id, 1, QUIET)
         .await;
 
-    // Then: the user surface reads the caller's own maximum and nothing else
     let supplied = client
         .query(
             member,
@@ -896,8 +859,6 @@ fn assert_nothing_leaked(response: &Value, job_id: Uuid, what: &str) {
 
 #[tokio::test]
 async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current_cap() {
-    // Given: a CLAIM type, a user capped at 4, and two of the user's jobs executing — one at
-    // its admission level, one forced to 5
     let fixture = JobsFixture::start_with(Knobs {
         retry_base_delay_seconds: 1,
         ..Knobs::default()
@@ -961,14 +922,12 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
             .await;
     }
 
-    // When: the super user lowers the user's maximum to 2 while both execute
     gql::expect_success(
         &priority::set_user_max_priority(&client, admin, user.actor_id(), 2).await,
         wire::FIELD_SET_USER_MAX_PRIORITY,
         "a super user lowers the cap while the jobs execute",
     );
 
-    // Then: an executing job is not waiting, so it keeps its level for now
     priority::assert_priorities(
         &priority::job(&client, admin, capped.job_id).await,
         5,
@@ -977,7 +936,6 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
         "an executing job",
     );
 
-    // When: both runs fail transiently, and the jobs go back to waiting for their retry
     for run in &runs {
         instance
             .fail_run(run, "TRANSIENT", "provider_busy", None)
@@ -995,8 +953,6 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
         delta::event_of(&scheduled, wire::EVT_RETRY_SCHEDULED, declaration.job_id);
     }
 
-    // Then: the job back to waiting re-derives its effective priority from today's cap; the
-    // forced job keeps its force
     let rederived = br_test_harness::wait_until(LONG, || async {
         priority::job(&client, admin, capped.job_id).await["effectivePriority"] == json!(2)
     })
@@ -1021,8 +977,6 @@ async fn a_job_back_to_waiting_after_a_transient_failure_meets_the_users_current
         "a forced job keeps its force through a retry",
     );
 
-    // Then: once both retries are due and both jobs wait again — retry jitter may set their due
-    // times apart — dispatch follows the levels, the forced job's retry first
     let both_waiting = br_test_harness::wait_until(LONG, || async {
         let mut due = true;
         for job_id in [capped.job_id, forced.job_id] {

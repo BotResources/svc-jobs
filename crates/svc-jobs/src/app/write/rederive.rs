@@ -1,16 +1,3 @@
-//! A Job that goes back to waiting — a retry scheduled, a stranded trigger
-//! withdrawn — waits at the level its basis gives now: the current maximum of
-//! its user (or the service default), or its parent's current level. The same
-//! transaction re-derives it, so the Job never enters the queue at a level
-//! decided before a cap change it did not see.
-//!
-//! Locking: the Job rows are already held for update. The user's maximum is
-//! read under the shared advisory lock a change of that maximum takes
-//! exclusively before it reads which Jobs it reaches, so either that change
-//! finds this Job waiting, or this read sees its new value. The parent is read
-//! without a lock: a force cascading from it locks its descendants, this Job
-//! among them, and so finds it waiting once this write commits.
-
 use std::collections::HashMap;
 
 use bc_jobs::domain::ids::KnownUserId;
@@ -24,7 +11,6 @@ use super::change::JobChange;
 use crate::db::{PgStore, hydrate};
 use crate::error::ServiceError;
 
-/// Whether the fact sends its Job back to waiting.
 fn returns_to_waiting(event: &JobEvent) -> bool {
     match event {
         JobEvent::RetryScheduled(_) => true,
