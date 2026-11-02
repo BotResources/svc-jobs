@@ -149,6 +149,63 @@ async fn only_an_actor_that_may_send_the_command_gets_the_first_outcome_and_a_re
 }
 
 #[tokio::test]
+async fn a_stranger_repeating_the_fail_of_the_owner_gets_a_refusal_and_no_second_failure() {
+    let scene = Scene::start().await;
+    let owner = scene.producer("projects");
+    let stranger = scene.producer("billing");
+    let job = scene.declared_by(&owner).await;
+    let command = Uuid::now_v7();
+    let body = json!({ "job_id": job.to_string(), "note": "the owner" });
+
+    owner
+        .send_v3_as(command, Uuid::now_v7(), wire::VERB_FAIL, body.clone())
+        .await;
+    scene
+        .current
+        .expect_exactly(wire::FACT_FAILED, job, 1, LONG)
+        .await;
+    stranger
+        .send_v3_as(command, Uuid::now_v7(), wire::VERB_FAIL, body)
+        .await;
+
+    assert_eq!(scene.refusals(job, 1).await, vec!["not_requester"]);
+    scene
+        .current
+        .expect_exactly(wire::FACT_FAILED, job, 1, QUIET)
+        .await;
+    assert_eq!(scene.status(job).await, "FAILED");
+    scene.stop().await;
+}
+
+#[tokio::test]
+async fn a_stranger_repeating_the_cancel_of_the_owner_gets_a_refusal_and_no_second_acceptance() {
+    let scene = Scene::start().await;
+    let owner = scene.producer("projects");
+    let stranger = scene.producer("billing");
+    let job = scene.declared_by(&owner).await;
+    let command = Uuid::now_v7();
+
+    owner
+        .send_v3_as(command, Uuid::now_v7(), wire::VERB_CANCEL, payload(job))
+        .await;
+    scene
+        .current
+        .expect_exactly(wire::FACT_CANCEL_ACCEPTED, job, 1, LONG)
+        .await;
+    stranger
+        .send_v3_as(command, Uuid::now_v7(), wire::VERB_CANCEL, payload(job))
+        .await;
+
+    assert_eq!(scene.refusals(job, 1).await, vec!["not_requester"]);
+    scene
+        .current
+        .expect_exactly(wire::FACT_CANCEL_ACCEPTED, job, 1, QUIET)
+        .await;
+    assert_eq!(scene.status(job).await, "CANCELLED");
+    scene.stop().await;
+}
+
+#[tokio::test]
 async fn a_burst_of_the_same_command_is_answered_for_each_delivery_and_refused_for_none() {
     let scene = Scene::start().await;
     let producer = scene.producer("projects");
