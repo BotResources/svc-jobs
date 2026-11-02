@@ -1,24 +1,24 @@
 use crate::EVT_RUN_ITEM_ARRIVED_V2;
 use crate::event_v2::{
-    EVENT_TYPE_ITEM_ARRIVED, EVENT_V2_SCHEMA_VERSION, ItemKind, ItemKindV1, RunItemArrived,
+    EVENT_TYPE_ITEM_ARRIVED, EVENT_V2_SCHEMA_VERSION, ItemKind, ItemKindV2, RunItemArrived,
     RunItemArrivedV2,
 };
 use serde_json::json;
 use uuid::Uuid;
 
-const KINDS: [(ItemKind, &str); 4] = [
-    (ItemKind::Mail, "MAIL"),
-    (ItemKind::CcNotice, "CC_NOTICE"),
-    (ItemKind::Notice, "NOTICE"),
-    (ItemKind::MailNotice, "MAIL_NOTICE"),
+const KINDS_V2: [(ItemKindV2, &str); 4] = [
+    (ItemKindV2::Mail, "MAIL"),
+    (ItemKindV2::CcNotice, "CC_NOTICE"),
+    (ItemKindV2::Notice, "NOTICE"),
+    (ItemKindV2::MailNotice, "MAIL_NOTICE"),
 ];
 
-fn exhaustive(kind: ItemKind) -> &'static str {
+fn exhaustive_v2(kind: ItemKindV2) -> &'static str {
     match kind {
-        ItemKind::Mail => "MAIL",
-        ItemKind::CcNotice => "CC_NOTICE",
-        ItemKind::Notice => "NOTICE",
-        ItemKind::MailNotice => "MAIL_NOTICE",
+        ItemKindV2::Mail => "MAIL",
+        ItemKindV2::CcNotice => "CC_NOTICE",
+        ItemKindV2::Notice => "NOTICE",
+        ItemKindV2::MailNotice => "MAIL_NOTICE",
     }
 }
 
@@ -50,7 +50,7 @@ fn the_doorbell_of_version_two_for_a_mail_notice_of_an_address_reads_and_writes_
             run_id,
             address: Some(address),
             item_id,
-            item_kind: ItemKind::MailNotice,
+            item_kind: ItemKindV2::MailNotice,
         }
     );
     assert_eq!(serde_json::to_value(&doorbell).unwrap(), wire);
@@ -98,18 +98,18 @@ fn both_doorbells_require_the_run_the_item_id_and_the_kind() {
 }
 
 #[test]
-fn the_item_kind_is_a_closed_set_of_four_words() {
-    for (kind, word) in KINDS {
-        assert_eq!(exhaustive(kind), word);
+fn the_item_kind_of_version_two_is_a_closed_set_of_four_words() {
+    for (kind, word) in KINDS_V2 {
+        assert_eq!(exhaustive_v2(kind), word);
         assert_eq!(serde_json::to_value(kind).unwrap(), word);
         assert_eq!(
-            serde_json::from_value::<ItemKind>(json!(word)).unwrap(),
+            serde_json::from_value::<ItemKindV2>(json!(word)).unwrap(),
             kind
         );
     }
     for outside in ["mail", "MAIL-NOTICE", "REFUSED", "MAILNOTICE", ""] {
         assert!(
-            serde_json::from_value::<ItemKind>(json!(outside)).is_err(),
+            serde_json::from_value::<ItemKindV2>(json!(outside)).is_err(),
             "'{outside}'"
         );
         let doorbell = json!({
@@ -119,21 +119,21 @@ fn the_item_kind_is_a_closed_set_of_four_words() {
         });
         assert!(serde_json::from_value::<RunItemArrivedV2>(doorbell).is_err());
     }
-    assert!(serde_json::from_value::<ItemKind>(json!(3)).is_err());
-    assert!(serde_json::from_value::<ItemKind>(json!(null)).is_err());
+    assert!(serde_json::from_value::<ItemKindV2>(json!(3)).is_err());
+    assert!(serde_json::from_value::<ItemKindV2>(json!(null)).is_err());
 }
 
-const KINDS_V1: [(ItemKindV1, &str); 3] = [
-    (ItemKindV1::Mail, "MAIL"),
-    (ItemKindV1::CcNotice, "CC_NOTICE"),
-    (ItemKindV1::Notice, "NOTICE"),
+const KINDS: [(ItemKind, &str); 3] = [
+    (ItemKind::Mail, "MAIL"),
+    (ItemKind::CcNotice, "CC_NOTICE"),
+    (ItemKind::Notice, "NOTICE"),
 ];
 
-fn exhaustive_v1(kind: ItemKindV1) -> &'static str {
+fn exhaustive(kind: ItemKind) -> &'static str {
     match kind {
-        ItemKindV1::Mail => "MAIL",
-        ItemKindV1::CcNotice => "CC_NOTICE",
-        ItemKindV1::Notice => "NOTICE",
+        ItemKind::Mail => "MAIL",
+        ItemKind::CcNotice => "CC_NOTICE",
+        ItemKind::Notice => "NOTICE",
     }
 }
 
@@ -155,7 +155,7 @@ fn the_doorbell_of_version_one_reads_and_writes_the_offer_shape() {
             run_id,
             address: Some(address),
             item_id,
-            item_kind: ItemKindV1::CcNotice,
+            item_kind: ItemKind::CcNotice,
         }
     );
     assert_eq!(serde_json::to_value(&doorbell).unwrap(), wire);
@@ -171,11 +171,11 @@ fn the_doorbell_of_version_one_reads_and_writes_the_offer_shape() {
 
 #[test]
 fn the_item_kind_of_version_one_is_a_closed_set_of_three_words() {
-    for (kind, word) in KINDS_V1 {
-        assert_eq!(exhaustive_v1(kind), word);
+    for (kind, word) in KINDS {
+        assert_eq!(exhaustive(kind), word);
         assert_eq!(serde_json::to_value(kind).unwrap(), word);
         assert_eq!(
-            serde_json::from_value::<ItemKindV1>(json!(word)).unwrap(),
+            serde_json::from_value::<ItemKind>(json!(word)).unwrap(),
             kind
         );
         let doorbell = json!({
@@ -189,7 +189,7 @@ fn the_item_kind_of_version_one_is_a_closed_set_of_three_words() {
     }
     for outside in ["MAIL_NOTICE", "mail", "REFUSED", ""] {
         assert!(
-            serde_json::from_value::<ItemKindV1>(json!(outside)).is_err(),
+            serde_json::from_value::<ItemKind>(json!(outside)).is_err(),
             "'{outside}'"
         );
         let doorbell = json!({
@@ -202,13 +202,13 @@ fn the_item_kind_of_version_one_is_a_closed_set_of_three_words() {
             "v1 '{outside}'"
         );
     }
-    assert!(serde_json::from_value::<ItemKindV1>(json!(3)).is_err());
-    assert!(serde_json::from_value::<ItemKindV1>(json!(null)).is_err());
+    assert!(serde_json::from_value::<ItemKind>(json!(3)).is_err());
+    assert!(serde_json::from_value::<ItemKind>(json!(null)).is_err());
 }
 
 #[test]
 fn the_doorbell_of_version_one_and_the_one_of_version_two_agree_on_the_three_old_kinds() {
-    for (_, word) in KINDS_V1 {
+    for (_, word) in KINDS {
         let wire = json!({
             "run_id": Uuid::now_v7().to_string(),
             "item_id": Uuid::now_v7().to_string(),

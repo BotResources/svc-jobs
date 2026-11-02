@@ -151,7 +151,7 @@ pub struct JobCommandRejected {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ItemKind {
+pub enum ItemKindV2 {
     Mail,
     CcNotice,
     Notice,
@@ -160,7 +160,7 @@ pub enum ItemKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ItemKindV1 {
+pub enum ItemKind {
     Mail,
     CcNotice,
     Notice,
@@ -172,7 +172,7 @@ pub struct RunItemArrived {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<Uuid>,
     pub item_id: Uuid,
-    pub item_kind: ItemKindV1,
+    pub item_kind: ItemKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,5 +181,5 @@ pub struct RunItemArrivedV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<Uuid>,
     pub item_id: Uuid,
-    pub item_kind: ItemKind,
+    pub item_kind: ItemKindV2,
 }
