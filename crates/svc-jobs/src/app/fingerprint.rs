@@ -115,21 +115,26 @@ fn of_instance(instance: &RunnerInstance) -> InstanceFingerprint {
 
 #[cfg(test)]
 mod tests {
-    use bc_jobs::fixtures::{JobBuilder, ts};
+    use bc_jobs::domain::job::resolution::JobResolution;
+    use bc_jobs::fixtures::{JobBuilder, resolution_id, ts};
 
     use super::*;
 
+    fn cancelled() -> JobBuilder {
+        JobBuilder::new().with_resolution(JobResolution::cancelled(resolution_id(), ts(300)))
+    }
+
     #[test]
     fn a_job_of_a_scrubbed_tree_differs_from_the_same_job_before_the_scrub() {
-        let before = JobBuilder::new().build();
-        let after = JobBuilder::new().in_a_scrubbed_tree(ts(900)).build();
+        let before = cancelled().build();
+        let after = cancelled().in_a_scrubbed_tree(ts(900)).build();
         assert_ne!(of_job(&before), of_job(&after));
     }
 
     #[test]
     fn a_job_whose_request_data_was_erased_differs_from_the_same_job_before_the_erasure() {
-        let before = JobBuilder::new().build();
-        let after = JobBuilder::new().with_request_data_erased(ts(900)).build();
+        let before = cancelled().build();
+        let after = cancelled().with_request_data_erased(ts(900)).build();
         assert_ne!(of_job(&before), of_job(&after));
     }
 
