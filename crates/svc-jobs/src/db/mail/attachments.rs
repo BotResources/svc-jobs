@@ -56,6 +56,16 @@ impl AttachmentStore for PgStore {
         if let Err(refusal) = guard_sender(&mut tx, request.from, context.run_id).await? {
             return Ok(Err(refusal.into()));
         }
+        let erased: Option<bool> = sqlx::query_scalar(
+            "SELECT content_erased_at IS NOT NULL FROM mails WHERE mail_id = $1",
+        )
+        .bind(request.mail_id.as_uuid())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+        if erased == Some(true) {
+            return Ok(Err(MailRefusal::MailContentErased.into()));
+        }
         let incoming = AttachmentBody {
             name: request.name.clone(),
             content_type: request.content_type.clone(),

@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use super::event::GqlJobEvent;
 use super::fleet::{GqlFleetEvent, GqlRunnerType, GqlRunnerTypeView};
-use super::job::{GqlJobDetail, GqlJobSummaryView};
+use super::job::GqlJobSummaryView;
+use super::job_detail::GqlJobDetail;
 use super::log::GqlRunLog;
 
 #[derive(SimpleObject)]

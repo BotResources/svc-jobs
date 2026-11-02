@@ -10,6 +10,19 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-01
 
+- `Job::content_erased_at`, `Job::has_request_data_erased` and
+  `Job::request_data_erasure_due(Retention, now)`: the decision that the request
+  data of a cancelled Job is due (never for a Job that is not cancelled, for a
+  Job already erased, or before the delay has passed). `JobState::content_erased_at`
+  is the stored first erasure time; a Job marked erased that still holds a
+  payload, a Passport or a configuration cannot be loaded.
+- `Retention::erases_cancelled_request_data_at_once` and
+  `Retention::cancelled_request_data_is_due`.
+- `domain::erasure::{ERASED_TEXT, ERASED_CONVERSATION_ID}`: the fixed values that
+  replace the author and the source conversation of an erased mail; both pass
+  the checks that load a mail.
+- `UploadRefusal::ContentErased` (`content_erased`), `ExistingJob::content_erased`
+  and `MailRefusal::MailContentErased` (`mail_content_erased`).
 - `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs that
   its removed agents were restarted from, and the mail addresses that one cancel removes from the agent directory, and
   `removes_the_caller_of(&CallNotices)`, the decision that a Caller removed by

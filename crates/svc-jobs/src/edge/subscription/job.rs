@@ -14,7 +14,7 @@ use crate::edge::project;
 use crate::edge::state::EdgeState;
 use crate::edge::tree::JobTree;
 use crate::edge::types::event::of_domain;
-use crate::edge::types::job::GqlJobDetail;
+use crate::edge::types::job_detail::GqlJobDetail;
 use crate::edge::types::stream::{GqlJobDelta, GqlJobSnapshot, GqlJobStreamMessage};
 use crate::stream::Fact;
 

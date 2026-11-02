@@ -14,7 +14,8 @@ impl MailRefusal {
             Self::SenderUnknown
             | Self::SenderNotOfRun
             | Self::AddressNotYours
-            | Self::MailNotYours => false,
+            | Self::MailNotYours
+            | Self::MailContentErased => false,
         }
     }
 

@@ -140,6 +140,7 @@ pub async fn load_many(executor: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<
                 .get::<Option<Uuid>, _>("restart_of_run_id")
                 .map(RunId::new)
                 .transpose()?,
+            content_erased_at: row.get("content_erased_at"),
         })?);
     }
     Ok(jobs)

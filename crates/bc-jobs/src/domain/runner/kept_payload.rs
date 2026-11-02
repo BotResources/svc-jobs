@@ -19,6 +19,7 @@ pub struct StoredPayload {
 pub struct ExistingJob {
     pub requester: Requester,
     pub payload: Option<JobPayload>,
+    pub content_erased: bool,
 }
 
 impl ExistingJob {
@@ -31,6 +32,7 @@ impl ExistingJob {
 pub enum UploadRefusal {
     JobExistsNotYours,
     PayloadAlreadyUploaded,
+    ContentErased,
 }
 
 impl UploadRefusal {
@@ -38,6 +40,7 @@ impl UploadRefusal {
         match self {
             Self::JobExistsNotYours => "job_exists_not_yours",
             Self::PayloadAlreadyUploaded => "payload_already_uploaded",
+            Self::ContentErased => "content_erased",
         }
     }
 
@@ -49,6 +52,7 @@ impl UploadRefusal {
             Self::PayloadAlreadyUploaded => {
                 "The Job id already has a payload, and the payload of a Job never changes."
             }
+            Self::ContentErased => "Jobs erased the request data of the Job.",
         }
     }
 }
@@ -68,6 +72,9 @@ pub fn decide_upload(
     if let Some(job) = job {
         if &job.requester != uploader {
             return Err(UploadRefusal::JobExistsNotYours);
+        }
+        if job.content_erased {
+            return Err(UploadRefusal::ContentErased);
         }
         if !job.holds_a_kept_payload() {
             return Err(UploadRefusal::PayloadAlreadyUploaded);
@@ -184,7 +191,11 @@ mod tests {
     }
 
     fn job_of(requester: Requester, payload: Option<JobPayload>) -> ExistingJob {
-        ExistingJob { requester, payload }
+        ExistingJob {
+            requester,
+            payload,
+            content_erased: false,
+        }
     }
 
     fn inline() -> JobPayload {
@@ -231,6 +242,25 @@ mod tests {
                 "{form:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_job_whose_request_data_was_erased_takes_no_upload_and_says_why() {
+        let requester = Requester::Run(run_id());
+        let erased = ExistingJob {
+            requester,
+            payload: None,
+            content_erased: true,
+        };
+        assert_eq!(
+            decide_upload(&requester, &payload("m"), Some(&erased), None),
+            Err(UploadRefusal::ContentErased)
+        );
+        assert_eq!(
+            decide_upload(&service(), &payload("m"), Some(&erased), None),
+            Err(UploadRefusal::JobExistsNotYours),
+            "the requester check still comes first"
+        );
     }
 
     #[test]

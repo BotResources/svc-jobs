@@ -1,4 +1,4 @@
-use chrono::TimeDelta;
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::error::JobsError;
 
@@ -54,6 +54,18 @@ impl Retention {
 
     pub fn cancelled(&self) -> TimeDelta {
         self.cancelled
+    }
+
+    pub fn erases_cancelled_request_data_at_once(&self) -> bool {
+        self.cancelled.is_zero()
+    }
+
+    pub fn cancelled_request_data_is_due(
+        &self,
+        cancelled_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        cancelled_at + self.cancelled <= now
     }
 }
 

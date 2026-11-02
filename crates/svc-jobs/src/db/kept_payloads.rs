@@ -138,7 +138,7 @@ async fn existing_job(
     tx: &mut PgConnection,
     job_id: Uuid,
 ) -> Result<Option<ExistingJob>, PortError> {
-    let row = sqlx::query("SELECT requester, payload FROM jobs WHERE id = $1")
+    let row = sqlx::query("SELECT requester, payload, content_erased_at FROM jobs WHERE id = $1")
         .bind(job_id)
         .fetch_optional(&mut *tx)
         .await
@@ -154,7 +154,13 @@ async fn existing_job(
         Some(stored) => Some(serde_json::from_value(stored).map_err(corrupt)?),
         None => None,
     };
-    Ok(Some(ExistingJob { requester, payload }))
+    Ok(Some(ExistingJob {
+        requester,
+        payload,
+        content_erased: row
+            .get::<Option<DateTime<Utc>>, _>("content_erased_at")
+            .is_some(),
+    }))
 }
 
 async fn job_payload(tx: &mut PgConnection, job_id: Uuid) -> Result<Option<JobPayload>, PortError> {

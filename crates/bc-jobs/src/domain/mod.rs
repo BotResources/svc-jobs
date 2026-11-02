@@ -3,6 +3,7 @@ pub mod actions;
 pub mod attempts;
 pub mod config;
 pub mod directory;
+pub mod erasure;
 pub mod fleet;
 pub mod ids;
 pub mod job;

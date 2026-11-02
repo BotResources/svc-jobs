@@ -1,5 +1,6 @@
 pub mod claim;
 pub mod derived;
+pub mod erasure;
 pub mod parenting;
 pub mod parts;
 pub mod resolution;
@@ -46,6 +47,7 @@ pub struct JobState {
     pub payload: Option<JobPayload>,
     pub call: Option<JobCall>,
     pub restart_of_run_id: Option<RunId>,
+    pub content_erased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,7 @@ pub struct Job {
     payload: Option<JobPayload>,
     call: Option<JobCall>,
     restart_of_run_id: Option<RunId>,
+    content_erased_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -143,6 +146,11 @@ impl Job {
         {
             return Err(corrupt("resolution_names_a_foreign_run"));
         }
+        if state.content_erased_at.is_some()
+            && (state.config.is_some() || state.passport.is_some() || state.payload.is_some())
+        {
+            return Err(corrupt("erased_job_holds_request_data"));
+        }
         if state.deletion.is_some() && state.resolution.is_none() {
             return Err(corrupt("deleted_job_without_resolution"));
         }
@@ -183,6 +191,7 @@ impl Job {
             payload: state.payload,
             call: state.call,
             restart_of_run_id: state.restart_of_run_id,
+            content_erased_at: state.content_erased_at,
         })
     }
 
@@ -276,6 +285,10 @@ impl Job {
 
     pub fn restart_of_run_id(&self) -> Option<RunId> {
         self.restart_of_run_id
+    }
+
+    pub fn content_erased_at(&self) -> Option<DateTime<Utc>> {
+        self.content_erased_at
     }
 
     pub fn is_restart(&self) -> bool {
