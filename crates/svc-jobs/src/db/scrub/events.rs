@@ -63,30 +63,24 @@ pub async fn rewrite_domain_events(tx: &mut PgConnection, jobs: &[Uuid]) -> Resu
 }
 
 const REWRITE_OUTBOX: &str = "\
-    WITH s1 AS ( \
-        SELECT o.id, (o.payload -> 'payload') - 'config' - 'passport' - 'payload' - 'text' \
-               - 'subject' - 'body' - 'note' AS body \
-        FROM integration_outbox o \
-        WHERE o.status = 'PUBLISHED' AND (o.payload -> 'payload' ->> 'job_id') = ANY($1)), \
-    s2 AS ( \
-        SELECT id, CASE WHEN body ? 'label' \
-            THEN jsonb_set(body, '{label}', to_jsonb($2::text)) ELSE body END AS body FROM s1), \
-    s3 AS ( \
-        SELECT id, CASE WHEN jsonb_typeof(body -> 'steps') = 'array' \
-            THEN jsonb_set(body, '{steps}', \
+    UPDATE integration_outbox o SET payload = jsonb_set(o.payload, '{payload}', ( \
+        SELECT s5.body \
+        FROM (SELECT (o.payload -> 'payload') - 'config' - 'passport' - 'payload' - 'text' \
+                     - 'subject' - 'body' - 'note' AS body) s1 \
+        CROSS JOIN LATERAL (SELECT CASE WHEN s1.body ? 'label' \
+            THEN jsonb_set(s1.body, '{label}', to_jsonb($2::text)) ELSE s1.body END AS body) s2 \
+        CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(s2.body -> 'steps') = 'array' \
+            THEN jsonb_set(s2.body, '{steps}', \
                  (SELECT coalesce(jsonb_agg(to_jsonb($2::text)), '[]'::jsonb) \
-                  FROM jsonb_array_elements(body -> 'steps'))) \
-            ELSE body END AS body FROM s2), \
-    s4 AS ( \
-        SELECT id, CASE WHEN body ? 'params' \
-            THEN jsonb_set(body, '{params}', '{}'::jsonb) ELSE body END AS body FROM s3), \
-    s5 AS ( \
-        SELECT id, CASE WHEN jsonb_typeof(body -> 'failure_report') = 'object' \
-            THEN jsonb_set(jsonb_set(body, '{failure_report,params}', '{}'::jsonb), \
+                  FROM jsonb_array_elements(s2.body -> 'steps'))) \
+            ELSE s2.body END AS body) s3 \
+        CROSS JOIN LATERAL (SELECT CASE WHEN s3.body ? 'params' \
+            THEN jsonb_set(s3.body, '{params}', '{}'::jsonb) ELSE s3.body END AS body) s4 \
+        CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(s4.body -> 'failure_report') = 'object' \
+            THEN jsonb_set(jsonb_set(s4.body, '{failure_report,params}', '{}'::jsonb), \
                  '{failure_report,diagnostic}', '{}'::jsonb) \
-            ELSE body END AS body FROM s4) \
-    UPDATE integration_outbox o SET payload = jsonb_set(o.payload, '{payload}', s5.body) \
-    FROM s5 WHERE o.id = s5.id";
+            ELSE s4.body END AS body) s5)) \
+    WHERE o.status = 'PUBLISHED' AND (o.payload -> 'payload' ->> 'job_id') = ANY($1)";
 
 pub async fn rewrite_published_outbox(
     tx: &mut PgConnection,
