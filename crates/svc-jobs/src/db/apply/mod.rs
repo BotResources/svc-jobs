@@ -1,3 +1,4 @@
+pub mod command_memory;
 pub mod directory;
 pub mod fleet;
 pub mod job;

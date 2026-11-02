@@ -1,4 +1,4 @@
-use bc_jobs::domain::ids::{JobId, RunId};
+use bc_jobs::domain::ids::{CommandId, JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::payload::CallMode;
@@ -24,6 +24,7 @@ pub struct JobChange {
     pub removes_directory: bool,
     pub restart: Option<RestartPremise>,
     pub caller_address: Option<CallerAddressPremise>,
+    pub remembered_command: Option<CommandId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,11 +56,26 @@ impl JobChange {
             removes_directory: false,
             restart: None,
             caller_address: None,
+            remembered_command: None,
         }
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.events.is_empty() && self.answers.is_empty() && !self.removes_directory
+    }
+
+    pub(super) fn resolves_the_job(&self) -> bool {
+        self.events.iter().any(|event| {
+            matches!(
+                event,
+                JobEvent::JobCompleted(_) | JobEvent::JobFailed(_) | JobEvent::JobCancelled(_)
+            )
+        })
+    }
+
+    pub fn remembering(mut self, command_id: Option<CommandId>) -> Self {
+        self.remembered_command = command_id;
+        self
     }
 
     pub fn restarting(mut self, origin_run: Uuid, tree: JobId) -> Self {
