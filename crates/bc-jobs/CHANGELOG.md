@@ -33,7 +33,8 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   scrub (not while a Job is unresolved or a Run is live, not before the
   retention has passed since the last activity, never twice).
 - `events_of_a_scrub(&[Job], at)`: one `JobContentErased` per Job of the Tree,
-  and a `JobAffordancesChanged` for each Job whose manual retry was available.
+  carrying the time of the scrub, or the time the request data of that Job was
+  first erased when a cancel sweep had erased it earlier, and a `JobAffordancesChanged` for each Job whose manual retry was available.
 - `ports::scrub::{TreeScrubs, TreeScrub, ScrubOutcome, OrphanUploads}`.
 - `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
   retry, a restart, and the affordance for the manual retry, are refused in a

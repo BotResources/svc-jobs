@@ -74,3 +74,18 @@ fn a_failed_job_that_could_not_be_retried_before_gets_no_affordance_fact() {
     let events = events_of_a_scrub(std::slice::from_ref(&already), ts(900));
     assert_eq!(kinds(&events), vec![("JobContentErased", already.id())]);
 }
+
+#[test]
+fn a_job_already_erased_by_the_cancel_sweep_keeps_its_first_erasure_time() {
+    let erased = JobBuilder::new().with_request_data_erased(ts(400)).build();
+    let fresh = completed();
+    let events = events_of_a_scrub(&[erased, fresh], ts(900));
+    let times: Vec<_> = events
+        .iter()
+        .map(|event| match event {
+            JobEvent::JobContentErased(fact) => fact.at,
+            other => panic!("only erasure facts here, got {}", other.event_type()),
+        })
+        .collect();
+    assert_eq!(times, vec![ts(400), ts(900)]);
+}

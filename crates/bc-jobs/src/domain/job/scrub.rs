@@ -15,7 +15,7 @@ pub fn events_of_a_scrub(tree: &[Job], at: DateTime<Utc>) -> Vec<JobEvent> {
     for job in tree {
         events.push(JobEvent::JobContentErased(JobContentErased {
             job_id: job.id(),
-            at,
+            at: job.content_erased_at().unwrap_or(at),
         }));
         if loses_its_manual_retry(job, &by_id) {
             events.push(JobEvent::JobAffordancesChanged(JobAffordancesChanged {
