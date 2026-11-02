@@ -89,6 +89,10 @@ to `## Unreleased`).
 - The cancel of a Job erases the payload kept by Jobs for that Job and for no
   other: the cancel of a manual retry leaves the payload kept for the failed Job
   it retried.
+- A restart Job of a cancelled Job reads the payload kept by Jobs for that Job.
+  When the Job is cancelled after its restart Job failed, the kept payload is
+  gone, so a manual retry of that restart Job is accepted and the Run of the new
+  Job is refused `no_kept_payload` when it asks for the payload.
 
 ### Changed
 
