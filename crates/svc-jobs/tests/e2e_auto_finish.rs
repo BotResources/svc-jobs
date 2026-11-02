@@ -7,7 +7,7 @@ use support::auto_finish::{
 use support::call_notices::caller;
 use support::db::Durable;
 use support::events::EventLog;
-use support::fixture::{JobsFixture, Knobs};
+use support::fixture::JobsFixture;
 use support::lineage::act;
 use support::{LONG, gql, wire};
 
@@ -153,11 +153,7 @@ async fn a_job_that_the_caller_finished_first_is_not_finished_again() {
 
 #[tokio::test]
 async fn the_end_of_the_caller_run_finishes_the_called_job_without_waiting_for_a_sweep() {
-    let fixture = JobsFixture::start_with(Knobs {
-        backstop_interval_seconds: 600,
-        ..Knobs::default()
-    })
-    .await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let mut caller = caller(&fixture, "auto-finish-at-once").await;
     let called = sync_call(&fixture, &mut caller).await;
     complete(&caller, &called).await;

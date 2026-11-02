@@ -28,7 +28,7 @@ async fn restart_job_of(durable: &Durable, run: Uuid) -> Uuid {
 
 #[tokio::test]
 async fn a_reply_that_restarts_the_called_runner_holds_the_finish_until_the_restart_run_is_read() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let events = EventLog::open_v2(fixture.fabric()).await;
     let mut caller = caller(&fixture, "auto-restart").await;

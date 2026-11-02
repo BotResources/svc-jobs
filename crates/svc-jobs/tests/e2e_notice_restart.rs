@@ -6,7 +6,7 @@ use support::call_notices::{
     wait_for_notice,
 };
 use support::db::Durable;
-use support::fixture::{JobsFixture, Knobs, runner_access};
+use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail, Work};
 use support::restart::{FINISHED_OF_RUN, save_state};
 use support::{LONG, gql, runner};
@@ -25,7 +25,7 @@ async fn an_unread_notice_at_the_end_of_a_successful_run_starts_the_restart_at_o
     item_kind: &str,
     notice_type: &str,
 ) {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let mut caller = caller(&fixture, label).await;
     let parent_run = runner::run_id(&caller.trigger);
     save_state(&fixture, &caller.work, json!({ "turn": 1 })).await;
@@ -150,11 +150,7 @@ async fn a_mail_notice_left_unread_at_the_end_of_a_successful_run_starts_the_res
 
 #[tokio::test]
 async fn a_cancel_notice_wakes_a_finished_background_caller() {
-    let fixture = JobsFixture::start_with(Knobs {
-        backstop_interval_seconds: 3_600,
-        ..Knobs::default()
-    })
-    .await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut caller = caller(&fixture, "wake-cancel").await;
     let parent_run = runner::run_id(&caller.trigger);

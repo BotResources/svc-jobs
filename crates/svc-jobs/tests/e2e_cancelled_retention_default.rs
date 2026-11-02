@@ -6,14 +6,12 @@ use support::db::Durable;
 use support::erasure::{
     WAITING_FOR_ERASURE, assert_request_data_erased, assert_request_data_held, view_of,
 };
-use support::fixture::{JobsFixture, Knobs};
+use support::fixture::{JobsFixture, Knobs, NO_SWEEP_IN_THE_TEST};
 use support::gesture;
 use support::lineage::live_runner;
 use support::producer::{JobDeclaration, Producer};
 use support::{LONG, gql};
 use uuid::Uuid;
-
-const NO_SWEEP_IN_THE_TEST: u64 = 3_600;
 
 async fn started_job_with_request_data(
     fixture: &JobsFixture,

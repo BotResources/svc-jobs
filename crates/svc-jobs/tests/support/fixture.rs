@@ -12,6 +12,7 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_svc-jobs");
 pub const APP_ROLE: &str = "jobs_app";
 pub const APP_PASSWORD: &str = "jobsapproleforeveryworktree";
 pub const BOOT_TIMEOUT: Duration = Duration::from_secs(60);
+pub const NO_SWEEP_IN_THE_TEST: u64 = 3_600;
 
 pub struct Knobs {
     pub inactivity_timeout_seconds: u64,
@@ -72,6 +73,14 @@ pub struct JobsFixture {
 impl JobsFixture {
     pub async fn start() -> Self {
         Self::start_cluster(1, Knobs::default()).await
+    }
+
+    pub async fn start_without_sweep() -> Self {
+        Self::start_with(Knobs {
+            backstop_interval_seconds: NO_SWEEP_IN_THE_TEST,
+            ..Knobs::default()
+        })
+        .await
     }
 
     pub async fn start_with(knobs: Knobs) -> Self {

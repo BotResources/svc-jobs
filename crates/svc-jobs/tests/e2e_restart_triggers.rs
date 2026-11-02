@@ -76,7 +76,7 @@ async fn two_mails_at_once_to_a_finished_agent_start_exactly_one_restart() {
 
 #[tokio::test]
 async fn unread_mail_at_the_end_of_a_successful_run_starts_the_restart_at_once() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut scene = running_child(&fixture, "restart-at-end").await;
 

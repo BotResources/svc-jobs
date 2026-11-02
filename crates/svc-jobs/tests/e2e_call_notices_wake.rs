@@ -12,7 +12,7 @@ use support::surface::{self, Agent};
 
 #[tokio::test]
 async fn a_failure_notice_wakes_a_finished_background_caller() {
-    let fixture = JobsFixture::start().await;
+    let fixture = JobsFixture::start_without_sweep().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut caller = caller(&fixture, "notices-wake").await;
     let parent_run = runner::run_id(&caller.trigger);
