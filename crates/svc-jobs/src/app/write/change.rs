@@ -1,3 +1,4 @@
+use bc_jobs::commands::job::auto_finish::FinishPremise;
 use bc_jobs::domain::ids::{CommandId, JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
@@ -25,6 +26,7 @@ pub struct JobChange {
     pub restart: Option<RestartPremise>,
     pub caller_address: Option<CallerAddressPremise>,
     pub remembered_command: Option<CommandId>,
+    pub finish_premise: Option<FinishPremise>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +59,7 @@ impl JobChange {
             restart: None,
             caller_address: None,
             remembered_command: None,
+            finish_premise: None,
         }
     }
 
@@ -70,6 +73,11 @@ impl JobChange {
 
     pub fn remembering(mut self, command_id: Option<CommandId>) -> Self {
         self.remembered_command = command_id;
+        self
+    }
+
+    pub fn finishing_by_rule(mut self, premise: FinishPremise) -> Self {
+        self.finish_premise = Some(premise);
         self
     }
 

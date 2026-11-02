@@ -1,0 +1,154 @@
+use bc_jobs::JobsError;
+use bc_jobs::domain::ids::{JobId, ResolutionId, RunId};
+use bc_jobs::event::job::JobEvent;
+use bc_jobs::ports::auto_finish::AutoFinishReader;
+use br_core_events::{Actor, EventMetadata, ServiceAccountId};
+
+use super::write::JobChange;
+use super::{Jobs, SERVICE_ACTOR, retry};
+use crate::error::{Contention, ServiceError};
+
+const ATTEMPTS: usize = 3;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Triggers {
+    pub completed_runs: Vec<RunId>,
+    pub stemming_jobs: Vec<JobId>,
+}
+
+impl Triggers {
+    pub fn of(effects: &[(JobId, Vec<JobEvent>)]) -> Self {
+        let mut triggers = Self::default();
+        for (job_id, events) in effects {
+            for event in events {
+                match event {
+                    JobEvent::RunCompleted(fact) => {
+                        triggers.completed_runs.push(fact.run_id);
+                        triggers.stemming_jobs.push(*job_id);
+                    }
+                    JobEvent::JobFailed(_) | JobEvent::JobCancelled(_) => {
+                        triggers.stemming_jobs.push(*job_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        triggers
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.completed_runs.is_empty() && self.stemming_jobs.is_empty()
+    }
+}
+
+pub async fn after_commit(jobs: &Jobs, triggers: &Triggers, cause: &EventMetadata) {
+    if triggers.is_empty() {
+        return;
+    }
+    let candidates = match candidates_of(jobs, triggers).await {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "looking for the called jobs to finish failed; the next sweep looks again"
+            );
+            return;
+        }
+    };
+    for called in candidates {
+        if let Err(error) = finish_called_job(jobs, called, cause).await {
+            tracing::warn!(
+                job_id = %called.as_uuid(),
+                error = %error,
+                "finishing a called job failed; the next end of a run or the next sweep decides again"
+            );
+        }
+    }
+}
+
+async fn candidates_of(jobs: &Jobs, triggers: &Triggers) -> Result<Vec<JobId>, ServiceError> {
+    let mut requesters: Vec<RunId> = Vec::new();
+    for run in &triggers.completed_runs {
+        requesters.push(*run);
+        requesters.extend(jobs.store.acts_for(*run).await?.runs());
+    }
+    let mut candidates = AutoFinishReader::called_by_runs(&jobs.store, &requesters).await?;
+    for job in &triggers.stemming_jobs {
+        candidates.extend(AutoFinishReader::called_jobs_stemming_to(&jobs.store, *job).await?);
+    }
+    candidates.sort_by_key(|job| job.as_uuid());
+    candidates.dedup();
+    Ok(candidates)
+}
+
+pub async fn finish_called_job(
+    jobs: &Jobs,
+    called: JobId,
+    cause: &EventMetadata,
+) -> Result<(), ServiceError> {
+    match retry::on_write_race(ATTEMPTS, || finish_once(jobs, called, cause)).await {
+        Err(ServiceError::Contended(Contention::WriteRace | Contention::LockTimeout)) => {
+            tracing::info!(
+                job_id = %called.as_uuid(),
+                "finishing a called job was contended; the next end of a run or the next sweep decides again"
+            );
+            Ok(())
+        }
+        Err(ServiceError::Domain(JobsError::JobAlreadyTerminal { .. } | JobsError::JobDeleted)) => {
+            Ok(())
+        }
+        outcome => outcome,
+    }
+}
+
+async fn finish_once(
+    jobs: &Jobs,
+    called: JobId,
+    cause: &EventMetadata,
+) -> Result<(), ServiceError> {
+    let Some(facts) = AutoFinishReader::facts_of(&jobs.store, called).await? else {
+        return Ok(());
+    };
+    let plan = match facts.decide() {
+        Ok(plan) => plan,
+        Err(waiting) => {
+            tracing::debug!(
+                job_id = %called.as_uuid(),
+                ?waiting,
+                "a called job is not finished by rule yet"
+            );
+            return Ok(());
+        }
+    };
+    let result = facts
+        .called
+        .finish(plan.finish_command(ResolutionId::new(jobs.ids.next())?))?;
+    let mut changes = vec![
+        JobChange::new(called, Some(facts.called.clone()), result.events)
+            .finishing_by_rule(plan.premise().clone()),
+    ];
+    for restart in facts
+        .restart_jobs
+        .iter()
+        .filter(|restart| plan.restart_jobs_to_finish().contains(&restart.id()))
+    {
+        let result = restart.finish(plan.finish_command(ResolutionId::new(jobs.ids.next())?))?;
+        changes.push(JobChange::new(
+            restart.id(),
+            Some(restart.clone()),
+            result.events,
+        ));
+    }
+    jobs.commit(changes, &finish_metadata(jobs, cause)).await
+}
+
+fn finish_metadata(jobs: &Jobs, cause: &EventMetadata) -> EventMetadata {
+    let own = EventMetadata::new(
+        Actor::Service(ServiceAccountId::from(SERVICE_ACTOR)),
+        jobs.ids.next(),
+    );
+    match cause.causation_id {
+        Some(causation) => own.with_causation(causation),
+        None => own,
+    }
+}

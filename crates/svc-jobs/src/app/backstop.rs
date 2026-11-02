@@ -7,6 +7,7 @@ use due_work::{
     fail_inactive_jobs, reclaim_lost_claims, reclaim_outrun_runs, reclaim_stranded_triggers,
 };
 
+mod auto_finish;
 mod due_work;
 mod each;
 mod erasure;
@@ -51,6 +52,7 @@ enum Backstop {
     LostClaims,
     StrandedTriggers,
     CancelledRequestData,
+    AutoFinish,
     InactiveJobs,
     ExpiredResults,
     ScrubbedTrees,
@@ -59,13 +61,14 @@ enum Backstop {
 }
 
 impl Backstop {
-    const SWEEP: [Backstop; 11] = [
+    const SWEEP: [Backstop; 12] = [
         Backstop::AccessPaths,
         Backstop::PresenceSessions,
         Backstop::OutrunRuns,
         Backstop::LostClaims,
         Backstop::StrandedTriggers,
         Backstop::CancelledRequestData,
+        Backstop::AutoFinish,
         Backstop::InactiveJobs,
         Backstop::ExpiredResults,
         Backstop::ScrubbedTrees,
@@ -81,6 +84,7 @@ impl Backstop {
             Backstop::LostClaims => "reclaiming the lost claims",
             Backstop::StrandedTriggers => "withdrawing the stranded triggers",
             Backstop::CancelledRequestData => "erasing the request data of the cancelled Jobs",
+            Backstop::AutoFinish => "finishing the called jobs that their caller forgot to finish",
             Backstop::InactiveJobs => "failing the inactive jobs",
             Backstop::ExpiredResults => "purging the expired Results",
             Backstop::ScrubbedTrees => "scrubbing the Trees that did no work for the retention",
@@ -106,6 +110,7 @@ impl Backstop {
             Backstop::LostClaims => Box::pin(reclaim_lost_claims(jobs)),
             Backstop::StrandedTriggers => Box::pin(reclaim_stranded_triggers(jobs)),
             Backstop::CancelledRequestData => Box::pin(erasure::erase_cancelled_request_data(jobs)),
+            Backstop::AutoFinish => Box::pin(auto_finish::finish_called_jobs(jobs)),
             Backstop::InactiveJobs => Box::pin(fail_inactive_jobs(jobs)),
             Backstop::ExpiredResults => Box::pin(async move {
                 jobs.store

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod adversary;
+pub mod auto_finish;
 pub mod broker;
 pub mod call_notices;
 pub mod calls;

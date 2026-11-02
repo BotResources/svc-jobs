@@ -1,5 +1,6 @@
 pub mod acting;
 pub mod admin;
+pub mod auto_finish;
 pub mod backstop;
 pub mod catch_up;
 pub mod claim;
@@ -121,6 +122,7 @@ impl Jobs {
             changes,
         )
         .await?;
+        let triggers = auto_finish::Triggers::of(&effects);
         let mut ended = Vec::new();
         for (job_id, events) in effects {
             self.after_commit(job_id, &events).await?;
@@ -132,6 +134,7 @@ impl Jobs {
         if may_wake_a_restart {
             Box::pin(self.start_due_restarts()).await;
         }
+        Box::pin(auto_finish::after_commit(self, &triggers, metadata)).await;
         Ok(())
     }
 

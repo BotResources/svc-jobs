@@ -1,6 +1,7 @@
 pub mod acts_for;
 pub mod answers;
 pub mod apply;
+pub mod auto_finish;
 pub mod call_notices;
 pub mod claim;
 pub mod directory;
