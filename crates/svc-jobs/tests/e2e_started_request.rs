@@ -233,6 +233,42 @@ async fn a_request_for_another_type_an_unknown_run_or_unreadable_is_refused_and_
     refused(&not_v7, "malformed", &trigger);
     let unreadable = surface::raw(nats, "started", &holder, json!({ "run_id": "no" })).await;
     refused(&unreadable, "malformed", &trigger);
+    let without_version = surface::raw(
+        nats,
+        "started",
+        &holder,
+        json!({
+            "run_id": run.to_string(),
+            "instance_key": "instance-i",
+            "start_id": Uuid::now_v7().to_string(),
+        }),
+    )
+    .await;
+    refused(&without_version, "malformed", &trigger);
+    for (what, instance_key) in [
+        ("without an instance key", None),
+        ("with an empty instance key", Some("")),
+        (
+            "with an instance key that is not a subject segment",
+            Some("a.b"),
+        ),
+    ] {
+        let mut request = json!({
+            "version": 1,
+            "run_id": run.to_string(),
+            "start_id": Uuid::now_v7().to_string(),
+        });
+        if let Some(key) = instance_key {
+            request["instance_key"] = json!(key);
+        }
+        let reply = surface::raw(nats, "started", &holder, request).await;
+        refused(&reply, "malformed", &trigger);
+        assert_eq!(
+            scene.durable.count(db::STARTS_OF_RUN, run).await,
+            0,
+            "{what}"
+        );
+    }
     assert_eq!(scene.durable.count(db::STARTS_OF_RUN, run).await, 0);
     assert_eq!(
         Footprint::of(&scene.durable, job, run).await,

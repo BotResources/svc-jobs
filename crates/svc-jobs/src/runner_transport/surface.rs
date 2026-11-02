@@ -66,10 +66,11 @@ async fn answer(jobs: &Jobs, subject: &str, payload: &[u8]) -> Option<Vec<u8>> {
         return Some(encode(&reply));
     }
     if let Some(runner_type) = subject.strip_prefix(wire::STARTED_PREFIX) {
-        let reply = match decode::<wire::StartedRequest>(payload) {
-            Some(request) => started::started(jobs, runner_type, request).await?,
-            None => malformed(),
-        };
+        let reply =
+            match decode::<wire::StartedRequest>(payload).filter(|_| names_its_version(payload)) {
+                Some(request) => started::started(jobs, runner_type, request).await?,
+                None => malformed(),
+            };
         return Some(encode(&reply));
     }
     if let Some(runner_type) = subject.strip_prefix(wire::MARK_READ_PREFIX) {
@@ -97,6 +98,11 @@ fn malformed() -> wire::SurfaceReply {
 
 fn decode<T: serde::de::DeserializeOwned>(payload: &[u8]) -> Option<T> {
     serde_json::from_slice(payload).ok()
+}
+
+fn names_its_version(payload: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(payload)
+        .is_ok_and(|request| request.get("version").is_some())
 }
 
 fn encode<T: Serialize>(reply: &T) -> Vec<u8> {

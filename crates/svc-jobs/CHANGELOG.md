@@ -50,8 +50,9 @@ to `## Unreleased`).
   presence yet; the same request is accepted once the presence is live, and a
   final refusal always wins over it), `run_held`, `run_reserved_elsewhere`,
   `run_not_pending` (the Run or its Job has ended, also the repeat of the start
-  id after the end), `malformed` (the request cannot be read: also a wrong
-  wire version or a start id that is not a UUIDv7).
+  id after the end), `malformed` (the request cannot be read: also a missing or
+  wrong wire version, a missing or empty Instance key, an Instance key that is
+  not a subject segment, or a start id that is not a UUIDv7).
 - The start id is stored with the hold (`run_starts.start_id`, migration
   `0010_run_start_id.sql`); a Run held by the status-stream started fact has
   none.
