@@ -189,7 +189,7 @@ async fn decide(
                 .as_ref()
                 .is_some_and(|payload| payload.is_kept())
             {
-                change = change.creating_from_kept_payload(command.requester.clone());
+                change = change.creating_from_kept_payload(command.requester);
             }
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
