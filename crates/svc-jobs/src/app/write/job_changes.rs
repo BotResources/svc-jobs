@@ -70,8 +70,8 @@ pub async fn commit_job_changes_in(
         return Ok(());
     }
     guard_free_capacity_of_every_type(&mut *tx, &changes).await?;
-    lock_directory_trees(&mut *tx, &changes).await?;
     guard_kept_payloads_uploaded(&mut *tx, &changes).await?;
+    lock_directory_trees(&mut *tx, &changes).await?;
     guard_caller_addresses_still_held(&mut *tx, &changes).await?;
     guard_restarts_still_due(&mut *tx, &changes).await?;
     guard_finish_premise_still_holds(&mut *tx, &changes).await?;
