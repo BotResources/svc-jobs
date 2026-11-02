@@ -16,6 +16,12 @@ pub struct TreeScrub<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueTree {
+    pub initial_job_id: JobId,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrubOutcome {
     Scrubbed { jobs: usize },
     Standing(ScrubStanding),
@@ -33,7 +39,8 @@ pub trait TreeScrubs: Send + Sync {
         &self,
         due_before: DateTime<Utc>,
         batch: usize,
-    ) -> Result<Vec<JobId>, PortError>;
+        after: Option<DueTree>,
+    ) -> Result<Vec<DueTree>, PortError>;
 
     async fn scrub_tree(
         &self,

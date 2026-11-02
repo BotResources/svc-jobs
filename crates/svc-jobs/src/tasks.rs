@@ -62,6 +62,7 @@ fn spawn_transport(supervisor: &Supervisor, channels: RunnerChannels, jobs: Arc<
     runner_transport::observability::describe();
     crate::app::claim_observability::describe();
     crate::db::tree_lock::describe();
+    crate::app::backstop::observability::describe();
 
     let presence_channels = channels.clone();
     let presence_jobs = Arc::clone(&jobs);

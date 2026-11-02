@@ -10,6 +10,7 @@ use due_work::{
 mod due_work;
 mod each;
 mod erasure;
+pub mod observability;
 mod scrub;
 
 const REPAIR_LOOKBACK: chrono::TimeDelta = chrono::TimeDelta::minutes(10);

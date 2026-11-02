@@ -7,9 +7,8 @@ use async_trait::async_trait;
 use bc_jobs::domain::ids::{EventId, JobId};
 use bc_jobs::domain::job::scrub::events_of_a_scrub;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::scrub::{OrphanUploads, ScrubOutcome, TreeScrub, TreeScrubs};
+use bc_jobs::ports::scrub::{DueTree, OrphanUploads, ScrubOutcome, TreeScrub, TreeScrubs};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
 use super::PgStore;
 use super::apply::apply_job_events;
@@ -22,16 +21,9 @@ impl TreeScrubs for PgStore {
         &self,
         due_before: DateTime<Utc>,
         batch: usize,
-    ) -> Result<Vec<JobId>, PortError> {
-        let ids: Vec<Uuid> = sqlx::query_scalar(&tree::due_trees_sql())
-            .bind(due_before)
-            .bind(i64::try_from(batch).unwrap_or(i64::MAX))
-            .fetch_all(self.pool())
-            .await
-            .map_err(unavailable)?;
-        ids.into_iter()
-            .map(|id| JobId::new(id).map_err(PortError::from))
-            .collect()
+        after: Option<DueTree>,
+    ) -> Result<Vec<DueTree>, PortError> {
+        tree::due_trees(self.pool(), due_before, batch, after).await
     }
 
     async fn scrub_tree(
@@ -42,12 +34,12 @@ impl TreeScrubs for PgStore {
         let at = scrub.at;
         let mut tx = self.begin().await?;
         lock_tree(&mut tx, initial_job_id).await?;
-        let facts = tree::facts_of_tree(&mut tx, initial_job_id).await?;
+        let jobs = tree::job_ids_of_tree(&mut tx, initial_job_id).await?;
+        let facts = tree::facts_of_tree(&mut tx, initial_job_id, &jobs).await?;
         let standing = scrub.retention.scrub_standing(&facts, at);
         if !standing.is_due() {
             return Ok(ScrubOutcome::Standing(standing));
         }
-        let jobs = tree::job_ids_of_tree(&mut tx, initial_job_id).await?;
         let runs = tree::run_ids_of(&mut tx, &jobs).await?;
         let loaded = load_many(&mut tx, &jobs).await?;
         let events = events_of_a_scrub(&loaded, at);

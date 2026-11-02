@@ -47,3 +47,14 @@ pub async fn await_tree_lock_timeouts_above(client: &GraphqlClient, floor: f64) 
          happened and it would prove nothing"
     );
 }
+
+const SCRUB_FAILURES: &str = "jobs_scrub_failures_total";
+
+pub async fn scrub_failures(client: &GraphqlClient) -> f64 {
+    let (status, body) = client.get_raw("/metrics").await;
+    assert!(status.is_success(), "/metrics answers: {status}");
+    body.lines()
+        .find(|line| line.starts_with(SCRUB_FAILURES))
+        .and_then(|line| line.rsplit(' ').next()?.parse().ok())
+        .unwrap_or_else(|| panic!("the series {SCRUB_FAILURES} exists from boot: {body}"))
+}
