@@ -1,7 +1,7 @@
 mod support;
 
-use serde_json::Value;
 use support::LONG;
+use support::auto_finish::item_id;
 use support::call_notices::{mail_notices, wait_for_mail_notices};
 use support::db::Durable;
 use support::events::DoorbellLog;
@@ -9,13 +9,6 @@ use support::fixture::{JobsFixture, runner_access};
 use support::gesture::{self, Mail};
 use support::tree::correspondents;
 use uuid::Uuid;
-
-fn item_id(item: &Value) -> Uuid {
-    item["itemId"]
-        .as_str()
-        .and_then(|raw| raw.parse().ok())
-        .expect("an item has a UUID item id")
-}
 
 #[tokio::test]
 async fn a_refused_mail_leaves_one_mail_notice_at_the_sender_and_rings_in_version_two_only() {

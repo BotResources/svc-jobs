@@ -20,7 +20,7 @@ pub struct Called {
     pub work: Work,
 }
 
-fn item_id(item: &Value) -> Uuid {
+pub fn item_id(item: &Value) -> Uuid {
     Uuid::parse_str(item["itemId"].as_str().expect("an item id")).expect("an item id is a uuid")
 }
 
