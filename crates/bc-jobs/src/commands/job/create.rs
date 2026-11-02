@@ -171,7 +171,7 @@ fn resolve_triggered_by(
     }
 }
 
-fn resolve_call(command: &CreateJob) -> Result<Option<JobCall>, JobsError> {
+pub(super) fn resolve_call(command: &CreateJob) -> Result<Option<JobCall>, JobsError> {
     match (&command.requester, command.call) {
         (Requester::Run(_), None) => Err(JobsError::ModeRequired),
         (Requester::Run(_), Some(call)) => Ok(Some(JobCall {

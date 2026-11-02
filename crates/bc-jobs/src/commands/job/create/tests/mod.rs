@@ -11,6 +11,7 @@ mod guards;
 mod parenting;
 mod priority;
 mod repeat;
+mod skeleton;
 
 fn config() -> RunnerConfig {
     RunnerConfig::new(json!({ "prompt": "summarise", "temperature": 0.2 })).unwrap()

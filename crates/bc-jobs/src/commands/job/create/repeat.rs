@@ -1,4 +1,4 @@
-use crate::commands::job::create::CreateJob;
+use crate::commands::job::create::{CreateJob, resolve_call};
 use crate::domain::job::Job;
 use crate::domain::references::KnownUser;
 
@@ -20,7 +20,7 @@ impl CreateJob {
         existing.runner_type() == &self.runner_type
             && existing.producer() == &self.producer
             && existing.parent_job_id() == self.parent_job_id
-            && self.names_the_user_of(existing)
+            && same_user(self.triggered_by.as_ref(), existing.triggered_by())
             && unless_given_or_equal(
                 self.initial_job_id.as_ref(),
                 Some(&existing.initial_job_id()),
@@ -28,6 +28,7 @@ impl CreateJob {
             && existing.requester() == &self.requester
             && existing.source_entity_id() == self.source_entity_id
             && existing.max_attempts() == self.max_attempts
+            && self.stores_the_call_of(existing)
             && (self.parent_job_id.is_some()
                 || existing.priority().requested() == self.requested_priority)
     }
@@ -38,11 +39,7 @@ impl CreateJob {
             && existing.payload() == self.payload.as_ref()
     }
 
-    fn names_the_user_of(&self, existing: &Job) -> bool {
-        if existing.content_erased_at().is_some() {
-            same_user(self.triggered_by.as_ref(), existing.triggered_by())
-        } else {
-            unless_given_or_equal(self.triggered_by.as_ref(), existing.triggered_by())
-        }
+    fn stores_the_call_of(&self, existing: &Job) -> bool {
+        resolve_call(self).is_ok_and(|call| call.as_ref() == existing.call())
     }
 }
