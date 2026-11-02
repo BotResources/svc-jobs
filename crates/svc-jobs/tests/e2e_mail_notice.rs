@@ -237,3 +237,32 @@ async fn a_mail_refused_for_its_author_leaves_a_mail_notice_too() {
     assert_eq!(seen[0]["mailId"], blank.mail_id.to_string());
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_mail_to_a_hundred_bad_recipients_is_refused_with_the_typed_refusal_and_leaves_one_mail_notice()
+ {
+    let fixture = JobsFixture::start().await;
+    let gql = fixture.gql();
+    let runner = runner_access();
+    let tree = correspondents(&fixture, "mail-notice-many").await;
+    let strangers: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
+
+    let mail = Mail::new(tree.sender, &strangers);
+    let refused = gesture::send_mail(&gql, &runner, &tree.parent_work, &mail).await;
+    assert_eq!(gesture::refusal(&refused, "jobsSendMail"), "bad_addresses");
+    let seen = wait_for_mail_notices(&fixture, &tree.parent_work, Some(tree.sender), 1).await;
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert_eq!(seen[0]["mailId"], mail.mail_id.to_string());
+
+    let again = gesture::send_mail(&gql, &runner, &tree.parent_work, &mail).await;
+    assert_eq!(gesture::refusal(&again, "jobsSendMail"), "bad_addresses");
+    tokio::time::sleep(support::QUIET).await;
+    assert_eq!(
+        mail_notices(&fixture, &tree.parent_work, Some(tree.sender))
+            .await
+            .len(),
+        1,
+        "the same refused mail sent again leaves no second mail notice"
+    );
+    fixture.shutdown().await;
+}

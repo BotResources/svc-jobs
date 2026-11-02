@@ -36,7 +36,7 @@ async fn notice_item(
     kind: &str,
     address: Option<Uuid>,
     run: Option<Uuid>,
-    source_key: Option<&str>,
+    source_key: Option<Uuid>,
 ) -> Result<(), sqlx::Error> {
     let sql = match source_key {
         Some(_) => {
@@ -92,7 +92,7 @@ async fn items_kept_before_the_mail_notice_stay_and_a_mail_notice_has_its_own_sh
         .await
         .expect("the inbox reads");
     assert_eq!(kept, 1, "an item kept before the migration is untouched");
-    let no_key: Option<String> = sqlx::query_scalar("SELECT source_key FROM inbox_items")
+    let no_key: Option<Uuid> = sqlx::query_scalar("SELECT source_key FROM inbox_items")
         .fetch_one(&pool)
         .await
         .expect("the key reads");
@@ -146,17 +146,17 @@ async fn the_same_source_leaves_one_item_at_an_address_and_another_address_keeps
         agent_of(&pool, run, job).await,
         agent_of(&pool, run, job).await,
     );
-    let source = Uuid::now_v7().to_string();
-    notice_item(&pool, "NOTICE", Some(first), Some(run), Some(&source))
+    let source = Uuid::now_v7();
+    notice_item(&pool, "NOTICE", Some(first), Some(run), Some(source))
         .await
         .expect("the first item inserts");
     assert!(
-        notice_item(&pool, "MAIL_NOTICE", Some(first), Some(run), Some(&source))
+        notice_item(&pool, "MAIL_NOTICE", Some(first), Some(run), Some(source))
             .await
             .is_err(),
         "the same source at the same address is refused"
     );
-    notice_item(&pool, "NOTICE", Some(second), Some(run), Some(&source))
+    notice_item(&pool, "NOTICE", Some(second), Some(run), Some(source))
         .await
         .expect("another address keeps its own item");
     notice_item(&pool, "NOTICE", Some(first), Some(run), None)

@@ -1,6 +1,13 @@
 use super::inbox::{Notice, NoticeType};
 use super::refusal::MailRefusal;
-use crate::domain::ids::MailId;
+use crate::domain::ids::{AgentId, MailId};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailNoticeKey {
+    pub mail_id: MailId,
+    pub refusal: &'static str,
+    pub bad_addresses: Vec<(AgentId, &'static str)>,
+}
 
 impl MailRefusal {
     pub fn leaves_a_mail_notice(&self) -> bool {
@@ -19,17 +26,19 @@ impl MailRefusal {
         }
     }
 
-    pub fn notice_key(&self, mail_id: MailId) -> String {
-        match self {
-            Self::BadAddresses(bad) => {
-                let mut named: Vec<String> = bad
-                    .iter()
-                    .map(|bad| format!("{}:{}", bad.address.as_uuid(), bad.reason.code()))
-                    .collect();
-                named.sort();
-                format!("{}/{}/{}", mail_id.as_uuid(), self.code(), named.join(","))
-            }
-            other => format!("{}/{}", mail_id.as_uuid(), other.code()),
+    pub fn notice_key(&self, mail_id: MailId) -> MailNoticeKey {
+        let mut bad_addresses: Vec<(AgentId, &'static str)> = match self {
+            Self::BadAddresses(bad) => bad
+                .iter()
+                .map(|bad| (bad.address, bad.reason.code()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        bad_addresses.sort_by_key(|(address, code)| (address.as_uuid(), *code));
+        MailNoticeKey {
+            mail_id,
+            refusal: self.code(),
+            bad_addresses,
         }
     }
 
@@ -146,6 +155,22 @@ mod tests {
             MailRefusal::MailIdReused.notice_key(id),
             MailRefusal::MailIdReused.notice_key(mail())
         );
+    }
+
+    #[test]
+    fn the_order_in_which_bad_recipients_are_found_does_not_change_the_key() {
+        let id = mail();
+        let (first, second) = (AgentId::new(Uuid::now_v7()), AgentId::new(Uuid::now_v7()));
+        let bad = |address, reason| BadAddress { address, reason };
+        let one = MailRefusal::BadAddresses(vec![
+            bad(first, BadAddressReason::RecipientUnknown),
+            bad(second, BadAddressReason::OtherTree),
+        ]);
+        let other = MailRefusal::BadAddresses(vec![
+            bad(second, BadAddressReason::OtherTree),
+            bad(first, BadAddressReason::RecipientUnknown),
+        ]);
+        assert_eq!(one.notice_key(id), other.notice_key(id));
     }
 
     #[test]

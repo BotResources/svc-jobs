@@ -1,4 +1,4 @@
-use bc_jobs::domain::mail::refused::mail_notice;
+use bc_jobs::domain::mail::refused::{MailNoticeKey, mail_notice};
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::mail::{Minting, RefusedMail};
 
@@ -29,7 +29,7 @@ pub(super) async fn note_refusal(
     let target = NoticeFor::mail_notice(
         context.run_id,
         request.from,
-        request.refusal.notice_key(request.mail_id),
+        stored_key(&request.refusal.notice_key(request.mail_id)),
     );
     insert_notice(
         &mut tx,
@@ -43,4 +43,18 @@ pub(super) async fn note_refusal(
     )
     .await?;
     tx.commit().await.map_err(unavailable)
+}
+
+fn stored_key(key: &MailNoticeKey) -> String {
+    let named: Vec<String> = key
+        .bad_addresses
+        .iter()
+        .map(|(address, reason)| format!("{}:{reason}", address.as_uuid()))
+        .collect();
+    format!(
+        "{}/{}/{}",
+        key.mail_id.as_uuid(),
+        key.refusal,
+        named.join(",")
+    )
 }

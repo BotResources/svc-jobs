@@ -3,7 +3,7 @@ ALTER TABLE inbox_items
     DROP CONSTRAINT inbox_items_mail_shape;
 
 ALTER TABLE inbox_items
-    ADD COLUMN source_key text,
+    ADD COLUMN source_key uuid,
     ADD CONSTRAINT inbox_items_kind_check
         CHECK (kind IN ('MAIL', 'CC_NOTICE', 'NOTICE', 'MAIL_NOTICE')),
     ADD CONSTRAINT inbox_items_mail_shape CHECK (

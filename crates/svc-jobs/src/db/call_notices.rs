@@ -170,7 +170,7 @@ pub async fn insert_notice(
     })?;
     let inserted = sqlx::query(
         "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at, source_key) \
-         SELECT $1, $6::text, $2, $3, $4, $5, $7::text \
+         SELECT $1, $6::text, $2, $3, $4, $5, md5($7::text)::uuid \
          WHERE NOT EXISTS (SELECT 1 FROM directory_removed_runs d WHERE d.run_id = $3) \
            AND NOT EXISTS (SELECT 1 FROM run_terminals t \
                            WHERE t.run_id = $3 AND t.kind IN ('FAILED', 'CANCELLED')) \
