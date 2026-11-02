@@ -45,6 +45,7 @@ pub fn fleet_signals(event: &JobEvent) -> Vec<FleetSignal> {
         | JobEvent::ManualRetryStarted(_)
         | JobEvent::JobDeleted(_)
         | JobEvent::JobAffordancesChanged(_)
+        | JobEvent::JobContentErased(_)
         | JobEvent::JobPriorityForced(_)
         | JobEvent::JobPriorityRecalculated(_) => vec![],
     }

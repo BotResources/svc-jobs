@@ -11,10 +11,10 @@ use crate::domain::run::origin::RunOrigin;
 use crate::domain::run::plan::DeclarationNumber;
 use crate::domain::run::step::StepIndex;
 use crate::event::job_facts::{
-    JobAffordancesChanged, JobCancelled, JobCompleted, JobDeleted, JobFailed, JobPriorityForced,
-    JobPriorityRecalculated, ManualRetryStarted, RetryScheduled, RunCancellationRequested,
-    RunCancelled, RunCompleted, RunDispatched, RunFailed, RunPlanDeclared, RunStarted,
-    RunStepStarted,
+    JobAffordancesChanged, JobCancelled, JobCompleted, JobContentErased, JobDeleted, JobFailed,
+    JobPriorityForced, JobPriorityRecalculated, ManualRetryStarted, RetryScheduled,
+    RunCancellationRequested, RunCancelled, RunCompleted, RunDispatched, RunFailed,
+    RunPlanDeclared, RunStarted, RunStepStarted,
 };
 use crate::fixtures::{
     declaration_id, instance, job_id, manual_retry_id, producer, report, resolution_id, run_id,
@@ -82,6 +82,7 @@ kinds!(
     ManualRetryStarted,
     JobDeleted,
     JobAffordancesChanged,
+    JobContentErased,
     JobPriorityForced,
     JobPriorityRecalculated
 );
@@ -104,6 +105,7 @@ pub(crate) fn kind_of(event: &JobEvent) -> Kind {
         JobEvent::ManualRetryStarted(_) => Kind::ManualRetryStarted,
         JobEvent::JobDeleted(_) => Kind::JobDeleted,
         JobEvent::JobAffordancesChanged(_) => Kind::JobAffordancesChanged,
+        JobEvent::JobContentErased(_) => Kind::JobContentErased,
         JobEvent::JobPriorityForced(_) => Kind::JobPriorityForced,
         JobEvent::JobPriorityRecalculated(_) => Kind::JobPriorityRecalculated,
     }
@@ -254,6 +256,13 @@ pub(crate) fn samples_of(kind: Kind) -> Vec<(JobEvent, RunInboxEffect)> {
             JobEvent::JobAffordancesChanged(JobAffordancesChanged {
                 job_id: job,
                 caused_by_job_id: None,
+            }),
+            untouched,
+        )],
+        Kind::JobContentErased => vec![(
+            JobEvent::JobContentErased(JobContentErased {
+                job_id: job,
+                at: ts(0),
             }),
             untouched,
         )],

@@ -33,6 +33,7 @@ job_event!(GqlJobCancelledEvent, "JobsJobCancelledEvent", { resolution_id: Uuid 
 job_event!(GqlManualRetryStartedEvent, "JobsManualRetryStartedEvent", { successor_job_id: Uuid, manual_retry_id: Uuid, run_id: Option<Uuid> });
 job_event!(GqlJobDeletedEvent, "JobsJobDeletedEvent", { deleted_by_id: Uuid });
 job_event!(GqlJobAffordancesChangedEvent, "JobsJobAffordancesChangedEvent", { caused_by_job_id: Option<Uuid> });
+job_event!(GqlJobContentErasedEvent, "JobsJobContentErasedEvent", { erased_at: DateTime<Utc> });
 job_event!(GqlJobPriorityForcedEvent, "JobsJobPriorityForcedEvent", { forced_priority: i32, originating_job_id: Option<Uuid> });
 job_event!(GqlJobPriorityRecalculatedEvent, "JobsJobPriorityRecalculatedEvent", { effective_priority: i32, previous_priority: i32 });
 
@@ -61,6 +62,7 @@ pub enum GqlJobEvent {
     ManualRetryStarted(GqlManualRetryStartedEvent),
     JobDeleted(GqlJobDeletedEvent),
     AffordancesChanged(GqlJobAffordancesChangedEvent),
+    ContentErased(GqlJobContentErasedEvent),
     PriorityForced(GqlJobPriorityForcedEvent),
     PriorityRecalculated(GqlJobPriorityRecalculatedEvent),
 }
@@ -179,6 +181,12 @@ pub fn of_domain(id: Uuid, occurred_at: DateTime<Utc>, event: &JobEvent) -> Opti
                 caused_by_job_id: fact.caused_by_job_id.map(|id| id.as_uuid()),
             })
         }
+        JobEvent::JobContentErased(fact) => GqlJobEvent::ContentErased(GqlJobContentErasedEvent {
+            id,
+            job_id,
+            occurred_at,
+            erased_at: fact.at,
+        }),
         JobEvent::JobPriorityForced(fact) => {
             GqlJobEvent::PriorityForced(GqlJobPriorityForcedEvent {
                 id,

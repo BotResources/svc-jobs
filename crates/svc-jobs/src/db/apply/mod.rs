@@ -122,7 +122,7 @@ async fn write_job_event(
         JobEvent::JobCancelled(fact) => job::cancelled(tx, fact, at).await,
         JobEvent::ManualRetryStarted(fact) => job::manual_retry_started(tx, fact, at).await,
         JobEvent::JobDeleted(fact) => job::deleted(tx, fact, at).await,
-        JobEvent::JobAffordancesChanged(_) => Ok(()),
+        JobEvent::JobAffordancesChanged(_) | JobEvent::JobContentErased(_) => Ok(()),
         JobEvent::JobPriorityForced(fact) => job::priority_forced(tx, fact).await,
         JobEvent::JobPriorityRecalculated(fact) => job::priority_recalculated(tx, fact).await,
     }

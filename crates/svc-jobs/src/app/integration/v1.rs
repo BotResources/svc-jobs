@@ -110,6 +110,7 @@ pub fn of_event(
         | JobEvent::ManualRetryStarted(_)
         | JobEvent::JobDeleted(_)
         | JobEvent::JobAffordancesChanged(_)
+        | JobEvent::JobContentErased(_)
         | JobEvent::JobPriorityForced(_)
         | JobEvent::JobPriorityRecalculated(_) => None,
     };

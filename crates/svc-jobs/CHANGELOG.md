@@ -81,6 +81,12 @@ to `## Unreleased`).
   time Jobs erased the request data of a Job is the field `contentErasedAt` of
   the Job view, which then shows no Passport, payload or configuration; a later
   erasure never changes it.
+- When the sweep erases the request data of a cancelled Job after the cancelled
+  retention, it records `JobContentErased` for that Job, and the Job-detail,
+  list and tree subscriptions that follow the Job receive a delta with the
+  erased view (no Passport, payload or configuration, and `contentErasedAt`).
+  The delta event is `JobsJobContentErasedEvent` (`erasedAt`) in the
+  `JobsJobEvent` interface.
 - An upload of a payload for a Job whose request data was erased, by its
   Requester, is refused `request_data_erased` (another uploader is refused
   `job_exists_not_yours` and learns nothing of the erasure), and an upload of an

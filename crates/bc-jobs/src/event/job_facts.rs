@@ -196,6 +196,12 @@ pub struct JobAffordancesChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobContentErased {
+    pub job_id: JobId,
+    pub at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobPriorityForced {
     pub job_id: JobId,
     pub priority: Priority,

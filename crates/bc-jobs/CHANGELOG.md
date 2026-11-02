@@ -16,6 +16,11 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   Job already erased, or before the delay has passed). `JobState::content_erased_at`
   is the stored first erasure time; a Job marked erased that still holds a
   payload, a Passport or a configuration cannot be loaded.
+- `JobEvent::JobContentErased` (`event_type` `JobContentErased`, fact
+  `JobContentErased { job_id, at }`): the first erasure of the request data of a
+  Job by the sweep. It reaches the clients and changes no other state.
+- `ports::job::ContentErasure` carries the time, the event id and the metadata
+  of that erasure to `CancelledRequestData::erase_request_data_of`.
 - `Retention::erases_cancelled_request_data_at_once` and
   `Retention::cancelled_request_data_is_due`.
 - `domain::erasure::{ERASED_TEXT, ERASED_CONVERSATION_ID}`: the fixed values that

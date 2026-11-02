@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use br_core_events::EventMetadata;
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::domain::ids::JobId;
+use crate::domain::ids::{EventId, JobId};
 use crate::domain::job::Job;
 use crate::domain::keys::RunnerTypeKey;
 use crate::domain::references::SourceReference;
@@ -33,6 +33,13 @@ pub trait JobWriter: Send + Sync {
 }
 
 pub const DUE_WORK_BATCH: usize = 200;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContentErasure<'a> {
+    pub at: DateTime<Utc>,
+    pub event_id: EventId,
+    pub metadata: &'a EventMetadata,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchWindow {
@@ -75,6 +82,6 @@ pub trait CancelledRequestData: Send + Sync {
     async fn erase_request_data_of(
         &self,
         job_id: JobId,
-        at: DateTime<Utc>,
+        erasure: ContentErasure<'_>,
     ) -> Result<bool, PortError>;
 }

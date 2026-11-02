@@ -1,13 +1,15 @@
 use async_trait::async_trait;
 use bc_jobs::domain::ids::JobId;
-use bc_jobs::event::job::JOB_AGGREGATE_TYPE;
+use bc_jobs::event::job::{JOB_AGGREGATE_TYPE, JobEvent};
+use bc_jobs::event::job_facts::JobContentErased;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::job::CancelledRequestData;
+use bc_jobs::ports::job::{CancelledRequestData, ContentErasure};
 use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::db::PgStore;
+use crate::db::apply::apply_job_events;
 use crate::db::hydrate::unavailable;
 use crate::db::kept_payloads::lock_kept_payload;
 
@@ -96,8 +98,14 @@ impl CancelledRequestData for PgStore {
     async fn erase_request_data_of(
         &self,
         job_id: JobId,
-        at: DateTime<Utc>,
+        erasure: ContentErasure<'_>,
     ) -> Result<bool, PortError> {
+        let ContentErasure {
+            at,
+            event_id,
+            metadata,
+        } = erasure;
+        let id = job_id;
         let job_id = job_id.as_uuid();
         let mut tx = self.begin().await?;
         lock_kept_payload(&mut tx, job_id).await?;
@@ -114,6 +122,17 @@ impl CancelledRequestData for PgStore {
         .map_err(unavailable)?;
         if pending.is_some() {
             erase_request_data(&mut tx, job_id, at).await?;
+            apply_job_events(
+                &mut tx,
+                id,
+                &[(
+                    event_id,
+                    JobEvent::JobContentErased(JobContentErased { job_id: id, at }),
+                )],
+                metadata,
+                at,
+            )
+            .await?;
         } else {
             sqlx::query("DELETE FROM cancelled_request_data WHERE job_id = $1")
                 .bind(job_id)

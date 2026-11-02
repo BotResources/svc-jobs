@@ -19,6 +19,7 @@ const JOB_EVENT: &str = r#"event {
       ... on JobsManualRetryStartedEvent { successorJobId manualRetryId runId }
       ... on JobsJobDeletedEvent { deletedById }
       ... on JobsJobAffordancesChangedEvent { causedByJobId }
+      ... on JobsJobContentErasedEvent { erasedAt }
     }"#;
 
 const JOB_DETAIL: &str = r#"id status attemptCount activeRunId nextAttemptAt isDeleted
@@ -34,6 +35,10 @@ const JOB_DETAIL: &str = r#"id status attemptCount activeRunId nextAttemptAt isD
       }
       children { job { id status attemptCount } affordances { action allowed reasonCode params } }"#;
 
+const REQUEST_DATA: &str = r#"id status config contentErasedAt
+      passport { subjectKind subjectId }
+      payload { form message }"#;
+
 const JOB_SUMMARY: &str = r#"job {
           id status attemptCount activeRunId nextAttemptAt failureCause isDeleted
           runnerType producer predecessorJobId successorJobId
@@ -46,6 +51,18 @@ pub fn job_changed(job_id: Uuid) -> String {
     __typename
     ... on JobsJobSnapshot {{ cursor job {{ {JOB_DETAIL} }} {AFFORDANCES} }}
     ... on JobsJobDelta {{ cursor {JOB_EVENT} job {{ {JOB_DETAIL} }} {AFFORDANCES} }}
+  }}
+}}"#
+    )
+}
+
+pub fn job_request_data(job_id: Uuid) -> String {
+    format!(
+        r#"subscription {{
+  jobsJobChanged(jobId: "{job_id}") {{
+    __typename
+    ... on JobsJobSnapshot {{ cursor job {{ {REQUEST_DATA} }} }}
+    ... on JobsJobDelta {{ cursor {JOB_EVENT} job {{ {REQUEST_DATA} }} }}
   }}
 }}"#
     )

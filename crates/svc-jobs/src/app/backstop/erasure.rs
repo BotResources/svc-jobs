@@ -1,9 +1,9 @@
 use std::future::Future;
 
-use bc_jobs::domain::ids::JobId;
-use bc_jobs::ports::job::{CancelledRequestData, DUE_WORK_BATCH};
+use bc_jobs::domain::ids::{EventId, JobId};
+use bc_jobs::ports::job::{CancelledRequestData, ContentErasure, DUE_WORK_BATCH};
 
-use crate::app::Jobs;
+use crate::app::{Jobs, service_metadata};
 use crate::error::ServiceError;
 
 pub(super) async fn erase_cancelled_request_data(jobs: &Jobs) -> Result<(), ServiceError> {
@@ -17,8 +17,17 @@ pub(super) async fn erase_cancelled_request_data(jobs: &Jobs) -> Result<(), Serv
         .cancelled_jobs_awaiting_erasure(due_before, DUE_WORK_BATCH)
         .await?;
     erase_each(awaiting, |job_id| async move {
+        let metadata = service_metadata();
+        let event_id = EventId::new(jobs.ids.next())?;
         jobs.store
-            .erase_request_data_of(job_id, now)
+            .erase_request_data_of(
+                job_id,
+                ContentErasure {
+                    at: now,
+                    event_id,
+                    metadata: &metadata,
+                },
+            )
             .await
             .map(drop)
             .map_err(ServiceError::from)
