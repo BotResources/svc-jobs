@@ -254,6 +254,22 @@ fn a_pushed_run_whose_trigger_was_terminated_fails_unstarted_and_loads() {
 }
 
 #[test]
+fn a_pushed_run_unstarted_with_a_transient_trigger_termination_is_corrupt() {
+    let report =
+        RunFailureReport::platform(RunFailureKind::Transient, "trigger_terminated").unwrap();
+    let pushed = Run::hydrate(RunState {
+        terminal: Some(RunTerminal::failed(at(90), report)),
+        ..pending()
+    });
+    assert_eq!(
+        pushed.err(),
+        Some(JobsError::CorruptState {
+            reason_code: "run_settled_without_start"
+        })
+    );
+}
+
+#[test]
 fn a_pushed_run_withdrawn_unstarted_loads_and_does_not_count_while_a_taken_one_cannot_be_withdrawn()
 {
     let withdrawn = Run::hydrate(RunState {
