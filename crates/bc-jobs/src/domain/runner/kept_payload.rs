@@ -19,7 +19,7 @@ pub struct StoredPayload {
 pub struct ExistingJob {
     pub requester: Requester,
     pub payload: Option<JobPayload>,
-    pub content_erased: bool,
+    pub request_data_erased: bool,
 }
 
 impl ExistingJob {
@@ -32,7 +32,7 @@ impl ExistingJob {
 pub enum UploadRefusal {
     JobExistsNotYours,
     PayloadAlreadyUploaded,
-    ContentErased,
+    RequestDataErased,
 }
 
 impl UploadRefusal {
@@ -40,7 +40,7 @@ impl UploadRefusal {
         match self {
             Self::JobExistsNotYours => "job_exists_not_yours",
             Self::PayloadAlreadyUploaded => "payload_already_uploaded",
-            Self::ContentErased => "content_erased",
+            Self::RequestDataErased => "request_data_erased",
         }
     }
 
@@ -52,7 +52,7 @@ impl UploadRefusal {
             Self::PayloadAlreadyUploaded => {
                 "The Job id already has a payload, and the payload of a Job never changes."
             }
-            Self::ContentErased => "Jobs erased the request data of the Job.",
+            Self::RequestDataErased => "Jobs erased the request data of the Job.",
         }
     }
 }
@@ -73,8 +73,8 @@ pub fn decide_upload(
         if &job.requester != uploader {
             return Err(UploadRefusal::JobExistsNotYours);
         }
-        if job.content_erased {
-            return Err(UploadRefusal::ContentErased);
+        if job.request_data_erased {
+            return Err(UploadRefusal::RequestDataErased);
         }
         if !job.holds_a_kept_payload() {
             return Err(UploadRefusal::PayloadAlreadyUploaded);
@@ -194,7 +194,7 @@ mod tests {
         ExistingJob {
             requester,
             payload,
-            content_erased: false,
+            request_data_erased: false,
         }
     }
 
@@ -250,11 +250,11 @@ mod tests {
         let erased = ExistingJob {
             requester,
             payload: None,
-            content_erased: true,
+            request_data_erased: true,
         };
         assert_eq!(
             decide_upload(&requester, &payload("m"), Some(&erased), None),
-            Err(UploadRefusal::ContentErased)
+            Err(UploadRefusal::RequestDataErased)
         );
         assert_eq!(
             decide_upload(&service(), &payload("m"), Some(&erased), None),

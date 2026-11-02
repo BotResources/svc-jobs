@@ -162,7 +162,7 @@ async fn existing_job(
     Ok(Some(ExistingJob {
         requester,
         payload,
-        content_erased: row
+        request_data_erased: row
             .get::<Option<DateTime<Utc>>, _>("content_erased_at")
             .is_some(),
     }))

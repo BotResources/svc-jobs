@@ -21,7 +21,7 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 - `domain::erasure::{ERASED_TEXT, ERASED_CONVERSATION_ID}`: the fixed values that
   replace the author and the source conversation of an erased mail; both pass
   the checks that load a mail.
-- `UploadRefusal::ContentErased` (`content_erased`), `ExistingJob::content_erased`
+- `UploadRefusal::RequestDataErased` (`request_data_erased`), `ExistingJob::request_data_erased`
   and `MailRefusal::MailContentErased` (`mail_content_erased`).
 - `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
   without an agent because a removed restart Run took them, and the mail

@@ -140,7 +140,7 @@ async fn the_requester_that_uploaded_the_payload_is_told_that_jobs_erased_it() {
         gesture::upload_payload(&fixture.gql(), &uploader, declaration.job_id, "again", None).await;
     assert_eq!(
         gesture::refusal(&refused, "jobsUploadPayload"),
-        "content_erased"
+        "request_data_erased"
     );
     durable.close().await;
     fixture.shutdown().await;

@@ -69,18 +69,26 @@ to `## Unreleased`).
   the runner configuration, the payload kept by Jobs and the same fields in the
   stored creation fact) is erased `JOBS_CANCELLED_RETENTION_DAYS` days after the
   cancel: in the cancel itself with the default of 0, otherwise by the backstop
-  sweep. A Job cancelled before this version is erased by the first sweep that
-  finds its delay passed. A failed or completed Job keeps its request data; a
-  cancel of a finished Job writes no cancel and starts no delay; the other Jobs
-  of the Tree keep theirs.
+  sweep. A Job cancelled before this version is erased by the first sweeps after
+  the upgrade (200 Jobs per sweep, the oldest cancel first), and
+  `JOBS_CANCELLED_RETENTION_DAYS` delays them as it delays any cancel; to know
+  the size of that backlog before deploying, count the rows of
+  `job_resolutions` whose `kind` is `CANCELLED`. A failed or completed Job keeps
+  its request data; a cancel of a finished Job writes no cancel and starts no
+  delay; the other Jobs of the Tree keep theirs.
 - `jobs.content_erased_at`, `mails.content_erased_at` and
   `cancelled_request_data` (migration `0012_content_erasure.sql`). The first
   time Jobs erased the request data of a Job is the field `contentErasedAt` of
   the Job view, which then shows no Passport, payload or configuration; a later
   erasure never changes it.
-- An upload of a payload for a Job whose request data was erased is refused
-  `content_erased`, and an upload of an attachment for a mail whose content was
-  erased is refused `mail_content_erased`.
+- An upload of a payload for a Job whose request data was erased, by its
+  Requester, is refused `request_data_erased` (another uploader is refused
+  `job_exists_not_yours` and learns nothing of the erasure), and an upload of an
+  attachment for a mail whose content was erased is refused
+  `mail_content_erased`.
+- The cancel of a Job erases the payload kept by Jobs for that Job and for no
+  other: the cancel of a manual retry leaves the payload kept for the failed Job
+  it retried.
 
 ### Changed
 

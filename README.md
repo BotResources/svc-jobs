@@ -126,8 +126,8 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   days after the cancel, at once with the default of 0; the other Jobs of the
   Tree keep theirs, and a cancel of a finished Job starts no delay. The Job
   view then shows no Passport, payload or configuration and the time of the
-  first erasure (`contentErasedAt`); an upload for that Job is refused
-  `content_erased`.
+  first erasure (`contentErasedAt`); an upload by the Requester for that Job is
+  refused `request_data_erased`.
 
 ## NATS surface
 
