@@ -8,7 +8,9 @@ use due_work::{
 };
 
 mod due_work;
+mod each;
 mod erasure;
+mod scrub;
 
 const REPAIR_LOOKBACK: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
 
@@ -51,11 +53,13 @@ enum Backstop {
     CancelledRequestData,
     InactiveJobs,
     ExpiredResults,
+    ScrubbedTrees,
+    OrphanUploads,
     DueRestarts,
 }
 
 impl Backstop {
-    const SWEEP: [Backstop; 9] = [
+    const SWEEP: [Backstop; 11] = [
         Backstop::AccessPaths,
         Backstop::PresenceSessions,
         Backstop::OutrunRuns,
@@ -64,6 +68,8 @@ impl Backstop {
         Backstop::CancelledRequestData,
         Backstop::InactiveJobs,
         Backstop::ExpiredResults,
+        Backstop::ScrubbedTrees,
+        Backstop::OrphanUploads,
         Backstop::DueRestarts,
     ];
 
@@ -77,6 +83,8 @@ impl Backstop {
             Backstop::CancelledRequestData => "erasing the request data of the cancelled Jobs",
             Backstop::InactiveJobs => "failing the inactive jobs",
             Backstop::ExpiredResults => "purging the expired Results",
+            Backstop::ScrubbedTrees => "scrubbing the Trees that did no work for the retention",
+            Backstop::OrphanUploads => "erasing the uploads that no Job or mail ever used",
             Backstop::DueRestarts => "starting the due restarts",
         }
     }
@@ -106,6 +114,8 @@ impl Backstop {
                     .map(drop)
                     .map_err(ServiceError::from)
             }),
+            Backstop::ScrubbedTrees => Box::pin(scrub::scrub_due_trees(jobs)),
+            Backstop::OrphanUploads => Box::pin(scrub::erase_orphan_uploads(jobs)),
             Backstop::DueRestarts => Box::pin(async move {
                 jobs.start_due_restarts().await;
                 Ok(())

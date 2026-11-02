@@ -30,6 +30,7 @@ pub mod removal;
 pub mod restart;
 pub mod rows;
 pub mod saved_states;
+pub mod scrub;
 pub mod tree_lock;
 pub mod waiting_repair;
 pub mod work;
