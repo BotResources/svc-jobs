@@ -3,7 +3,7 @@ mod support;
 use serde_json::json;
 use support::db::{self, Durable};
 use support::erasure::{
-    ITEMS_AT, MAIL_ERASED, MAIL_ITEMS_AT, MAIL_WITH_CONTENT, RESULTS_OF_JOB,
+    ATTACHMENTS_OF_MAIL, ITEMS_AT, MAIL_ERASED, MAIL_ITEMS_AT, MAIL_WITH_CONTENT, RESULTS_OF_JOB,
     assert_request_data_held,
 };
 use support::erasure_scene::child_body;
@@ -12,7 +12,6 @@ use support::gesture::{self, Mail};
 use support::lineage::{create, live_runner, started_with_agent};
 use support::producer::{JobDeclaration, Producer};
 use support::restart::{save_state, upload_result};
-use support::tree::correspondents;
 use support::{gql, runner};
 use uuid::Uuid;
 
@@ -140,23 +139,53 @@ async fn a_failed_run_erases_its_working_state_and_a_mail_whose_two_ends_are_rem
 async fn an_attachment_for_a_mail_whose_content_was_erased_is_refused_with_a_reason() {
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;
-    let tree = correspondents(&fixture, "erased-mail").await;
-    let mail = Mail::new(tree.sender, &[tree.receiver]);
+    let (mut x, mut y) = (
+        live_runner(&fixture, "erased-mail-x").await,
+        live_runner(&fixture, "erased-mail-y").await,
+    );
+    let declaration = JobDeclaration::new(&x.runner_type).with_max_attempts(2);
+    Producer::new(fixture.fabric(), "projects")
+        .declare_v2(&declaration)
+        .await;
+    let (first, r) = started_with_agent(&fixture, &mut x).await;
+    let run5 = support::gesture::Work::of(&x, &first);
+    create(
+        &fixture,
+        &run5,
+        &y.runner_type,
+        declaration.job_id,
+        child_body("SYNC"),
+    )
+    .await;
+    let (called, t) = started_with_agent(&fixture, &mut y).await;
+    let run6 = support::gesture::Work::of(&y, &called);
+    let mail = Mail::new(t, &[r]);
     gesture::accepted(
-        &gesture::send_mail(&fixture.gql(), &runner_access(), &tree.parent_work, &mail).await,
+        &gesture::send_mail(&fixture.gql(), &runner_access(), &run6, &mail).await,
         "jobsSendMail",
     );
-    sqlx::query("UPDATE mails SET content_erased_at = now() WHERE mail_id = $1")
-        .bind(mail.mail_id)
-        .execute(durable.pool())
-        .await
-        .expect("the mail is marked erased");
+    y.fail_run(&called, "PERMANENT", "provider_refused", None)
+        .await;
+    durable
+        .await_count(db::AGENTS_OF_RUN, run6.run_id, 0, "T is removed with Run 6")
+        .await;
+    x.fail_run(&first, "TRANSIENT", "provider_unavailable", Some(0))
+        .await;
+    durable
+        .await_count(db::AGENTS_OF_RUN, run5.run_id, 0, "R is removed with Run 5")
+        .await;
+    durable
+        .assert_count(MAIL_ERASED, mail.mail_id, 1, "both ends are removed")
+        .await;
+    let (retry, live) = started_with_agent(&fixture, &mut x).await;
+    let mut late = Mail::new(live, &[r]);
+    late.mail_id = mail.mail_id;
 
     let refused = gesture::upload_attachment(
         &fixture.gql(),
         &runner_access(),
-        &tree.parent_work,
-        &mail,
+        &support::gesture::Work::of(&x, &retry),
+        &late,
         Uuid::now_v7(),
         "late.txt",
         "late",
@@ -166,6 +195,14 @@ async fn an_attachment_for_a_mail_whose_content_was_erased_is_refused_with_a_rea
         gesture::refusal(&refused, "jobsUploadAttachment"),
         "mail_content_erased"
     );
+    durable
+        .assert_count(
+            ATTACHMENTS_OF_MAIL,
+            mail.mail_id,
+            0,
+            "no attachment lands on an erased mail",
+        )
+        .await;
     durable.close().await;
     fixture.shutdown().await;
 }
