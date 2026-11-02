@@ -140,8 +140,9 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   lifecycle events, the level, Step index and time of each log line, and the
   kind and reason code of each failure. Each Job then shows no Passport, payload
   or configuration and the time of its first erasure. After it, a manual retry
-  is refused `tree_scrubbed` and creates no Job, no agent of the Tree restarts,
-  and a mail to one from another Tree is refused `other_tree`. A payload kept
+  is refused `tree_scrubbed` and creates no Job, and no agent of the Tree
+  restarts: its saved state is erased, so the agent directory of the Tree no
+  longer lists it. A payload kept
   for a Job that is never created, and an attachment for a mail that is never
   sent, are erased `JOBS_RETENTION_DAYS` days after the upload. Events already
   on the stream and backups are not rewritten.

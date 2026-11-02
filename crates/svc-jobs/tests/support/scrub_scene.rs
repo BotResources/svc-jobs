@@ -90,10 +90,22 @@ pub async fn live_root<'a>(
     label: &str,
     max_attempts: i64,
 ) -> LiveRoot<'a> {
+    live_root_for(fixture, label, max_attempts, None).await
+}
+
+pub async fn live_root_for<'a>(
+    fixture: &'a JobsFixture,
+    label: &str,
+    max_attempts: i64,
+    user: Option<Uuid>,
+) -> LiveRoot<'a> {
     let mut runner = live_runner(fixture, label).await;
-    let declaration = JobDeclaration::new(&runner.runner_type)
+    let mut declaration = JobDeclaration::new(&runner.runner_type)
         .with_config(json!({ "model": "m" }))
         .with_max_attempts(max_attempts);
+    if let Some(user) = user {
+        declaration = declaration.triggered_by_user(user);
+    }
     let mut body = declaration.payload("projects");
     body["payload"] = json!({ "form": "INLINE", "message": "the brief", "attachments": [] });
     Producer::new(fixture.fabric(), "projects")

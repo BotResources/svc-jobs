@@ -125,9 +125,10 @@ to `## Unreleased`).
 - After the scrub of a Tree, a manual retry of one of its Jobs is refused
   `tree_scrubbed`, creates no successor, and the `manual_retry` affordance of
   the Job is blocked with the same reason code. No agent of the Tree can be
-  restarted: its saved state is erased, and a mail to it from another Tree is
-  refused `other_tree`. A mail to a finished agent in a Tree that is not
-  scrubbed still starts a restart.
+  restarted: its saved state is erased, so the administrator's agent directory
+  of the Tree no longer lists it, and no Run of the Tree is live to send it a
+  mail. A mail to a finished agent in a Tree that is not scrubbed still starts a
+  restart.
 - A payload kept by Jobs for a Job that is never created, and an attachment
   uploaded for a mail that is never sent, are erased `JOBS_RETENTION_DAYS`
   after the upload. A creation that names the erased payload is rejected
