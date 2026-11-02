@@ -109,3 +109,30 @@ pub async fn wait_for_job_notice(
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
+
+pub async fn mail_notices(fixture: &JobsFixture, work: &Work, address: Option<Uuid>) -> Vec<Value> {
+    gesture::items(&gesture::unread(&fixture.gql(), &runner_access(), work, address).await)
+        .into_iter()
+        .filter(|item| item["itemKind"] == "MAIL_NOTICE")
+        .collect()
+}
+
+pub async fn wait_for_mail_notices(
+    fixture: &JobsFixture,
+    work: &Work,
+    address: Option<Uuid>,
+    count: usize,
+) -> Vec<Value> {
+    let waited = std::time::Instant::now();
+    loop {
+        let seen = mail_notices(fixture, work, address).await;
+        if seen.len() >= count {
+            return seen;
+        }
+        assert!(
+            waited.elapsed() < LONG,
+            "expected {count} mail notice(s); saw {seen:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}

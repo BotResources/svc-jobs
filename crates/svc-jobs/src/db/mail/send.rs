@@ -6,12 +6,13 @@ use bc_jobs::domain::mail::inbox::ItemKind;
 use bc_jobs::domain::mail::refusal::MailRefusal;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
-use bc_jobs::ports::mail::{MailSender, Minting, SendMail, Sent};
+use bc_jobs::ports::mail::{MailSender, Minting, RefusedMail, SendMail, Sent};
 use uuid::Uuid;
 
 use super::checks::{guard_attachments, guard_sender, recipients_of};
 use super::live::live_run_of;
 use super::load::load_mail;
+use super::refused::note_refusal;
 use super::rows::{insert_item, insert_mail};
 use crate::db::PgStore;
 use crate::db::doorbell::{Arrival, Ring, ring};
@@ -92,8 +93,7 @@ impl MailSender for PgStore {
                         kind,
                     },
                     Ring {
-                        record_id: minting.ids.next(),
-                        event_id: minting.ids.next(),
+                        ids: minting.ids,
                         metadata: minting.metadata,
                         at: minting.at,
                     },
@@ -115,5 +115,12 @@ impl MailSender for PgStore {
                 .filter_map(|delivery| delivery.refused_restart)
                 .collect(),
         }))
+    }
+    async fn note_refused_mail(
+        &self,
+        request: RefusedMail<'_>,
+        minting: Minting<'_>,
+    ) -> Result<(), PortError> {
+        note_refusal(self, request, minting).await
     }
 }

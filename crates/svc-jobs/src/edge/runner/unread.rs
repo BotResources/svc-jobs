@@ -12,6 +12,7 @@ pub enum GqlItemKind {
     Mail,
     CcNotice,
     Notice,
+    MailNotice,
 }
 
 impl From<ItemKind> for GqlItemKind {
@@ -20,6 +21,7 @@ impl From<ItemKind> for GqlItemKind {
             ItemKind::Mail => Self::Mail,
             ItemKind::CcNotice => Self::CcNotice,
             ItemKind::Notice => Self::Notice,
+            ItemKind::MailNotice => Self::MailNotice,
         }
     }
 }
@@ -33,6 +35,7 @@ pub enum GqlNoticeType {
     RunCompleted,
     JobFailed,
     JobCancelled,
+    Refused,
 }
 
 impl From<NoticeType> for GqlNoticeType {
@@ -44,6 +47,7 @@ impl From<NoticeType> for GqlNoticeType {
             NoticeType::RunCompleted => Self::RunCompleted,
             NoticeType::JobFailed => Self::JobFailed,
             NoticeType::JobCancelled => Self::JobCancelled,
+            NoticeType::Refused => Self::Refused,
         }
     }
 }
@@ -84,7 +88,10 @@ impl From<UnreadItem> for GqlInboxItem {
             address: item.address,
             run_id: item.run_id,
             accepted_at: item.accepted_at,
-            mail_id: item.mail_id.map(|id| id.as_uuid()),
+            mail_id: item
+                .mail_id
+                .or_else(|| notice.as_ref().and_then(|notice| notice.mail_id))
+                .map(|id| id.as_uuid()),
             subject: item.subject,
             from: mail.as_ref().map(|mail| mail.from.as_uuid()),
             author: mail.as_ref().map(|mail| mail.author.clone()),
@@ -92,7 +99,10 @@ impl From<UnreadItem> for GqlInboxItem {
             body: mail.as_ref().map(|mail| mail.body.clone()),
             attachments: mail.map(|mail| mail.attachments.into_iter().map(Into::into).collect()),
             notice_type: notice.as_ref().map(|notice| notice.notice_type.into()),
-            job_id: notice.as_ref().map(|notice| notice.job_id.as_uuid()),
+            job_id: notice
+                .as_ref()
+                .and_then(|notice| notice.job_id)
+                .map(|id| id.as_uuid()),
             position: notice
                 .as_ref()
                 .and_then(|notice| notice.position)

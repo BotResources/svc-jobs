@@ -115,6 +115,41 @@ pub async fn result_of_run(
 pub struct NoticeFor {
     pub run_id: RunId,
     pub address: Option<AgentId>,
+    pub kind: ItemKind,
+    pub source_key: Option<String>,
+    pub address_held_by_run: bool,
+}
+
+impl NoticeFor {
+    pub fn call(run_id: RunId, address: Option<AgentId>) -> Self {
+        Self {
+            run_id,
+            address,
+            kind: ItemKind::Notice,
+            source_key: None,
+            address_held_by_run: false,
+        }
+    }
+
+    pub fn refusal(run_id: RunId, address: AgentId, source_key: Option<String>) -> Self {
+        Self {
+            run_id,
+            address: Some(address),
+            kind: ItemKind::Notice,
+            source_key,
+            address_held_by_run: true,
+        }
+    }
+
+    pub fn mail_notice(run_id: RunId, address: AgentId, source_key: String) -> Self {
+        Self {
+            run_id,
+            address: Some(address),
+            kind: ItemKind::MailNotice,
+            source_key: Some(source_key),
+            address_held_by_run: true,
+        }
+    }
 }
 
 pub struct Delivering<'a> {
@@ -134,18 +169,23 @@ pub async fn insert_notice(
         detail: error.to_string(),
     })?;
     let inserted = sqlx::query(
-        "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at) \
-         SELECT $1, 'NOTICE', $2, $3, $4, $5 \
+        "INSERT INTO inbox_items (item_id, kind, address, run_id, notice, accepted_at, source_key) \
+         SELECT $1, $6::text, $2, $3, $4, $5, $7::text \
          WHERE NOT EXISTS (SELECT 1 FROM directory_removed_runs d WHERE d.run_id = $3) \
            AND NOT EXISTS (SELECT 1 FROM run_terminals t \
                            WHERE t.run_id = $3 AND t.kind IN ('FAILED', 'CANCELLED')) \
-           AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a WHERE a.agent_id = $2))",
+           AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM directory_agents a \
+                WHERE a.agent_id = $2 AND (NOT $8::boolean OR a.run_id = $3))) \
+         ON CONFLICT (address, source_key) WHERE source_key IS NOT NULL DO NOTHING",
     )
     .bind(item_id.as_uuid())
     .bind(target.address.map(|address| address.as_uuid()))
     .bind(target.run_id.as_uuid())
     .bind(body)
     .bind(delivering.at)
+    .bind(target.kind.as_db_str())
+    .bind(target.source_key)
+    .bind(target.address_held_by_run)
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;
@@ -164,11 +204,10 @@ pub async fn insert_notice(
                 run_id: RunId::new(run)?,
                 address: target.address.map(|address| address.as_uuid()),
                 item_id,
-                kind: ItemKind::Notice,
+                kind: target.kind,
             },
             Ring {
-                record_id: delivering.ids.next(),
-                event_id: delivering.ids.next(),
+                ids: delivering.ids,
                 metadata: delivering.metadata,
                 at: delivering.at,
             },

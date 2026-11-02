@@ -18,15 +18,7 @@ const NOTICES_OF_RUN: &str =
     "SELECT count(*) FROM inbox_items WHERE kind = 'NOTICE' AND run_id::text = $1";
 
 fn notice(job_id: JobId) -> Notice {
-    Notice {
-        notice_type: NoticeType::Accepted,
-        job_id,
-        position: None,
-        failure_report: None,
-        message: None,
-        answer: None,
-        result_id: None,
-    }
+    Notice::of_job(NoticeType::Accepted, job_id)
 }
 
 async fn deliver(
@@ -39,10 +31,7 @@ async fn deliver(
     let metadata = metadata();
     let item = insert_notice(
         &mut tx,
-        NoticeFor {
-            run_id,
-            address: None,
-        },
+        NoticeFor::call(run_id, None),
         &notice(job_id),
         Delivering {
             ids: &ids,

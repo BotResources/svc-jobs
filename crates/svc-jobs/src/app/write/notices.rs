@@ -35,13 +35,10 @@ pub async fn tell_callers(
             else {
                 continue;
             };
-            let wakes = notice.notice_type == NoticeType::JobFailed;
+            let wakes = notice.starts_a_restart();
             insert_notice(
                 &mut *tx,
-                NoticeFor {
-                    run_id: notices.caller_run,
-                    address: notices.address,
-                },
+                NoticeFor::call(notices.caller_run, notices.address),
                 &notice,
                 Delivering { ids, metadata, at },
             )
@@ -62,15 +59,7 @@ async fn build(
     notices: &CallNotices,
     inline_max_bytes: usize,
 ) -> Result<Option<Notice>, ServiceError> {
-    let bare = |notice_type| Notice {
-        notice_type,
-        job_id,
-        position: None,
-        failure_report: None,
-        message: None,
-        answer: None,
-        result_id: None,
-    };
+    let bare = |notice_type| Notice::of_job(notice_type, job_id);
     Ok(Some(match plan {
         NoticePlan::Accepted => bare(NoticeType::Accepted),
         NoticePlan::Started => bare(NoticeType::Started),

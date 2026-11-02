@@ -3,8 +3,9 @@ use bc_jobs::domain::mail::attachment::AttachmentBody;
 use bc_jobs::domain::mail::author::{MailAuthor, SourceConversation};
 use bc_jobs::domain::mail::content::{AttachmentRef, MailContent};
 use bc_jobs::domain::mail::views::MailRead;
+use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::mail::{
-    AttachmentStore, MailReader, MailSender, Minting, SendMail, Sent, UploadAttachment,
+    AttachmentStore, MailReader, MailSender, Minting, RefusedMail, SendMail, Sent, UploadAttachment,
 };
 use uuid::Uuid;
 
@@ -26,6 +27,38 @@ pub struct SendMailInput {
 
 pub async fn send_mail(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
     started(jobs, &input.work).await?;
+    let (work, mail_id, from) = (
+        input.work.clone(),
+        MailId::new(input.mail_id),
+        AgentId::new(input.from),
+    );
+    let outcome = deliver(jobs, input).await?;
+    match &outcome {
+        Ok(sent) if sent.wakes_restart => jobs.start_due_restarts().await,
+        Err(RunnerRefusal::Mail(refusal)) if refusal.leaves_a_mail_notice() => {
+            let metadata = service_metadata();
+            jobs.store
+                .note_refused_mail(
+                    RefusedMail {
+                        work: work.named(),
+                        from,
+                        mail_id,
+                        refusal,
+                    },
+                    Minting {
+                        ids: jobs.ids.as_ref(),
+                        metadata: &metadata,
+                        at: jobs.clock.now(),
+                    },
+                )
+                .await?;
+        }
+        _ => {}
+    }
+    Ok(outcome)
+}
+
+async fn deliver(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
     let author = match MailAuthor::new(input.author) {
         Ok(author) => author,
         Err(refusal) => return Ok(Err(refusal.into())),
@@ -68,11 +101,6 @@ pub async fn send_mail(jobs: &Jobs, input: SendMailInput) -> Outcome<Sent> {
             },
         )
         .await?;
-    if let Ok(sent) = &sent
-        && sent.wakes_restart
-    {
-        jobs.start_due_restarts().await;
-    }
     Ok(sent)
 }
 
