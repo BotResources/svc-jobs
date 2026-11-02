@@ -66,5 +66,8 @@ assert_plain_integers "default values"
 assert_plain_integers "values of one million and above" --values "${workdir}/large.yaml"
 assert_refused "cancelled retention of 7d" --set-string retention.cancelledDays=7d
 assert_refused "saved state of 1MB" --set-string savedState.maxBytes=1MB
+assert_refused "cancelled retention of 08" --set-string retention.cancelledDays=08
+assert_refused "retention of 010" --set-string retention.days=010
+assert_refused "port of 08006" --set-string port=08006
 
 exit "$((failures > 0))"

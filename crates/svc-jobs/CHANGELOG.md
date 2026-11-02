@@ -272,7 +272,9 @@ to `## Unreleased`).
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
   in exponent form, for example `1.048576e+06`, and Jobs refused to boot with
   it. A chart value of these settings that is not a whole number, for example
-  `retention.cancelledDays: 7d`, is refused when the chart renders.
+  `retention.cancelledDays: 7d`, or one with a leading zero, for example
+  `retention.cancelledDays: 08` (read as an octal number, so as 0), is refused when the chart
+  renders.
 
 ## 0.6.2 - 2026-11-01
 
