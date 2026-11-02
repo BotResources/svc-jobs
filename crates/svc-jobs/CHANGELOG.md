@@ -34,9 +34,6 @@ to `## Unreleased`).
   transaction, and is refused as a write race when a restart Job or a due restart
   appeared since Jobs decided. The event is attributed to the service account
   of Jobs.
-- A restart that is refused for good (the runner type is retired, the parent Job
-  is terminal, deleted or unknown, or the Tree is scrubbed) removes its pending
-  wake, so that the Job it belongs to can be finished.
 - `JOBS_RETENTION_DAYS` (default `30`, from `1` to `395`) and
   `JOBS_CANCELLED_RETENTION_DAYS` (default `0`, from `0` to `395`, never above
   `JOBS_RETENTION_DAYS`). Jobs refuses to boot, naming the setting, when a value
