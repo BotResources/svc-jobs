@@ -120,8 +120,10 @@ to `## Unreleased`).
   kind and reason code of a failure. Each Job of the Tree gets a
   `JobContentErased` delta, shows no Passport, payload or configuration, and
   shows the time of its first erasure (a Job already erased keeps its own).
-  A lowered `JOBS_RETENTION_DAYS` scrubs, at the next sweep, the Trees it now
-  covers; a higher value restores nothing.
+  A lowered `JOBS_RETENTION_DAYS` scrubs, from the next sweep on, the Trees it
+  now covers, 200 Trees per sweep, the oldest first; a higher value restores
+  nothing. A Tree whose scrub fails does not stop the sweep: the Trees behind
+  it are scrubbed, and the failure is counted in `jobs_scrub_failures_total`.
 - After the scrub of a Tree, a manual retry of one of its Jobs is refused
   `tree_scrubbed`, creates no successor, and the `manual_retry` affordance of
   the Job is blocked with the same reason code. No agent of the Tree can be
@@ -135,8 +137,19 @@ to `## Unreleased`).
   `payload_not_uploaded`, and a send that names the erased attachment is
   refused `attachment_not_uploaded`. The payload kept for a Job that was
   created stays until its Tree is scrubbed.
-- `tree_scrubs` and the indexes the scrub scans (migration
-  `0013_tree_scrub.sql`).
+- `tree_scrubs` and the indexes the scrub scans, among them `jobs_initial_created`
+  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration builds
+  nine indexes without the concurrent option, one of them over the whole
+  history of published integration events: the first boot of this version takes
+  longer on a large history, and writes wait while an index is built.
+- `jobs_scrub_failures_total`: the number of Trees whose scrub failed since the
+  process started, at zero from the first scrape. A series that keeps rising
+  means a Tree cannot be scrubbed.
+- The sweep of uploads that no Job or mail uses and the creation of a Job from
+  a kept payload (or the send of a mail with attachments) no longer race: a
+  payload or an attachment is never erased while the Job or the mail that uses
+  it is being created, and a creation whose payload the sweep erased first is
+  rejected `payload_not_uploaded`.
 - The scrub does not reach the integration events already carried by the
   stream (the stream keeps them for its own retention), nor backups, and it does
   not rewrite the display names recorded with a manual retry, a deletion, a
@@ -146,7 +159,10 @@ to `## Unreleased`).
 ### Changed
 
 - The schema no longer carries a description on the fields `requestedPriority`,
-  `effectivePriority` and `forcedPriority` of the Job view.
+  `effectivePriority` and `forcedPriority` of the Job view. The descriptions
+  were: `requestedPriority`, "The level the producer requested — for a child,
+  its parent's level."; `effectivePriority`, "The level the Job waits at.";
+  `forcedPriority`, "The level a super user forced, when one did.".
 - A cancel keeps the notice of a cancelled called Job only for a Caller that
   stays in the agent directory. When one cancel reaches a called Job and its
   Caller (a Job above both, or the restart Job of the Caller), the Caller gets
@@ -180,6 +196,10 @@ to `## Unreleased`).
 
 ### Fixed
 
+- A manual retry decided before the scrub of its Tree and committed after it is
+  refused as a write race instead of putting erased content back in a Job of a
+  scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
+  A restart decided before the scrub creates no Job.
 - The chart renders every integer environment setting as a plain integer. An integer of one
   million or more (for example `savedState.maxBytes` at its default of
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered

@@ -488,7 +488,7 @@ failing job by job.
 | `JOBS_RETRY_FACTOR` | `3` | Exponential backoff factor. |
 | `JOBS_RETRY_JITTER_BASIS_POINTS` | `2000` | Jitter span applied to each computed delay. |
 | `JOBS_MAX_ATTEMPTS_CEILING` | `10` | Service ceiling; a job's own `max_attempts` may lower, never exceed it (default per-job budget: 3). |
-| `JOBS_BACKSTOP_INTERVAL_SECONDS` | `30` | Sweep interval for the run-duration, inactivity and cancel-entry backstops. |
+| `JOBS_BACKSTOP_INTERVAL_SECONDS` | `30` | Sweep interval for the run-duration, inactivity and cancel-entry backstops, the scrub of the Trees whose retention has passed (200 Trees per sweep), the erasure of the uploads that no Job or mail uses, and the erasure of the request data of cancelled Jobs. |
 | `JOBS_DISPATCH_MINIMUM_WAKE_MILLISECONDS` | `250` | Floor between dispatch passes. |
 | `JOBS_RETIREMENT_QUIET_PERIOD_SECONDS` | `86400` (24 h) | A deprecated runner type may only be retired this long after its latest terminal run. |
 | `JOBS_RUNNER_TYPE_IMPACT_INTERVAL_SECONDS` | `60` | Sweep interval of the durable timer that emits `RunnerTypeBecameRetirable` once the quiet period elapses. |

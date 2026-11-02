@@ -34,8 +34,12 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   retention has passed since the last activity, never twice).
 - `events_of_a_scrub(&[Job], at)`: one `JobContentErased` per Job of the Tree,
   carrying the time of the scrub, or the time the request data of that Job was
-  first erased when a cancel sweep had erased it earlier, and a `JobAffordancesChanged` for each Job whose manual retry was available.
+  first erased when a cancel sweep had erased it earlier, and a
+  `JobAffordancesChanged` for each Job whose manual retry was available.
 - `ports::scrub::{TreeScrubs, TreeScrub, ScrubOutcome, OrphanUploads}`.
+  `TreeScrubs::trees_due_for_scrub(due_before, batch, after)` returns
+  `DueTree { initial_job_id, created_at }` values, oldest Initial Job first,
+  and `after` continues a page after the last Tree of the previous page.
 - `JobsError::TreeScrubbed` (`tree_scrubbed`), `Job::tree_scrubbed`: a manual
   retry, a restart, and the affordance for the manual retry, are refused in a
   scrubbed Tree.
