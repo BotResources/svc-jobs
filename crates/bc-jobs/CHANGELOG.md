@@ -10,6 +10,18 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 
 ## 0.9.0 - 2026-11-01
 
+- `commands::job::auto_finish::AutoFinishFacts` and its `decide`: the decision
+  that a called Job is finished by rule, from the facts of the Job, of its
+  restart Jobs, of the answers its Caller read and of the Caller Runs. It
+  returns `FinishByRule` (the Job, the restart Jobs to finish and the premise
+  the commit must still find true) or an `AutoFinishWait` with a stable
+  reason. `ResolutionRequester::Rule(FinishVerdict)` lets `Job::finish` accept
+  that decision and no other actor: the verdict can only be made by `decide`.
+- `ports::auto_finish::AutoFinishReader`: the facts of a Job, the Jobs a
+  sweep considers (paged by Job id), the Jobs called by given Runs and the
+  Jobs called from the Tree of a given restart Job.
+- `commands::job::restart::refusal_ends_the_wake`: whether a refused restart
+  leaves no wake behind.
 - `Job::content_erased_at`, `Job::has_request_data_erased` and
   `Job::request_data_erasure_due(Retention, now)`: the decision that the request
   data of a cancelled Job is due (never for a Job that is not cancelled, for a

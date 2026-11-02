@@ -117,6 +117,17 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   restart Job of the Caller when it took the address of a background Caller
   or every agent of a sync Caller), and no restart starts for it. A Caller
   whose agent stays keeps the notice. A Result is kept 7 days.
+- **Jobs finishes a called Job that its Caller forgot to finish.** When the
+  Caller got the answer (the notice that the called Run completed is marked as
+  read for a sync call, the last direct mail from the completed Run to the
+  address it named for a background call) and a Run that may finish the Job (the
+  Requester Run, or a Run acting for it through a restart) ended with success
+  after that, Jobs finishes the Job and the restart Jobs of it that are not
+  terminal. It does so at the end of that Run and in every backstop sweep. It
+  waits while a restart Job of it is waiting, retrying or live, or a restart of
+  one of its Runs is due, and does nothing for a Caller Run that failed or was
+  cancelled. A runner or a service that is not the Requester is still refused,
+  and a finish sent afterwards is refused `job_terminal`.
 - **A removal of Runs from the agent directory erases at once.** The failure or
   the cancel of a Run, and the cancel of a Job, remove the agents, the mail
   addresses, the saved state, the unread items and the Results addressed to the
