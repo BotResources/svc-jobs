@@ -54,6 +54,20 @@ pub async fn age_tree(durable: &Durable, root: Uuid, days: i64) {
     }
 }
 
+pub async fn age_retry_schedules(durable: &Durable, root: Uuid, days: i64) {
+    let days = i32::try_from(days).expect("days fit");
+    sqlx::query(
+        "UPDATE run_retry_schedules SET due_at = due_at - make_interval(days => $2::int) \
+         WHERE failed_run_id IN (SELECT r.id FROM runs r \
+             WHERE r.job_id IN (SELECT id FROM jobs WHERE root_job_id = $1))",
+    )
+    .bind(root)
+    .bind(days)
+    .execute(durable.pool())
+    .await
+    .unwrap_or_else(|error| panic!("aging run_retry_schedules.due_at: {error}"));
+}
+
 pub async fn age_orphan_uploads(durable: &Durable, days: i64) {
     let days = i32::try_from(days).expect("days fit");
     for (table, column) in [

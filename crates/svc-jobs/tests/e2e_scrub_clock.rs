@@ -7,7 +7,7 @@ use support::fixture::JobsFixture;
 use support::lineage::{create, live_runner};
 use support::producer::Producer;
 use support::runner;
-use support::scrub::{age_tree, assert_not_scrubbed_for, await_scrubbed};
+use support::scrub::{age_retry_schedules, age_tree, assert_not_scrubbed_for, await_scrubbed};
 use support::scrub_scene::{ENDED_RUN, end_run_and_finish, live_root, long_runs};
 use support::{LONG, QUIET, gql, wire};
 use uuid::Uuid;
@@ -73,7 +73,8 @@ async fn the_clock_of_a_tree_stops_while_a_run_lives_and_runs_again_from_its_end
 }
 
 #[tokio::test]
-async fn the_clock_of_a_tree_stops_while_a_job_is_about_to_retry_and_runs_again_from_its_end() {
+async fn the_clock_of_a_tree_stops_while_a_job_is_about_to_retry_and_runs_again_from_the_due_time_of_the_retry()
+ {
     let fixture = JobsFixture::start_with(long_runs()).await;
     let durable = Durable::open(&fixture.app_url()).await;
     let live = live_root(&fixture, "clock-retries", 2).await;
@@ -95,10 +96,24 @@ async fn the_clock_of_a_tree_stops_while_a_job_is_about_to_retry_and_runs_again_
 
     cancel(&fixture, live.root).await;
     assert_not_scrubbed_for(&durable, live.root, QUIET, "the Job ended just now").await;
-    age_tree(&durable, live.root, 29).await;
-    assert_not_scrubbed_for(&durable, live.root, QUIET, "29 days after the end").await;
-    age_tree(&durable, live.root, 2).await;
-    await_scrubbed(&durable, live.root, "31 days after the end").await;
+    age_tree(&durable, live.root, 31).await;
+    assert_not_scrubbed_for(
+        &durable,
+        live.root,
+        QUIET,
+        "31 days after the end, the retry is still 40 days away",
+    )
+    .await;
+    age_retry_schedules(&durable, live.root, 69).await;
+    assert_not_scrubbed_for(
+        &durable,
+        live.root,
+        QUIET,
+        "29 days after the retry was due",
+    )
+    .await;
+    age_retry_schedules(&durable, live.root, 2).await;
+    await_scrubbed(&durable, live.root, "31 days after the retry was due").await;
     durable.close().await;
     fixture.shutdown().await;
 }

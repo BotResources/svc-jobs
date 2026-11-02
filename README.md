@@ -146,8 +146,8 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
 - **A Tree is scrubbed `JOBS_RETENTION_DAYS` days after its last activity, and
   not while a Job of it is waiting, in progress or about to retry, or a Run of it
   is live.** The last activity is the latest creation, dispatch, start, end,
-  Step start and resolution in the Tree, at the time Jobs recorded it; a manual
-  retry and a restart Job belong to the Tree and put the clock back to zero.
+  Step start, due time of a retry and resolution in the Tree, at the time Jobs
+  recorded it; a manual retry and a restart Job belong to the Tree and put the clock back to zero.
   The scrub erases the payloads, Passports, configurations, Results, saved
   states, mails and attachments, unread items, labels of Steps and plan items,
   log messages, and the parameters and diagnostic of failures, in the tables

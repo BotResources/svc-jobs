@@ -123,8 +123,8 @@ to `## Unreleased`).
   progress or about to retry, none of its Runs is live, and
   `JOBS_RETENTION_DAYS` have passed since its last activity. The last activity
   is the latest of the creation of a Job, the dispatch, the start and the end of
-  a Run, the start of a Step and the resolution of a Job, each at the time Jobs
-  recorded it (never the time a runner reported). A manual retry and a restart
+  a Run, the start of a Step, the due time of a retry and the resolution of a
+  Job, each at the time Jobs recorded it (never the time a runner reported). A manual retry and a restart
   Job belong to the Tree of the Job they follow, so they put the clock back to
   zero. The scrub erases, for every Job of the Tree: the payloads (also the
   payloads kept by Jobs), Passports and configurations; the Results, read or

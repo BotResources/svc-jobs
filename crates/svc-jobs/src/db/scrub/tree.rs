@@ -44,6 +44,9 @@ pub fn facts_of(tree: &str) -> String {
                     WHERE e.aggregate_type = 'Job' AND e.event_type = 'RunStepStarted' \
                 UNION ALL \
                 SELECT jr.occurred_at FROM job_resolutions jr JOIN tree tj ON tj.id = jr.job_id \
+                UNION ALL \
+                SELECT sc.due_at FROM run_retry_schedules sc \
+                    JOIN runs r ON r.id = sc.failed_run_id JOIN tree tj ON tj.id = r.job_id \
             ) m) AS last_activity"
     )
 }
