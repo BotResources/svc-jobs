@@ -23,10 +23,12 @@ headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
   the checks that load a mail.
 - `UploadRefusal::ContentErased` (`content_erased`), `ExistingJob::content_erased`
   and `MailRefusal::MailContentErased` (`mail_content_erased`).
-- `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs that
-  its removed agents were restarted from, and the mail addresses that one cancel removes from the agent directory, and
+- `domain::directory::removal::DirectoryRemoval`: the Runs, the Runs left
+  without an agent because a removed restart Run took them, and the mail
+  addresses that one cancel removes from the agent directory, and
   `removes_the_caller_of(&CallNotices)`, the decision that a Caller removed by
-  the same cancel keeps no notice.
+  the same cancel keeps no notice: a background Caller by its Run or its
+  address, a sync Caller by its Run or its emptied Run.
 - `Job::record_run_started_request`, `commands::job::run_start_request::StartRequestFact`
   and `domain::run::start_refusal::StartRefusal`: the decision of the started
   request (hold under a start id, accepted again for the same start id and

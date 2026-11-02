@@ -109,11 +109,12 @@ with a keepachangelog `CHANGELOG.md`, and built on the shared
   leaves a refusal notice at the caller address; a mail that Jobs refuses
   leaves a mail notice at the sender address. A failure, cancel, refusal or mail
   notice wakes a finished restartable agent and, left unread at the end of a
-  successful Run, starts the restart at once. A Caller Run
-  that has failed or been cancelled receives no notice of any type; neither does
-  a Caller that the same cancel removes (a Job above both the Caller and the
-  called Job, or the restart Job of the Caller), and no restart starts for it. A Result is
-  kept 7 days.
+  successful Run, starts the restart at once. A Caller Run that has failed or
+  been cancelled receives no notice of any type; neither does a Caller that the
+  same cancel removes (a Job above both the Caller and the called Job, or the
+  restart Job of the Caller when it took the address of a background Caller
+  or every agent of a sync Caller), and no restart starts for it. A Caller
+  whose agent stays keeps the notice. A Result is kept 7 days.
 - **A removal of Runs from the agent directory erases at once.** The failure or
   the cancel of a Run, and the cancel of a Job, remove the agents, the mail
   addresses, the saved state, the unread items and the Results addressed to the

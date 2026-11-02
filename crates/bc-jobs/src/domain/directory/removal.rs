@@ -7,34 +7,37 @@ use crate::domain::runner::call_notices::CallNotices;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DirectoryRemoval {
     runs: BTreeSet<RunId>,
-    acted_for_runs: BTreeSet<RunId>,
+    emptied_origin_runs: BTreeSet<RunId>,
     addresses: BTreeSet<AgentId>,
 }
 
 impl DirectoryRemoval {
     pub fn new(
         runs: impl IntoIterator<Item = RunId>,
-        acted_for_runs: impl IntoIterator<Item = RunId>,
+        emptied_origin_runs: impl IntoIterator<Item = RunId>,
         addresses: impl IntoIterator<Item = AgentId>,
     ) -> Self {
         Self {
             runs: runs.into_iter().collect(),
-            acted_for_runs: acted_for_runs.into_iter().collect(),
+            emptied_origin_runs: emptied_origin_runs.into_iter().collect(),
             addresses: addresses.into_iter().collect(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.runs.is_empty() && self.acted_for_runs.is_empty() && self.addresses.is_empty()
+    pub fn runs(&self) -> impl Iterator<Item = RunId> + '_ {
+        self.runs.iter().copied()
     }
 
     pub fn removes_the_caller_of(&self, call: &CallNotices) -> bool {
-        self.runs.contains(&call.caller_run)
-            || self.acted_for_runs.contains(&call.caller_run)
-            || (call.mode == CallMode::Background
-                && call
-                    .address
-                    .is_some_and(|address| self.addresses.contains(&address)))
+        if self.runs.contains(&call.caller_run) {
+            return true;
+        }
+        match call.mode {
+            CallMode::Sync => self.emptied_origin_runs.contains(&call.caller_run),
+            CallMode::Background => call
+                .address
+                .is_some_and(|address| self.addresses.contains(&address)),
+        }
     }
 }
 
@@ -63,10 +66,19 @@ mod tests {
     #[test]
     fn a_cancel_that_removes_nothing_keeps_every_caller() {
         let removal = DirectoryRemoval::default();
-        assert!(removal.is_empty());
+        assert_eq!(removal.runs().count(), 0);
         for mode in [CallMode::Sync, CallMode::Background] {
             assert!(!removal.removes_the_caller_of(&call(mode, run(), Some(address()))));
         }
+    }
+
+    #[test]
+    fn the_runs_a_removal_names_are_the_runs_it_was_built_with() {
+        let (first, second) = (run(), run());
+        let removal = DirectoryRemoval::new([second, first], [run()], [address()]);
+        let mut expected = vec![first, second];
+        expected.sort();
+        assert_eq!(removal.runs().collect::<Vec<_>>(), expected);
     }
 
     #[test]
@@ -83,11 +95,19 @@ mod tests {
     }
 
     #[test]
-    fn a_caller_whose_restart_run_is_removed_gets_no_notice_in_either_mode() {
+    fn a_sync_caller_whose_origin_run_is_left_without_agent_gets_no_notice() {
         let origin = run();
         let removal = DirectoryRemoval::new([run()], [origin], []);
         assert!(removal.removes_the_caller_of(&call(CallMode::Sync, origin, None)));
-        assert!(removal.removes_the_caller_of(&call(CallMode::Background, origin, None)));
+        assert!(!removal.removes_the_caller_of(&call(CallMode::Sync, run(), None)));
+    }
+
+    #[test]
+    fn a_background_caller_whose_agent_stays_keeps_its_notice_although_its_origin_run_is_left_without_the_restarted_agent()
+     {
+        let (origin, stays) = (run(), address());
+        let removal = DirectoryRemoval::new([run()], [origin], [address()]);
+        assert!(!removal.removes_the_caller_of(&call(CallMode::Background, origin, Some(stays))));
     }
 
     #[test]

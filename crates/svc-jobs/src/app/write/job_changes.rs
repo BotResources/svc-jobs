@@ -99,8 +99,9 @@ pub async fn commit_job_changes_in(
     for followup in rederive::of_jobs_back_to_waiting(&mut *tx, &changes, limits).await? {
         apply_change(&mut *tx, ids, &followup, metadata, at, limits, &removal).await?;
     }
-    for change in changes.iter().filter(|change| change.removes_directory) {
-        apply::directory::remove_job_subtree(tx, change.job_id.as_uuid(), at).await?;
+    let removed_runs: Vec<Uuid> = removal.runs().map(|run| run.as_uuid()).collect();
+    if !removed_runs.is_empty() {
+        apply::directory::remove_job_subtree(tx, &removed_runs, at).await?;
     }
     Ok(())
 }

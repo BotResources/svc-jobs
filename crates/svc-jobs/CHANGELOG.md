@@ -90,10 +90,14 @@ to `## Unreleased`).
   stays in the agent directory. When one cancel reaches a called Job and its
   Caller (a Job above both, or the restart Job of the Caller), the Caller gets
   no notice, no restart is queued for its agents and no arrival doorbell is
-  published for it. A cancel of the called Job alone, or the called runner
-  cancelling itself, still tells its Caller.
+  published for it. A background Caller is removed when its Run or its address
+  is removed; a sync Caller is removed when its Run is removed or when a restart
+  Run that the cancel removes took every agent of its Run. A Caller whose agent
+  stays at its Run, also when a removed restart Run added another agent, keeps
+  the notice and restarts for it. A cancel of the called Job alone, or the
+  called runner cancelling itself, still tells its Caller.
 - The removal of Runs from the agent directory also deletes the queued restarts
-  of those Runs and the notices waiting at the addresses it removes, and marks a Run that had completed as removed, so a late fact
+  of those Runs and marks a Run that had completed as removed, so a late fact
   cannot leave a notice for it. A removed Run that had completed now answers
   `run_removed` instead of `run_ended` on the runner surface.
 - A background call whose called Job is cancelled now tells the Caller by a
