@@ -111,6 +111,38 @@ fn a_declarant_repeating_a_cancel_of_a_terminal_job_is_still_answered() {
 }
 
 #[test]
+fn an_owner_repeating_a_cancel_of_a_terminal_job_is_still_answered() {
+    let first = command();
+    let job = cancelled_by(first);
+    let owner = ActorRef::new(Uuid::now_v7());
+    let claim = CancelRequester::Owner(DeclarationClaim::new(Some(owner), owner));
+    assert_eq!(
+        job.cancel(CancelJob {
+            resolution_id: resolution_id(),
+            requester: claim.clone(),
+        }),
+        Err(JobsError::JobAlreadyTerminal {
+            status: "CANCELLED"
+        })
+    );
+    assert!(job.repeat_of_cancel(first, &claim).unwrap().is_some());
+}
+
+#[test]
+fn an_owner_that_did_not_declare_the_job_never_gets_the_first_cancel_outcome() {
+    let first = command();
+    let job = cancelled_by(first);
+    let stranger = CancelRequester::Owner(DeclarationClaim::new(
+        Some(ActorRef::new(Uuid::now_v7())),
+        ActorRef::new(Uuid::now_v7()),
+    ));
+    assert_eq!(
+        job.repeat_of_cancel(first, &stranger),
+        Err(JobsError::NotOwner)
+    );
+}
+
+#[test]
 fn a_command_id_that_resolved_nothing_is_no_repeat() {
     let job = completed_by(command());
     assert_eq!(job.repeat_of_finish(command(), &declarant()), Ok(None));
