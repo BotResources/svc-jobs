@@ -1,21 +1,18 @@
 use async_trait::async_trait;
-use bc_jobs::domain::ids::{AgentId, AttachmentId, ItemId, JobId, RunId};
-use bc_jobs::domain::mail::access::guard_sender_holds;
-use bc_jobs::domain::mail::content::{MailContent, SendAdmission, guard_attachments_uploaded};
-use bc_jobs::domain::mail::delivery::{
-    AddressStanding, Deliveries, Recipient, RecipientKind, decide_deliveries,
-};
+use bc_jobs::domain::ids::ItemId;
+use bc_jobs::domain::mail::content::{MailContent, SendAdmission};
+use bc_jobs::domain::mail::delivery::{Deliveries, RecipientKind, decide_deliveries};
 use bc_jobs::domain::mail::inbox::ItemKind;
 use bc_jobs::domain::mail::refusal::MailRefusal;
 use bc_jobs::domain::runner::refusal::RunnerRefusal;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::mail::{MailSender, Minting, SendMail, Sent};
-use chrono::{DateTime, Utc};
-use sqlx::PgConnection;
 use uuid::Uuid;
 
+use super::checks::{guard_attachments, guard_sender, recipients_of};
 use super::live::live_run_of;
-use super::load::{load_mail, standing_of};
+use super::load::load_mail;
+use super::rows::{insert_item, insert_mail};
 use crate::db::PgStore;
 use crate::db::doorbell::{Arrival, Ring, ring};
 use crate::db::hydrate::unavailable;
@@ -119,161 +116,4 @@ impl MailSender for PgStore {
                 .collect(),
         }))
     }
-}
-
-pub(super) async fn guard_sender(
-    tx: &mut PgConnection,
-    from: AgentId,
-    run_id: RunId,
-) -> Result<Result<(), MailRefusal>, PortError> {
-    let holder: Option<Uuid> = sqlx::query_scalar(
-        "SELECT run_id::uuid FROM directory_agents WHERE agent_id = $1 AND has_inbox",
-    )
-    .bind(from.as_uuid())
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    let holder = holder.map(RunId::new).transpose()?;
-    Ok(guard_sender_holds(holder, run_id))
-}
-
-async fn guard_attachments(
-    tx: &mut PgConnection,
-    content: &MailContent,
-) -> Result<Result<(), MailRefusal>, PortError> {
-    let named: Vec<Uuid> = content
-        .attachments
-        .iter()
-        .map(|attachment| attachment.attachment_id.as_uuid())
-        .collect();
-    let uploaded: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT attachment_id FROM mail_attachments \
-         WHERE mail_id = $1 AND uploader_address = $2 AND attachment_id = ANY($3)",
-    )
-    .bind(content.mail_id.as_uuid())
-    .bind(content.from.as_uuid())
-    .bind(&named)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    let uploaded: Vec<AttachmentId> = uploaded.into_iter().map(AttachmentId::new).collect();
-    Ok(guard_attachments_uploaded(&uploaded, content))
-}
-
-async fn recipients_of(
-    tx: &mut PgConnection,
-    content: &MailContent,
-) -> Result<Vec<Recipient>, PortError> {
-    let addresses: Vec<Uuid> = content
-        .to
-        .iter()
-        .chain(&content.cc)
-        .map(|address| address.as_uuid())
-        .collect();
-    let mut standings = standing_of(tx, &addresses).await?;
-    let kinds = content
-        .to
-        .iter()
-        .map(|address| (*address, RecipientKind::Direct))
-        .chain(
-            content
-                .cc
-                .iter()
-                .map(|address| (*address, RecipientKind::Cc)),
-        );
-    Ok(kinds
-        .map(|(address, kind)| Recipient {
-            address,
-            kind,
-            standing: standings
-                .remove(&address.as_uuid())
-                .unwrap_or(AddressStanding::Unknown),
-        })
-        .collect())
-}
-
-async fn insert_mail(
-    tx: &mut PgConnection,
-    content: &MailContent,
-    run_id: RunId,
-    initial_job_id: JobId,
-    at: DateTime<Utc>,
-) -> Result<bool, PortError> {
-    let inserted = sqlx::query(
-        "INSERT INTO mails (mail_id, sender_address, sender_run_id, initial_job_id, author, \
-            source_conversation_id, subject, body, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (mail_id) DO NOTHING",
-    )
-    .bind(content.mail_id.as_uuid())
-    .bind(content.from.as_uuid())
-    .bind(run_id.as_uuid())
-    .bind(initial_job_id.as_uuid())
-    .bind(content.author.as_str())
-    .bind(content.source_conversation.as_uuid())
-    .bind(&content.subject)
-    .bind(&content.body)
-    .bind(at)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?
-    .rows_affected();
-    if inserted == 0 {
-        return Ok(false);
-    }
-    for (address, kind) in content
-        .to
-        .iter()
-        .map(|address| (address, RecipientKind::Direct))
-        .chain(
-            content
-                .cc
-                .iter()
-                .map(|address| (address, RecipientKind::Cc)),
-        )
-    {
-        sqlx::query("INSERT INTO mail_recipients (mail_id, address, kind) VALUES ($1, $2, $3)")
-            .bind(content.mail_id.as_uuid())
-            .bind(address.as_uuid())
-            .bind(kind.as_db_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(unavailable)?;
-    }
-    let named: Vec<Uuid> = content
-        .attachments
-        .iter()
-        .map(|attachment| attachment.attachment_id.as_uuid())
-        .collect();
-    sqlx::query(
-        "UPDATE mail_attachments SET listed = true WHERE mail_id = $1 AND attachment_id = ANY($2)",
-    )
-    .bind(content.mail_id.as_uuid())
-    .bind(&named)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    Ok(true)
-}
-
-pub async fn insert_item(
-    tx: &mut PgConnection,
-    item_id: ItemId,
-    kind: ItemKind,
-    address: AgentId,
-    mail_id: Uuid,
-    at: DateTime<Utc>,
-) -> Result<(), PortError> {
-    sqlx::query(
-        "INSERT INTO inbox_items (item_id, kind, address, mail_id, accepted_at) \
-         VALUES ($1, $2, $3, $4, $5)",
-    )
-    .bind(item_id.as_uuid())
-    .bind(kind.as_db_str())
-    .bind(address.as_uuid())
-    .bind(mail_id)
-    .bind(at)
-    .execute(&mut *tx)
-    .await
-    .map_err(unavailable)?;
-    Ok(())
 }

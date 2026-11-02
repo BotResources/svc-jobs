@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
-use super::send::guard_sender;
+use super::checks::guard_sender;
 use crate::db::PgStore;
 use crate::db::hydrate::unavailable;
 use crate::db::work::{addresses_of_run, require_work};
