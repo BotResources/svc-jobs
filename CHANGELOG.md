@@ -47,8 +47,9 @@ form to decide whether a version ships.
   presence yet; the same request is accepted once the presence is live, and a
   final refusal always wins over it), `run_held`, `run_reserved_elsewhere`,
   `run_not_pending` (the Run or its Job has ended, also the repeat of the start
-  id after the end), `malformed` (the request cannot be read: also a wrong
-  wire version or a start id that is not a UUIDv7).
+  id after the end), `malformed` (the request cannot be read: also a missing or
+  wrong wire version, a missing or empty Instance key, an Instance key that is
+  not a subject segment, or a start id that is not a UUIDv7).
 - The start id is stored with the hold (`run_starts.start_id`, migration
   `0010_run_start_id.sql`); a Run held by the status-stream started fact has
   none.
@@ -120,8 +121,8 @@ form to decide whether a version ships.
   progress or about to retry, none of its Runs is live, and
   `JOBS_RETENTION_DAYS` have passed since its last activity. The last activity
   is the latest of the creation of a Job, the dispatch, the start and the end of
-  a Run, the start of a Step and the resolution of a Job, each at the time Jobs
-  recorded it (never the time a runner reported). A manual retry and a restart
+  a Run, the start of a Step, the due time of a retry and the resolution of a
+  Job, each at the time Jobs recorded it (never the time a runner reported). A manual retry and a restart
   Job belong to the Tree of the Job they follow, so they put the clock back to
   zero. The scrub erases, for every Job of the Tree: the payloads (also the
   payloads kept by Jobs), Passports and configurations; the Results, read or
@@ -138,7 +139,7 @@ form to decide whether a version ships.
   `JobContentErased` delta, shows no Passport, payload or configuration, and
   shows the time of its first erasure (a Job already erased keeps its own).
   A lowered `JOBS_RETENTION_DAYS` scrubs, from the next sweep on, the Trees it
-  now covers, 200 Trees per sweep, the oldest first; a higher value restores
+  now covers, about 200 Trees per sweep, the oldest first; a higher value restores
   nothing. A Tree whose scrub fails does not stop the sweep: the Trees behind
   it are scrubbed, and the failure is counted in `jobs_scrub_failures_total`.
 - After the scrub of a Tree, a manual retry of one of its Jobs is refused
@@ -155,13 +156,26 @@ form to decide whether a version ships.
   refused `attachment_not_uploaded`. The payload kept for a Job that was
   created stays until its Tree is scrubbed.
 - `tree_scrubs` and the indexes the scrub scans, among them `jobs_initial_created`
-  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration builds
-  nine indexes without the concurrent option, one of them over the whole
-  history of published integration events: the first boot of this version takes
-  longer on a large history, and writes wait while an index is built.
+  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration adds
+  the column `jobs.tree_scrubbed_at` and builds ten indexes without the
+  concurrent option, one of them over the whole history of published integration
+  events: the first boot of this version takes longer on a large history, and
+  writes wait while an index is built.
+- The Initial Job of a scrubbed Tree is marked (`jobs.tree_scrubbed_at`, migration
+  `0013_tree_scrub.sql`) in the transaction of the scrub, and `jobs_initial_created`
+  holds only the Trees not yet scrubbed, so a sweep reads only those.
+- A Job is marked settled (`jobs.settled_at`, migration `0016_called_jobs_open.sql`) in
+  the transaction of its resolution or deletion, and `jobs_called_open` holds the
+  Jobs called by a Run that are not settled, so the sweep that finishes called Jobs
+  reads only those. The migration fills `settled_at` for every called Job already
+  resolved or deleted, which rewrites the row of each of them, and builds
+  `jobs_called_open` in one transaction: the first boot of this version takes
+  longer on a large history of called Jobs, and the pods still running read and
+  write `jobs` only after the migration ends.
 - `jobs_scrub_failures_total`: the number of Trees whose scrub failed since the
   process started, at zero from the first scrape. A series that keeps rising
-  means a Tree cannot be scrubbed.
+  means a Tree cannot be scrubbed. A Tree that another writer holds past the bounded
+  wait is left for the next sweep and is not counted.
 - The sweep of uploads that no Job or mail uses and the creation of a Job from
   a kept payload (or the send of a mail with attachments) no longer race: a
   payload or an attachment is never erased while the Job or the mail that uses
@@ -260,6 +274,14 @@ form to decide whether a version ships.
 
 ### Fixed
 
+- The last activity of a Tree includes the due time of a retry of its Jobs: a
+  Job cancelled while it waits for a retry due in 40 days is scrubbed
+  `JOBS_RETENTION_DAYS` days after that due time.
+- A payload uploaded for a Job whose Tree a scrub is erasing waits for the scrub
+  and is then refused `request_data_erased`, instead of being stored on an erased
+  Job. A cancel and a creation that names a kept payload take the lock of the kept
+  payload before the lock of the Tree, so they no longer wait for the deadlock
+  detector.
 - A manual retry decided before the scrub of its Tree and committed after it is
   refused as a write race instead of putting erased content back in a Job of a
   scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
@@ -269,7 +291,9 @@ form to decide whether a version ships.
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
   in exponent form, for example `1.048576e+06`, and Jobs refused to boot with
   it. A chart value of these settings that is not a whole number, for example
-  `retention.cancelledDays: 7d`, is refused when the chart renders.
+  `retention.cancelledDays: 7d`, or one with a leading zero, for example
+  `retention.cancelledDays: 08` (read as an octal number, so as 0), is refused when the chart
+  renders.
 
 ## 0.6.2 - 2026-11-01
 

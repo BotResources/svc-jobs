@@ -142,7 +142,7 @@ to `## Unreleased`).
   `JobContentErased` delta, shows no Passport, payload or configuration, and
   shows the time of its first erasure (a Job already erased keeps its own).
   A lowered `JOBS_RETENTION_DAYS` scrubs, from the next sweep on, the Trees it
-  now covers, 200 Trees per sweep, the oldest first; a higher value restores
+  now covers, about 200 Trees per sweep, the oldest first; a higher value restores
   nothing. A Tree whose scrub fails does not stop the sweep: the Trees behind
   it are scrubbed, and the failure is counted in `jobs_scrub_failures_total`.
 - After the scrub of a Tree, a manual retry of one of its Jobs is refused
@@ -159,17 +159,22 @@ to `## Unreleased`).
   refused `attachment_not_uploaded`. The payload kept for a Job that was
   created stays until its Tree is scrubbed.
 - `tree_scrubs` and the indexes the scrub scans, among them `jobs_initial_created`
-  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration builds
-  nine indexes without the concurrent option, one of them over the whole
-  history of published integration events: the first boot of this version takes
-  longer on a large history, and writes wait while an index is built.
+  over the Initial Jobs (migration `0013_tree_scrub.sql`). The migration adds
+  the column `jobs.tree_scrubbed_at` and builds ten indexes without the
+  concurrent option, one of them over the whole history of published integration
+  events: the first boot of this version takes longer on a large history, and
+  writes wait while an index is built.
 - The Initial Job of a scrubbed Tree is marked (`jobs.tree_scrubbed_at`, migration
   `0013_tree_scrub.sql`) in the transaction of the scrub, and `jobs_initial_created`
   holds only the Trees not yet scrubbed, so a sweep reads only those.
 - A Job is marked settled (`jobs.settled_at`, migration `0016_called_jobs_open.sql`) in
   the transaction of its resolution or deletion, and `jobs_called_open` holds the
   Jobs called by a Run that are not settled, so the sweep that finishes called Jobs
-  reads only those.
+  reads only those. The migration fills `settled_at` for every called Job already
+  resolved or deleted, which rewrites the row of each of them, and builds
+  `jobs_called_open` in one transaction: the first boot of this version takes
+  longer on a large history of called Jobs, and the pods still running read and
+  write `jobs` only after the migration ends.
 - `jobs_scrub_failures_total`: the number of Trees whose scrub failed since the
   process started, at zero from the first scrape. A series that keeps rising
   means a Tree cannot be scrubbed. A Tree that another writer holds past the bounded
