@@ -197,10 +197,19 @@ async fn a_retry_after_a_failed_run_gets_none_of_the_rights_of_a_restart() {
         gesture::refusal(&state, "jobsSavedState"),
         "not_a_restart_run"
     );
+    durable
+        .await_count(
+            "SELECT count(*) FROM job_results WHERE result_id = $1",
+            result,
+            0,
+            "the failure of the Run erases the answer addressed to it",
+        )
+        .await;
     let read = support::restart::read_result(&fixture, &retry_work, result).await;
     assert_eq!(
         gesture::refusal(&read, "jobsReadResult"),
-        "not_addressed_to_you"
+        "result_unknown",
+        "a retry does not read what was addressed to the Run it retries: the failure erased it"
     );
     durable.close().await;
     fixture.shutdown().await;

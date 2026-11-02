@@ -97,7 +97,7 @@ async fn a_background_call_keeps_no_result() {
 }
 
 #[tokio::test]
-async fn a_manual_retry_of_the_caller_does_not_read_the_result_addressed_to_the_run_it_retries() {
+async fn a_manual_retry_of_the_caller_finds_no_result_addressed_to_the_run_it_retries() {
     let fixture = JobsFixture::start().await;
     let durable = Durable::open(&fixture.app_url()).await;
     let mut pair = pair(&fixture, "retry-result").await;
@@ -121,11 +121,11 @@ async fn a_manual_retry_of_the_caller_does_not_read_the_result_addressed_to_the_
         .fail_run(&caller_trigger, "PERMANENT", "boom_after_the_answer", None)
         .await;
     durable
-        .assert_count(
+        .await_count(
             "SELECT count(*) FROM job_results WHERE result_id = $1",
             result,
-            1,
-            "the answer outlives the failure of the Run it is addressed to",
+            0,
+            "the failure of the Run erases the answer addressed to it",
         )
         .await;
 
@@ -137,8 +137,8 @@ async fn a_manual_retry_of_the_caller_does_not_read_the_result_addressed_to_the_
 
     assert_eq!(
         gesture::refusal(&read, "jobsReadResult"),
-        "not_addressed_to_you",
-        "a retry of the Caller does not read what was addressed to the Run it retries"
+        "result_unknown",
+        "a retry of the Caller does not read what was addressed to the Run it retries: the failure erased it"
     );
     durable.close().await;
     fixture.shutdown().await;
