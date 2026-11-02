@@ -99,6 +99,48 @@ to `## Unreleased`).
   When the Job is cancelled after its restart Job failed, the kept payload is
   gone, so a manual retry of that restart Job is accepted and the Run of the new
   Job is refused `no_kept_payload` when it asks for the payload.
+- The scrub of a Tree. A Tree is scrubbed when none of its Jobs is waiting, in
+  progress or about to retry, none of its Runs is live, and
+  `JOBS_RETENTION_DAYS` have passed since its last activity. The last activity
+  is the latest of the creation of a Job, the dispatch, the start and the end of
+  a Run, the start of a Step and the resolution of a Job, each at the time Jobs
+  recorded it (never the time a runner reported). A manual retry and a restart
+  Job belong to the Tree of the Job they follow, so they put the clock back to
+  zero. The scrub erases, for every Job of the Tree: the payloads (also the
+  payloads kept by Jobs), Passports and configurations; the Results, read or
+  not; the saved states; the content, author, source conversation and
+  attachments of every mail of the Tree; the unread items and notices; the
+  labels of the Steps and of the plan items; the log messages; and the
+  parameters and the diagnostic of every failure. The same content is removed
+  from the recorded events of the Jobs and from the published events kept by
+  Jobs, and the name of the requester recorded with the creation is replaced by
+  `erased`. Everything else stays: the Jobs with their status, runner type,
+  attempt count, timestamps, parent and Initial Job, the Runs, the Steps, the
+  lifecycle events, the level, Step index and time of the log lines, and the
+  kind and reason code of a failure. Each Job of the Tree gets a
+  `JobContentErased` delta, shows no Passport, payload or configuration, and
+  shows the time of its first erasure (a Job already erased keeps its own).
+  A lowered `JOBS_RETENTION_DAYS` scrubs, at the next sweep, the Trees it now
+  covers; a higher value restores nothing.
+- After the scrub of a Tree, a manual retry of one of its Jobs is refused
+  `tree_scrubbed`, creates no successor, and the `manual_retry` affordance of
+  the Job is blocked with the same reason code. No agent of the Tree can be
+  restarted: its saved state is erased, and a mail to it from another Tree is
+  refused `other_tree`. A mail to a finished agent in a Tree that is not
+  scrubbed still starts a restart.
+- A payload kept by Jobs for a Job that is never created, and an attachment
+  uploaded for a mail that is never sent, are erased `JOBS_RETENTION_DAYS`
+  after the upload. A creation that names the erased payload is rejected
+  `payload_not_uploaded`, and a send that names the erased attachment is
+  refused `attachment_not_uploaded`. The payload kept for a Job that was
+  created stays until its Tree is scrubbed.
+- `tree_scrubs` and the indexes the scrub scans (migration
+  `0013_tree_scrub.sql`).
+- The scrub does not reach the integration events already carried by the
+  stream (the stream keeps them for its own retention), nor backups, and it does
+  not rewrite the display names recorded with a manual retry, a deletion, a
+  forced priority or a cancellation request of a Run. An integration event still
+  waiting to be published when its Tree is scrubbed is published as it was.
 
 ### Changed
 

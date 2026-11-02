@@ -35,6 +35,8 @@ pub mod restart;
 pub mod runner;
 pub mod runner_cancel;
 pub mod runner_presence;
+pub mod scrub;
+pub mod scrub_scene;
 pub mod spawn;
 pub mod started;
 pub mod stream;

@@ -12,13 +12,15 @@ use support::gesture::Work;
 use support::lineage::{act, create, live_runner};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::FakeRunner;
+use support::scrub::{age_tree, assert_not_scrubbed_for, await_scrubbed, trigger_of};
+use support::scrub_scene::{ENDED_RUN, long_runs};
 use support::{JOB_CHANGED, LONG, QUIET, SHORT, gql, stream, subs, wire};
 use uuid::Uuid;
 
 fn three_days() -> Knobs {
     Knobs {
         cancelled_retention_days: Some("3".to_owned()),
-        ..Knobs::default()
+        ..long_runs()
     }
 }
 
@@ -260,6 +262,57 @@ async fn a_cancel_of_a_finished_job_starts_no_delay_and_the_cascade_cancels_the_
     tokio::time::sleep(QUIET).await;
     assert_request_data_held(&fixture, &durable, g, "G keeps its request data").await;
     assert_request_data_held(&fixture, &durable, tree.root, "Z keeps its request data").await;
+
+    let h_erased_at = erased_at(&durable, h).await;
+    let h_view_erased_at = view_of(&fixture, h).await["contentErasedAt"].clone();
+    assert!(h_erased_at.is_some(), "H shows the time of its erasure");
+    age_tree(&durable, tree.root, 40).await;
+    assert_not_scrubbed_for(&durable, tree.root, QUIET, "Z is in progress").await;
+    assert_request_data_held(&fixture, &durable, g, "G keeps its request data").await;
+    g_runner.complete_run(&g_trigger).await;
+    h_runner.complete_run(&h_trigger).await;
+    for (run, what) in [
+        (support::runner::run_id(&g_trigger), "G"),
+        (support::runner::run_id(&h_trigger), "H"),
+    ] {
+        durable
+            .await_count(ENDED_RUN, run, 1, &format!("the Run of {what} ends"))
+            .await;
+    }
+    age_tree(&durable, tree.root, 40).await;
+    assert_not_scrubbed_for(&durable, tree.root, QUIET, "the Run of Z lives").await;
+    tree._runner
+        .complete_run(&trigger_of(&tree.root_work))
+        .await;
+    durable
+        .await_count(ENDED_RUN, tree.root_work.run_id, 1, "the Run of Z ends")
+        .await;
+    Producer::new(fixture.fabric(), "projects")
+        .finish_v2(tree.root)
+        .await;
+    gql::wait_for_status(
+        &fixture.gql(),
+        fixture.admin(),
+        tree.root,
+        "COMPLETED",
+        LONG,
+    )
+    .await;
+    assert_not_scrubbed_for(&durable, tree.root, QUIET, "Z ended just now").await;
+    age_tree(&durable, tree.root, 31).await;
+    await_scrubbed(&durable, tree.root, "Z is finished and idle").await;
+    assert_request_data_erased(&fixture, &durable, g, "G after the scrub").await;
+    assert_request_data_erased(&fixture, &durable, tree.root, "Z after the scrub").await;
+    assert_eq!(
+        erased_at(&durable, h).await,
+        h_erased_at,
+        "the scrub keeps the first time of erasure of H"
+    );
+    assert_eq!(
+        view_of(&fixture, h).await["contentErasedAt"],
+        h_view_erased_at,
+        "the view of H still shows the time of its first erasure"
+    );
     durable.close().await;
     fixture.shutdown().await;
 }
