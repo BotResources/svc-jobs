@@ -266,3 +266,36 @@ async fn a_mail_to_a_hundred_bad_recipients_is_refused_with_the_typed_refusal_an
     );
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_mail_notice_names_every_bad_recipient_with_its_own_reason() {
+    let fixture = JobsFixture::start().await;
+    let tree = correspondents(&fixture, "mn-reasons").await;
+    let elsewhere = correspondents(&fixture, "mn-reasons-b").await;
+    let unknown = Uuid::now_v7();
+
+    let mail = Mail::new(tree.sender, &[tree.receiver, unknown, elsewhere.receiver]);
+    let refused =
+        gesture::send_mail(&fixture.gql(), &runner_access(), &tree.parent_work, &mail).await;
+    assert_eq!(gesture::refusal(&refused, "jobsSendMail"), "bad_addresses");
+    let seen = wait_for_mail_notices(&fixture, &tree.parent_work, Some(tree.sender), 1).await;
+    let words = seen[0]["message"].as_str().unwrap_or_default();
+    assert!(
+        words.contains(&format!(
+            "{unknown} (Jobs holds no mail address like this one.)"
+        )),
+        "{words}"
+    );
+    assert!(
+        words.contains(&format!(
+            "{} (The address works on another Initial Job.)",
+            elsewhere.receiver
+        )),
+        "{words}"
+    );
+    assert!(
+        !words.contains(&tree.receiver.to_string()),
+        "a good recipient is not named: {words}"
+    );
+    fixture.shutdown().await;
+}
