@@ -97,6 +97,22 @@ async fn the_scrub_marker_starts_empty_and_no_job_is_taken_for_scrubbed() {
             .is_err(),
         "a Tree is never marked twice"
     );
+    let unmarked: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM jobs WHERE tree_scrubbed_at IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .expect("the access path of the scrubbed Trees reads");
+    assert_eq!(unmarked, 0, "no Job is taken for a scrubbed Initial Job");
+    let initial_index: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'jobs_initial_created'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the index of the Initial Jobs reads");
+    assert!(
+        initial_index.contains("tree_scrubbed_at IS NULL"),
+        "the index of the Initial Jobs holds only the Trees not yet scrubbed: {initial_index}"
+    );
     let indexes: Vec<String> = sqlx::query_scalar(
         "SELECT indexname FROM pg_indexes WHERE indexname IN \
          ('integration_outbox_published_job', 'jobs_without_root', 'mails_initial_job') \

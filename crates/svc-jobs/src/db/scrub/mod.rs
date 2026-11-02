@@ -58,6 +58,12 @@ impl TreeScrubs for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(unavailable)?;
+        sqlx::query("UPDATE jobs SET tree_scrubbed_at = $2 WHERE id = $1")
+            .bind(initial_job_id.as_uuid())
+            .bind(at)
+            .execute(&mut *tx)
+            .await
+            .map_err(unavailable)?;
         for event in events {
             let event_id = EventId::new(scrub.ids.next())?;
             let job_id = event.job_id();

@@ -7,9 +7,13 @@ CREATE INDEX jobs_without_root
     ON jobs (id)
     WHERE root_job_id IS NULL;
 
+ALTER TABLE jobs
+    ADD COLUMN tree_scrubbed_at timestamptz;
+
 CREATE INDEX jobs_initial_created
     ON jobs (created_at, id)
-    WHERE root_job_id = id OR (root_job_id IS NULL AND parent_job_id IS NULL);
+    WHERE (root_job_id = id OR (root_job_id IS NULL AND parent_job_id IS NULL))
+        AND tree_scrubbed_at IS NULL;
 
 CREATE INDEX integration_outbox_published_job
     ON integration_outbox ((payload -> 'payload' ->> 'job_id'))

@@ -61,7 +61,7 @@ pub fn due_trees_sql() -> String {
          WHERE r.created_at <= $1 \
            AND {INITIAL_JOB} \
            AND (r.created_at, r.id) > ($3, $4::uuid) \
-           AND NOT EXISTS (SELECT 1 FROM tree_scrubs s WHERE s.initial_job_id = r.id) \
+           AND r.tree_scrubbed_at IS NULL \
            AND f.unresolved_jobs = 0 AND f.live_runs = 0 AND f.last_activity <= $1 \
          ORDER BY r.created_at, r.id LIMIT $2",
         facts = facts_of(&tree_jobs("r.id")),

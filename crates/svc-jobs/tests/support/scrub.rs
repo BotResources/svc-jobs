@@ -9,6 +9,9 @@ use super::gesture::Work;
 
 pub const SCRUBBED_MARK: &str = "SELECT count(*) FROM tree_scrubs WHERE initial_job_id = $1";
 
+pub const SCRUBBED_ACCESS_PATH: &str =
+    "SELECT count(*) FROM jobs WHERE id = $1 AND tree_scrubbed_at IS NOT NULL";
+
 const RUNS_OF_TREE: &str =
     "SELECT r.id FROM runs r WHERE r.job_id IN (SELECT id FROM jobs WHERE root_job_id = $1)";
 
@@ -86,6 +89,9 @@ pub async fn age_orphan_uploads(durable: &Durable, days: i64) {
 
 pub async fn await_scrubbed(durable: &Durable, root: Uuid, what: &str) {
     durable.await_count(SCRUBBED_MARK, root, 1, what).await;
+    durable
+        .assert_count(SCRUBBED_ACCESS_PATH, root, 1, what)
+        .await;
 }
 
 pub async fn assert_not_scrubbed_for(durable: &Durable, root: Uuid, wait: Duration, what: &str) {

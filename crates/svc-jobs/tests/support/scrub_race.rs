@@ -1,19 +1,21 @@
 use bc_jobs::commands::job::create::{CreateJob, CreateOutcome, create_job};
 use bc_jobs::commands::job::resolution::{FailJob, FinishJob};
-use bc_jobs::commands::job::run_outcome::RunCompletedFact;
+use bc_jobs::commands::job::run_outcome::{RunCompletedFact, RunFailureFact};
 use bc_jobs::commands::job::run_progress::RunStartedFact;
-use bc_jobs::domain::ids::{JobId, ResolutionId, RunId};
+use bc_jobs::domain::ids::{JobId, ResolutionId, RetryScheduleId, RunId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::keys::{InstanceKey, ProducerKey, RunnerTypeKey};
+use bc_jobs::domain::keys::{InstanceKey, ProducerKey, ReasonCode, RunnerTypeKey};
 use bc_jobs::domain::ownership::ResolutionRequester;
-use bc_jobs::domain::policy::Retention;
+use bc_jobs::domain::policy::{Jitter, Retention, RetryPolicy};
 use bc_jobs::domain::priority::Priority;
 use bc_jobs::domain::requester::Requester;
+use bc_jobs::domain::run::failure::{RunFailureKind, RunFailureReport};
 use bc_jobs::domain::run::parts::RunnerInstanceReference;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::scrub::{ScrubOutcome, TreeScrub, TreeScrubs};
 use chrono::TimeDelta;
+use serde_json::json;
 use svc_jobs::app::write::JobChange;
 use uuid::Uuid;
 
@@ -137,6 +139,39 @@ pub async fn a_completed_job_with_an_ended_run(fixture: &Fixture) -> (Job, RunId
     .await
     .expect("the finish lands");
     (reload(fixture, job.id()).await, run_id)
+}
+
+pub async fn a_failed_job_with_a_retry_due_in(fixture: &Fixture, days: i64) -> Job {
+    let (job, run_id) = a_job_with_a_started_run(fixture).await;
+    let report = RunFailureReport::new(
+        RunFailureKind::Transient,
+        ReasonCode::new("provider_timeout").expect("a valid reason code"),
+        json!({}),
+        json!({}),
+        Some(TimeDelta::days(days)),
+    )
+    .expect("a valid report");
+    let waiting = job
+        .record_run_failed(
+            RunFailureFact {
+                run_id,
+                report,
+                retry_schedule_id: RetryScheduleId::new(Uuid::now_v7()).expect("a v7 id"),
+                resolution_id: resolution(),
+                jitter: Jitter::MIDPOINT,
+                at: clock::now(),
+            },
+            &RetryPolicy::default(),
+            &limits(),
+        )
+        .expect("the run fails and a retry is scheduled");
+    commit(
+        fixture,
+        vec![JobChange::new(job.id(), Some(job.clone()), waiting.events)],
+    )
+    .await
+    .expect("the failure lands");
+    failed(fixture, reload(fixture, job.id()).await).await
 }
 
 pub async fn scrub(fixture: &Fixture, tree: JobId) -> ScrubOutcome {
