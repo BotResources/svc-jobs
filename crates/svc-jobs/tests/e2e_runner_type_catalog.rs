@@ -10,7 +10,9 @@ use support::events::EventLog;
 use support::fixture::{self, JobsFixture, Knobs};
 use support::producer::{JobDeclaration, Producer};
 use support::runner::FakeRunner;
-use support::{FLEET_CHANGED, LONG, QUIET, SHORT, catalog, delta, docs, gql, stream, subs, wire};
+use support::{
+    FLEET_CHANGED, JOB_CHANGED, LONG, QUIET, SHORT, catalog, delta, docs, gql, stream, subs, wire,
+};
 use uuid::Uuid;
 
 const RETIREMENT_WINDOW_SECONDS: u64 = 20;
@@ -703,8 +705,16 @@ async fn the_configured_quiet_period_reopens_retirement_without_a_client_timer()
     let job_id = declaration.job_id;
     producer.declare(&declaration).await;
     let trigger = instance.next_trigger(LONG).await;
+    let mut job_watch =
+        SseSubscription::open(fixture.url(), admin, &subs::job_changed(job_id)).await;
+    stream::snapshot(&mut job_watch, JOB_CHANGED, SHORT).await;
     instance.start_run(&trigger).await;
     instance.complete_run(&trigger).await;
+    // The Run's end is recorded before its owner settles the Job: a finish that overtook the
+    // runner's completion fact would leave no terminal Run for the quiet period to count.
+    let run_completed =
+        stream::await_delta(&mut job_watch, JOB_CHANGED, wire::EVT_RUN_COMPLETED, LONG).await;
+    delta::projection(&run_completed, job_id, "IN_PROGRESS");
     producer.finish(job_id).await;
     gql::wait_for_status(&client, admin, job_id, "COMPLETED", LONG).await;
 
