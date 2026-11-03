@@ -8,7 +8,7 @@ use bc_jobs::domain::ids::{
 };
 use bc_jobs::domain::job::parts::{JobDeletion, ManualRetryRecord};
 use bc_jobs::domain::job::resolution::{JobFailureCause, JobResolution, JobResolutionKind};
-use bc_jobs::domain::keys::{DisplayName, InstanceKey, ReasonCode, RunnerTypeKey, StepLabel};
+use bc_jobs::domain::keys::{InstanceKey, ReasonCode, RunnerTypeKey, StepLabel};
 use bc_jobs::domain::priority::{JobPriority, Priority};
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::domain::run::failure::{RunFailureKind, RunFailureReport};
@@ -25,8 +25,8 @@ use sqlx::Row;
 use sqlx::postgres::PgRow;
 use uuid::Uuid;
 
-pub fn known_user(id: Uuid, display_name: String) -> Result<KnownUser, JobsError> {
-    KnownUser::new(UserId(id), DisplayName::new(display_name)?)
+pub fn known_user(id: Uuid, stored_name: String) -> Result<KnownUser, JobsError> {
+    KnownUser::from_stored(UserId(id), &stored_name)
 }
 
 pub fn optional_known_user(

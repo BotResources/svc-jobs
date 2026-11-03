@@ -170,7 +170,12 @@ async fn decide(
         Some(source) => JobReader::load_active_for_source(&jobs.store, &source).await?,
         None => None,
     };
-    let user_maximum = match &command.triggered_by {
+    // The user whose maximum caps the Job is the one `create_job` stores. A
+    // creation it refuses loads none: the refusal is `create_job`'s to give.
+    let runs_for = command
+        .user_the_work_runs_for(parent.as_ref())
+        .unwrap_or_default();
+    let user_maximum = match runs_for {
         Some(user) => Some(
             UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user.id().0)?).await?,
         ),

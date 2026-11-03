@@ -25,7 +25,7 @@ impl From<&KnownUser> for GqlKnownUser {
     fn from(user: &KnownUser) -> Self {
         Self {
             id: user.id().0,
-            display_name: user.display_name().as_str().to_owned(),
+            display_name: user.shown_name(),
         }
     }
 }

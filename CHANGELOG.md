@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## 0.7.1 - 2026-11-03
+
+### Fixed
+
+- A child Job whose Passport is the Passport of its parent is created, whatever
+  `triggered_by` the two creations carry. Before, Jobs kept the display name of
+  `triggered_by` inside the stored Passport and compared it with the Passport,
+  so a runner call that sent the Passport of its parent with
+  `triggered_by: null`, or with another name for the same user, was refused
+  `passport_parent_mismatch`. Jobs now compares the Passport documents only;
+  the display name belongs to the KnownUser alone. The parent stays the Job of
+  the Run the call names.
+- A root Job with a user's Passport and no `triggered_by` runs for that user and
+  is capped by that user's maximum priority. Before, it was stored for that user
+  but admitted under `JOBS_DEFAULT_MAX_PRIORITY`. The user whose maximum caps a
+  Job is now the one the Job is stored for.
+- The display name of a user is no longer replaced by its id. A creation that
+  gives only the id of a user (a bare `triggered_by` id, or a user's Passport
+  without `triggered_by`), an administrator whose Passport has no
+  `display_name` claim, and a Job that takes its KnownUser from another Job (a
+  child, a restart, a manual retry) add the user when Jobs does not know it
+  and keep the name Jobs knows otherwise. Only a name a creation or an
+  administrator states replaces it; a name that is the user's own id states
+  none. A user Jobs knows no name for is stored, and shown, under its id, as
+  before.
+- A Passport is stored without a display name. A Passport stored by an earlier
+  version, with one, is still read; the name is ignored there and stays on the
+  KnownUser of the Job.
+
+### Changed
+
+- Rollout: while 0.7.0 pods still run, one of them may still refuse a
+  creation on the former Passport check (`passport_parent_mismatch`, or `job_id_conflict` for a
+  redelivery whose `triggered_by` states a name), since 0.7.1 stores the
+  Passport without a name. Nothing 0.7.1 writes is unreadable by 0.7.0.
+
 ## 0.7.0 - 2026-11-02
 
 ### Added
@@ -286,6 +322,9 @@ form to decide whether a version ships.
   refused as a write race instead of putting erased content back in a Job of a
   scrubbed Tree; a retry decided after the scrub is refused `tree_scrubbed`.
   A restart decided before the scrub creates no Job.
+- A read of Jobs sees one state of each Job. A read that ran while a cancel or a
+  scrub committed could meet a Job with its request data erased and no
+  resolution, and answered `INTERNAL` with the reason `corrupt_state`.
 - The chart renders every integer environment setting as a plain integer. An integer of one
   million or more (for example `savedState.maxBytes` at its default of
   `1048576`, or a retirement quiet period of two weeks in seconds) was rendered
