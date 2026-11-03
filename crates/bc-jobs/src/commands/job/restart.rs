@@ -72,7 +72,9 @@ pub fn restart_job(
             owner,
             parent_job_id: origin.parent_job_id(),
             predecessor_job_id: None,
-            triggered_by: origin.triggered_by().cloned(),
+            triggered_by: origin
+                .triggered_by()
+                .map(crate::domain::references::KnownUser::without_name),
             source: None,
             max_attempts: origin.max_attempts(),
             requested_priority: priority.requested(),

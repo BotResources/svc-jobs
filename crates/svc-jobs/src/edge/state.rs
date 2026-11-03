@@ -54,15 +54,14 @@ pub fn known_administrator(passport: &Passport) -> Result<KnownUser> {
 }
 
 fn known_user(passport: &Passport) -> Result<KnownUser> {
-    let display_name = passport
+    let id = UserId(passport.actor_id());
+    match passport
         .claim::<String>("display_name")
         .filter(|claimed| !claimed.trim().is_empty())
-        .unwrap_or_else(|| passport.actor_id().to_string());
-    KnownUser::new(
-        UserId(passport.actor_id()),
-        DisplayName::new(display_name)
-            .map_err(|_| async_graphql::Error::from(EdgeError::forbidden()))?,
-    )
+    {
+        Some(claimed) => DisplayName::new(claimed).and_then(|name| KnownUser::new(id, name)),
+        None => KnownUser::id_only(id),
+    }
     .map_err(|_| EdgeError::forbidden().into())
 }
 

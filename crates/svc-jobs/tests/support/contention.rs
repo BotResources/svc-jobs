@@ -283,10 +283,12 @@ pub async fn reloaded(fixture: &Fixture, key: &RunnerTypeKey) -> RunnerType {
 }
 
 pub fn service_passport() -> bc_jobs::domain::passport::JobPassport {
-    bc_jobs::domain::passport::JobPassport::new(
-        bc_jobs::domain::passport::PassportSubject::Service(Uuid::from_u128(0x7e57)),
-        None,
-        serde_json::json!({ "kind": "service" }),
+    let passport = br_core_auth::Passport::service(
+        Uuid::from_u128(0x7e57),
+        br_core_auth::PassportClaims::new(),
+    );
+    bc_jobs::domain::passport::JobPassport::from_document(
+        serde_json::to_value(passport).expect("a Passport serializes"),
     )
     .expect("a valid passport")
 }

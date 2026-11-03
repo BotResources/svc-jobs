@@ -199,3 +199,20 @@ fn a_restart_that_is_refused_for_good_ends_its_wake_and_any_other_error_keeps_it
         assert!(!refusal_ends_the_wake(&refusal), "{refusal:?}");
     }
 }
+
+#[test]
+fn a_restart_runs_for_the_user_of_its_origin_stating_no_name_of_theirs() {
+    // Given: a finished run of a job of a named user
+    let known = crate::fixtures::user();
+    let run = RunBuilder::new(1).started(ts(5)).completed(ts(10)).build();
+    let run_id = run.id();
+    let origin = JobBuilder::new()
+        .with_triggered_by(known.clone())
+        .with_run(run)
+        .build();
+    // When: the run is restarted
+    let fact = queued(restart_job(&origin, ParentContext::Root, command(run_id)).unwrap());
+    // Then: the restart Job runs for the same user, known only by id, so that
+    // it writes no name back over one renamed since
+    assert_eq!(fact.triggered_by, Some(known.without_name()));
+}

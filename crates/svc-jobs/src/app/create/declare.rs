@@ -5,16 +5,14 @@ use bc_jobs::domain::config::RunnerConfig;
 use bc_jobs::domain::ids::{JobId, SourceEntityId};
 use bc_jobs::domain::job::JobCall;
 use bc_jobs::domain::keys::{DisplayName, ProducerKey, RunnerTypeKey};
-use bc_jobs::domain::passport::{JobPassport, PassportSubject};
+use bc_jobs::domain::passport::JobPassport;
 use bc_jobs::domain::payload as domain_payload;
 use bc_jobs::domain::priority::Priority;
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::domain::requester::Requester;
-use br_core_auth::Passport;
 use br_core_events::UserId;
 use contract_jobs::command::{CreateJob as WireV1, CreateJobV2};
 use contract_jobs::command_v3::{CallMode, CreateJobV3, InlineAttachment, Payload};
-use serde_json::Value;
 
 pub fn from_v1(wire: &WireV1) -> CreateJobV3 {
     CreateJobV3 {
@@ -70,8 +68,8 @@ pub fn build(
         requester,
         passport: wire
             .passport
-            .as_ref()
-            .map(|document| passport(wire, document))
+            .clone()
+            .map(JobPassport::from_document)
             .transpose()?,
         payload: wire.payload.as_ref().map(payload),
         call: wire.mode.map(|mode| call(wire, mode)),
@@ -110,28 +108,12 @@ fn triggered_by(wire: &CreateJobV3) -> Result<Option<KnownUser>, JobsError> {
     let Some(user) = &wire.triggered_by else {
         return Ok(None);
     };
-    let display_name = user
-        .display_name()
-        .map(str::to_owned)
-        .unwrap_or_else(|| user.id().to_string());
-    KnownUser::new(UserId(user.id()), DisplayName::new(display_name)?).map(Some)
-}
-
-fn passport(wire: &CreateJobV3, document: &Value) -> Result<JobPassport, JobsError> {
-    let parsed: Passport =
-        serde_json::from_value(document.clone()).map_err(|_| JobsError::PassportMalformed)?;
-    let subject = match parsed {
-        Passport::Human { user_id, .. } => PassportSubject::User(user_id),
-        Passport::Service {
-            service_account_id, ..
-        } => PassportSubject::Service(service_account_id),
-    };
-    let display_name = wire
-        .triggered_by
-        .as_ref()
-        .and_then(|user| user.display_name())
-        .map(str::to_owned);
-    JobPassport::new(subject, display_name, document.clone())
+    let id = UserId(user.id());
+    match user.display_name() {
+        Some(name) => KnownUser::new(id, DisplayName::new(name)?),
+        None => KnownUser::id_only(id),
+    }
+    .map(Some)
 }
 
 fn payload(wire: &Payload) -> domain_payload::JobPayload {

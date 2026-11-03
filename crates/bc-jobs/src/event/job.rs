@@ -244,6 +244,55 @@ mod tests {
         assert_eq!(job_fact.job_id(), job);
     }
 
+    fn queued_for(user: &crate::domain::references::KnownUser) -> JobEvent {
+        use crate::commands::job::create::{CreateJob, CreateOutcome, create_job};
+        let command = CreateJob {
+            id: job_id(),
+            runner_type: crate::fixtures::runner_type(),
+            producer: crate::fixtures::producer(),
+            config: None,
+            parent_job_id: None,
+            triggered_by: Some(user.clone()),
+            source_entity_id: None,
+            max_attempts: None,
+            requested_priority: crate::domain::priority::Priority::DEFAULT,
+            initial_job_id: None,
+            requester: crate::domain::requester::Requester::Service(None),
+            passport: Some(crate::fixtures::user_passport(user)),
+            payload: None,
+            call: None,
+        };
+        let limits = crate::domain::policy::ServiceLimits::default();
+        match create_job(command, None, None, None, None, &limits) {
+            Ok(CreateOutcome::Queued(result)) => result.events.into_iter().next().unwrap(),
+            other => panic!("a fresh declaration is queued, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_job_queued_stored_with_a_display_name_in_its_passport_still_decodes() {
+        // Given: a JobQueued as 0.7.0 stored it, the KnownUser's name copied into the Passport
+        let alice = crate::domain::references::KnownUser::new(
+            br_core_events::UserId(Uuid::now_v7()),
+            crate::domain::keys::DisplayName::new("Alice (trial)").unwrap(),
+        )
+        .unwrap();
+        let event = queued_for(&alice);
+        let mut stored = event.payload().unwrap();
+        assert!(stored["passport"].get("display_name").is_none());
+        stored["passport"]["display_name"] = json!("Alice (trial)");
+        // When: it is decoded
+        let decoded = JobEvent::decode("JobQueued", stored).unwrap();
+        // Then: it is the same fact, and the name is still the KnownUser's
+        assert_eq!(decoded, event);
+        match decoded {
+            JobEvent::JobQueued(fact) => {
+                assert_eq!(fact.triggered_by, Some(alice));
+            }
+            other => panic!("expected a JobQueued fact, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_fact_serializes_the_data_a_subscriber_would_otherwise_re_query() {
         let event = JobEvent::RunCompleted(RunCompleted {

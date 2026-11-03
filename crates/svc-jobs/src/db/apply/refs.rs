@@ -91,28 +91,28 @@ pub async fn runner_instance_id(
     Ok(row.get("id"))
 }
 
+/// Records a user a fact names. A name the fact states replaces the stored
+/// one; a user the fact knows only by id is added under its id text when Jobs
+/// does not know it, and keeps the name Jobs knows otherwise. A KnownUser a Job
+/// takes from another Job (a child, a restart, a manual retry) is known only by
+/// id, so it never writes back a name a rename has since replaced.
 pub async fn observe_known_user(
     tx: &mut PgConnection,
     user: &KnownUser,
     at: DateTime<Utc>,
 ) -> Result<Uuid, PortError> {
-    observe_user(tx, user.id().0, user.display_name(), at).await
-}
-
-pub async fn observe_user(
-    tx: &mut PgConnection,
-    id: Uuid,
-    display_name: &DisplayName,
-    at: DateTime<Utc>,
-) -> Result<Uuid, PortError> {
+    let id = user.id().0;
     sqlx::query(
-        "INSERT INTO known_users (id, display_name, observed_at) VALUES ($1, $2, $3) \
-         ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name, \
+        "INSERT INTO known_users (id, display_name, observed_at) VALUES ($1, $4, $3) \
+         ON CONFLICT (id) DO UPDATE SET \
+         display_name = CASE WHEN $2::text IS NULL THEN known_users.display_name \
+                             ELSE EXCLUDED.display_name END, \
          observed_at = EXCLUDED.observed_at",
     )
     .bind(id)
-    .bind(display_name.as_str())
+    .bind(user.display_name().map(DisplayName::as_str))
     .bind(at)
+    .bind(user.stored_name())
     .execute(&mut *tx)
     .await
     .map_err(unavailable)?;

@@ -274,7 +274,7 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
     instance.connect().await;
     let registered =
         stream::await_fleet_event(&mut fleet_watch, wire::KIND_TYPE_REGISTERED, LONG).await;
-    delta::assert_fleet(&registered, &runner_type, 1, 0, 0, 1);
+    delta::assert_registered_with_one_waiting_job(&registered, &runner_type);
     gql::assert_allowed(&registered, wire::ACTION_DISPATCH);
     gql::assert_allowed(&registered, wire::ACTION_DEPRECATE);
     assert_eq!(

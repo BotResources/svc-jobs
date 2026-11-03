@@ -150,6 +150,29 @@ pub fn assert_fleet(
     projection
 }
 
+/// The first fleet delta of a type registered by one instance of capacity 1
+/// while one Job of that type waits. A delta renders the type's current
+/// projection, not the one at the event, so Jobs may already have dispatched
+/// the Job to the instance: held, not started.
+pub fn assert_registered_with_one_waiting_job(delta: &Value, runner_type: &str) -> Value {
+    let projection = fleet_projection(delta, runner_type);
+    let counts = [
+        "waitingJobCount",
+        "executingJobCount",
+        "busyInstanceCount",
+        "idleInstanceCount",
+    ]
+    .map(|field| projection[field].as_i64());
+    assert!(
+        counts == [Some(1), Some(0), Some(0), Some(1)]
+            || counts == [Some(0), Some(0), Some(1), Some(0)],
+        "the registered type shows its Job waiting on an idle instance, or held by it and \
+         not started; the fleet projection must follow the functional definition, so an \
+         administrator never reads a flat fleet: {delta}"
+    );
+    projection
+}
+
 pub fn assert_instance(
     projection: &Value,
     instance_key: &str,

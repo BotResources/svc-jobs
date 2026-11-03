@@ -89,3 +89,24 @@ fn a_failed_child_is_retried_under_the_parent_that_still_owns_it() {
         other => panic!("expected a queued successor, got {other:?}"),
     }
 }
+
+#[test]
+fn the_successor_runs_for_the_user_of_its_predecessor_stating_no_name_of_theirs() {
+    // Given: a failed job of a named user
+    let resolution = resolution_id();
+    let known = user();
+    let predecessor = failed_predecessor(resolution)
+        .with_triggered_by(known.clone())
+        .build();
+    // When: it is manually retried
+    let plan =
+        plan(manual_retry(&predecessor, ParentContext::Root, None, command(resolution)).unwrap());
+    // Then: the successor runs for the same user, known only by id, so that it
+    // writes no name back over one renamed since
+    match plan.successor.events.first() {
+        Some(JobEvent::JobQueued(queued)) => {
+            assert_eq!(queued.triggered_by, Some(known.without_name()));
+        }
+        other => panic!("expected a queued successor, got {other:?}"),
+    }
+}

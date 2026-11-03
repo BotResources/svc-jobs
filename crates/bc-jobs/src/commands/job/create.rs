@@ -1,3 +1,5 @@
+use br_core_events::UserId;
+
 use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::MaxAttempts;
@@ -48,16 +50,21 @@ impl CreateJob {
             .map(|entity_id| SourceReference::new(self.producer.clone(), entity_id))
     }
 
-    pub fn user_the_work_runs_for(&self) -> Result<Option<KnownUser>, JobsError> {
-        match (&self.triggered_by, &self.passport) {
-            (Some(given), Some(passport)) => {
-                passport.guard_matches_user(Some(given))?;
-                Ok(Some(given.clone()))
-            }
-            (Some(given), None) => Ok(Some(given.clone())),
-            (None, Some(passport)) => passport.known_user(),
-            (None, None) => Ok(None),
-        }
+    /// The KnownUser the new Job runs for, below `parent` when it has one —
+    /// the one `create_job` stores, and whose maximum caps a root Job.
+    ///
+    /// A KnownUser the creation names must be the user of the Passport, and is
+    /// kept with the name it states. Otherwise a user's Passport makes its user
+    /// the KnownUser, known only by id: the creation states no name, so it
+    /// changes none Jobs knows. A service's Passport runs for no user, and a Job
+    /// left without a Passport (below a parent whose Passport was erased) runs
+    /// for the user of its parent, again known only by id.
+    pub fn user_the_work_runs_for(
+        &self,
+        parent: Option<&Job>,
+    ) -> Result<Option<KnownUser>, JobsError> {
+        let passport = resolve_passport(self, parent)?;
+        known_user_for(self, parent, passport.as_ref())
     }
 }
 
@@ -90,7 +97,8 @@ pub fn create_job(
     let (owner, parent) = resolve_owner(&command, parent)?;
     let initial_job_id = resolve_initial_job(&command, parent)?;
     let passport = resolve_passport(&command, parent)?;
-    let triggered_by = resolve_triggered_by(&command, parent, passport.as_ref())?;
+    let triggered_by = command.user_the_work_runs_for(parent)?;
+    guard_maximum_is_of(user_maximum, triggered_by.as_ref())?;
     let call = resolve_call(&command)?;
     if let Some(payload) = &command.payload {
         payload.guard_inline_within(limits.inline_payload_max_bytes())?;
@@ -142,32 +150,49 @@ fn resolve_passport(
     parent: Option<&Job>,
 ) -> Result<Option<JobPassport>, JobsError> {
     match (&command.passport, parent) {
-        (Some(given), Some(parent)) => match parent.passport() {
-            Some(stored) if stored != given => Err(JobsError::PassportParentMismatch),
-            _ => Ok(Some(given.clone())),
-        },
+        (Some(given), Some(parent)) => {
+            given.guard_is_the_passport_of_parent(parent.passport())?;
+            Ok(Some(given.clone()))
+        }
         (None, Some(parent)) => Ok(parent.passport().cloned()),
         (Some(given), None) => Ok(Some(given.clone())),
         (None, None) => Err(JobsError::PassportRequired),
     }
 }
 
-fn resolve_triggered_by(
+fn known_user_for(
     command: &CreateJob,
     parent: Option<&Job>,
     passport: Option<&JobPassport>,
 ) -> Result<Option<KnownUser>, JobsError> {
-    if let (Some(passport), Some(given)) = (passport, &command.triggered_by) {
-        passport.guard_matches_user(Some(given))?;
+    if let Some(given) = &command.triggered_by {
+        if let Some(passport) = passport {
+            passport.guard_matches_user(Some(given))?;
+        }
+        return Ok(Some(given.clone()));
     }
-    match (&command.triggered_by, passport, parent) {
-        (Some(given), _, _) => Ok(Some(given.clone())),
-        (None, Some(passport), _) => match passport.known_user()? {
-            Some(user) => Ok(Some(user)),
-            None => Ok(None),
-        },
-        (None, None, Some(parent)) => Ok(parent.triggered_by().cloned()),
-        (None, None, None) => Ok(None),
+    match passport {
+        Some(passport) => passport
+            .user_id()
+            .map(|user| KnownUser::id_only(UserId(user)))
+            .transpose(),
+        None => Ok(parent
+            .and_then(Job::triggered_by)
+            .map(KnownUser::without_name)),
+    }
+}
+
+/// The maximum given to cap a Job is the one of the user it runs for, or none.
+fn guard_maximum_is_of(
+    user_maximum: Option<&UserMaxPriority>,
+    runs_for: Option<&KnownUser>,
+) -> Result<(), JobsError> {
+    match (user_maximum, runs_for) {
+        (None, _) => Ok(()),
+        (Some(maximum), Some(user)) if maximum.user_id().as_uuid() == user.id().0 => Ok(()),
+        (Some(_), _) => Err(JobsError::CorruptState {
+            reason_code: "user_maximum_of_another_user",
+        }),
     }
 }
 

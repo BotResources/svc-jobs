@@ -74,7 +74,7 @@ pub fn manual_retry(
         owner: predecessor.owner().clone(),
         parent_job_id: predecessor.parent_job_id(),
         predecessor_job_id: Some(predecessor.id()),
-        triggered_by: predecessor.triggered_by().cloned(),
+        triggered_by: predecessor.triggered_by().map(KnownUser::without_name),
         source: predecessor.source(),
         max_attempts: predecessor.max_attempts(),
         requested_priority: priority.requested(),

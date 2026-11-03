@@ -39,6 +39,65 @@ fn a_users_cap_applies_at_admission_and_the_request_is_kept() {
 }
 
 #[test]
+fn a_root_with_a_users_passport_and_no_known_user_is_capped_by_that_users_maximum() {
+    // Given: a user capped at 1, and a root creation with their Passport that names no KnownUser
+    let known = user();
+    let command = CreateJob {
+        passport: Some(user_passport(&known)),
+        triggered_by: None,
+        requested_priority: level(5),
+        ..command()
+    };
+    // When: the user the work runs for is decided, and their maximum caps the admission
+    let runs_for = command.user_the_work_runs_for(None).unwrap();
+    assert_eq!(runs_for, Some(known.without_name()));
+    let cap = capped_at(&known, Some(1));
+    let fact = queued(
+        create_job(
+            command,
+            None,
+            None,
+            None,
+            Some(&cap),
+            &ServiceLimits::default(),
+        )
+        .unwrap(),
+    );
+    // Then: it waits at 1, for that user, and its request stays 5
+    assert_eq!(fact.triggered_by, runs_for);
+    assert_eq!(fact.requested_priority, level(5));
+    assert_eq!(fact.effective_priority, level(1));
+}
+
+#[test]
+fn a_maximum_of_another_user_than_the_one_the_work_runs_for_is_refused() {
+    // Given: a root creation for one user, and the maximum of another
+    let known = user();
+    let command = CreateJob {
+        passport: Some(user_passport(&known)),
+        requested_priority: level(5),
+        ..command()
+    };
+    let other = capped_at(&user(), Some(5));
+    // When: it is admitted against that maximum
+    let result = create_job(
+        command,
+        None,
+        None,
+        None,
+        Some(&other),
+        &ServiceLimits::default(),
+    );
+    // Then: the wiring gap fails loud instead of capping the Job by the wrong user
+    assert_eq!(
+        result,
+        Err(JobsError::CorruptState {
+            reason_code: "user_maximum_of_another_user"
+        })
+    );
+}
+
+#[test]
 fn a_job_created_without_a_priority_requests_three_under_the_default_cap() {
     // Given: a service whose default maximum is 2, and a user with no maximum of their own
     let limits = ServiceLimits::default().with_default_max_priority(level(2));
