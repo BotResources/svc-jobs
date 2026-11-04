@@ -8,6 +8,23 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.11.0 - 2026-11-04
+
+### Removed
+
+- `JobsError::SourceAlreadyActive` and its code `source_already_active`. A
+  source reference is no longer a uniqueness key.
+- `commands::job::source` and its `guard_source_free`.
+- `ports::job::JobReader::load_active_for_source`.
+
+### Changed
+
+- `commands::job::create::create_job` and
+  `commands::job::manual_retry::manual_retry` lose their `active_for_source`
+  argument: the other Jobs of a source reference are no input of either
+  decision. A creation or a retry carries its source reference into
+  `JobQueued` as before.
+
 ## 0.10.0 - 2026-11-03
 
 ### Fixed

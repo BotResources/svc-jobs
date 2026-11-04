@@ -16,10 +16,9 @@ use super::change::JobChange;
 use super::erasure::erase_what_a_cancel_leaves_behind;
 use super::finish_premise::guard_finish_premise_still_holds;
 use super::guards::{
-    claim_source, guard_caller_addresses_still_held, guard_decision_still_holds,
-    guard_descendants_unchanged, guard_free_capacity_of_every_type, guard_kept_payloads_uploaded,
-    guard_restarts_still_due, guard_runner_types_still_accept_jobs, lock_directory_trees,
-    lock_kept_payloads,
+    guard_caller_addresses_still_held, guard_decision_still_holds, guard_descendants_unchanged,
+    guard_free_capacity_of_every_type, guard_kept_payloads_uploaded, guard_restarts_still_due,
+    guard_runner_types_still_accept_jobs, lock_directory_trees, lock_kept_payloads,
 };
 use super::notices::tell_callers;
 use super::premise::guard_priority_premise_still_holds;
@@ -166,9 +165,6 @@ async fn apply_change(
     limits: &ServiceLimits,
     removal: &DirectoryRemoval,
 ) -> Result<(), ServiceError> {
-    if let Some(source) = &change.claimed_source {
-        claim_source(tx, change.job_id, source).await?;
-    }
     let recorded: Vec<(EventId, JobEvent)> = change
         .events
         .iter()

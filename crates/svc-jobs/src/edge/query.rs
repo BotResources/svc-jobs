@@ -77,6 +77,10 @@ impl QueryRoot {
             .map_err(edge_error)
     }
 
+    /// The newest non-terminal Job of a source reference, or none.
+    #[graphql(
+        deprecation = "A source reference may carry several Jobs since Jobs 0.8: read them all with jobsJobsBySource. This field answers with the newest non-terminal one and will be removed in a later minor."
+    )]
     async fn jobs_job_by_source(
         &self,
         ctx: &Context<'_>,
@@ -85,17 +89,44 @@ impl QueryRoot {
     ) -> Result<Option<GqlJobView>> {
         administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?;
-        let source = SourceReference::new(
-            ProducerKey::new(source_bc).map_err(edge_error)?,
-            SourceEntityId::new(source_entity_id).map_err(edge_error)?,
-        );
-        let found = JobReader::load_active_for_source(&state.store, &source)
+        let source = source_reference(source_bc, source_entity_id)?;
+        let found = state
+            .store
+            .newest_live_job_of_source(&source)
             .await
             .map_err(edge_error)?;
         match found {
             None => Ok(None),
             Some(job) => Ok(Some(project::view_of_job(&state.store, job).await?)),
         }
+    }
+
+    /// Every Job of a source reference, terminal and soft-deleted ones included,
+    /// newest first.
+    async fn jobs_jobs_by_source(
+        &self,
+        ctx: &Context<'_>,
+        source_bc: String,
+        source_entity_id: Uuid,
+        #[graphql(default = 50)] first: i32,
+        after: Option<String>,
+    ) -> Result<Connection<GqlJobSummaryView>> {
+        administrator(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let source = source_reference(source_bc, source_entity_id)?;
+        let page = state
+            .store
+            .source_page(&source, i64::from(first), after.as_deref())
+            .await
+            .map_err(edge_error)?;
+        let cursors: Vec<String> = page.jobs.iter().map(list::cursor_of).collect();
+        let views = project::summary_views(&state.store, page.jobs)
+            .await?
+            .into_iter()
+            .zip(cursors)
+            .map(|(view, cursor)| Edge::new(view, cursor))
+            .collect();
+        Ok(Connection::forward(views, page.has_next_page))
     }
 
     #[allow(clippy::too_many_arguments)] // one GraphQL argument per log filter
@@ -167,4 +198,11 @@ impl QueryRoot {
             .map_err(edge_error)?;
         Ok(views.into_iter().map(GqlUserMaxPriority::from).collect())
     }
+}
+
+fn source_reference(source_bc: String, source_entity_id: Uuid) -> Result<SourceReference> {
+    Ok(SourceReference::new(
+        ProducerKey::new(source_bc).map_err(edge_error)?,
+        SourceEntityId::new(source_entity_id).map_err(edge_error)?,
+    ))
 }

@@ -1,6 +1,5 @@
 use br_core_events::UserId;
 
-use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::MaxAttempts;
 use crate::domain::config::RunnerConfig;
@@ -71,7 +70,6 @@ impl CreateJob {
 pub fn create_job(
     command: CreateJob,
     existing: Option<&Job>,
-    active_for_source: Option<&Job>,
     parent: Option<&Job>,
     user_maximum: Option<&UserMaxPriority>,
     limits: &ServiceLimits,
@@ -93,7 +91,6 @@ pub fn create_job(
     if let Some(requested) = command.max_attempts {
         requested.guard_under_ceiling(limits.max_attempts_ceiling())?;
     }
-    guard_source_free(command.source(), active_for_source)?;
     let (owner, parent) = resolve_owner(&command, parent)?;
     let initial_job_id = resolve_initial_job(&command, parent)?;
     let passport = resolve_passport(&command, parent)?;

@@ -117,9 +117,8 @@ async fn a_queued_job(fixture: &Fixture, parent: Option<&Job>) -> Job {
         payload: None,
         call: None,
     };
-    let CreateOutcome::Queued(queued) =
-        create_job(declaration, None, None, parent, None, &limits())
-            .expect("the declaration is accepted")
+    let CreateOutcome::Queued(queued) = create_job(declaration, None, parent, None, &limits())
+        .expect("the declaration is accepted")
     else {
         panic!("a fresh job id is queued, never already queued");
     };

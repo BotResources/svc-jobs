@@ -21,7 +21,7 @@ fn a_successor_copies_the_requested_priority_and_is_capped_again() {
         applicable_maximum: level(2),
         ..command(resolution)
     };
-    let plan = plan(manual_retry(&predecessor, ParentContext::Root, None, command).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command).unwrap());
     let queued = queued_successor(&plan);
     assert_eq!(queued.requested_priority, level(5));
     assert_eq!(queued.effective_priority, level(2));
@@ -42,7 +42,6 @@ fn a_successor_under_a_parent_takes_the_parents_effective_priority() {
         manual_retry(
             &predecessor,
             ParentContext::Loaded(&parent),
-            None,
             command(resolution),
         )
         .unwrap(),
@@ -59,7 +58,7 @@ fn a_successor_of_a_claim_type_waits_to_be_claimed() {
         dispatch: SuccessorDispatch::Wait,
         ..command(resolution)
     };
-    let plan = plan(manual_retry(&predecessor, ParentContext::Root, None, command).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command).unwrap());
     assert!(matches!(
         plan.successor.events.as_slice(),
         [JobEvent::JobQueued(_)]

@@ -149,7 +149,6 @@ fn a_manual_retry_successor_of_a_restart_job_is_a_restart_of_the_same_run() {
     let outcome = manual_retry(
         &failed_restart,
         ParentContext::Root,
-        None,
         ManualRetryJob {
             manual_retry_id: manual_retry_id(),
             failed_resolution_id: resolution,

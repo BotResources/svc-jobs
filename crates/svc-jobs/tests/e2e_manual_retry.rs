@@ -373,11 +373,13 @@ async fn an_administrator_manually_retries_a_job_after_its_owner_accepts_a_termi
         json!(predecessor_id.to_string()),
         "the chain of manual retries reads from either end: {successor_row}",
     );
-    let by_source = gql::job_by_source(&client, admin, "projects", entity_id).await;
     assert_eq!(
-        by_source["job"]["id"],
-        json!(successor_id.to_string()),
-        "the source lookup answers with the single non-terminal job, successor included",
+        gql::ids_of(&gql::jobs_by_source(&client, admin, "projects", entity_id).await),
+        vec![
+            json!(successor_id.to_string()),
+            json!(predecessor_id.to_string())
+        ],
+        "a successor copies the source reference: the source lists it before its predecessor",
     );
 
     // When: the successor's owner finishes it, the predecessor's affordances change alone

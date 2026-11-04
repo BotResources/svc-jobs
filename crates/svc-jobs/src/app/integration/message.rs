@@ -1,7 +1,6 @@
 pub fn plain_message(reason_code: &str) -> String {
     let words = match reason_code {
         "id_reuse" => "The job id is already used by a different declaration.",
-        "duplicate_active_entity" => "Another job of the same source entity is still active.",
         "malformed_payload" => "The command could not be read.",
         "invalid_priority" => "The priority must be a level from 1 to 5.",
         "passport_required" => "A job with no parent needs the Passport of its sender.",

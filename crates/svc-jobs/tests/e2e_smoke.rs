@@ -22,12 +22,13 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 13] = [
+const DECLARED_QUERIES: [&str; 14] = [
     "jobs",
     roots::ATTACHMENT_ROOT,
     "jobsFleet",
     "jobsJob",
     "jobsJobBySource",
+    "jobsJobsBySource",
     "jobsLogs",
     roots::MAIL_ROOT,
     "jobsMyMaxPriority",

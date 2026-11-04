@@ -10,6 +10,42 @@ PR on `scripts/check-changelog.sh`: whatever version sits in `Cargo.toml` must
 have a matching plain `## x.y.z` heading here (the `0.0.0-dev` placeholder maps
 to `## Unreleased`).
 
+## 0.8.0 - 2026-11-04
+
+### Changed
+
+- A source reference is no longer a uniqueness key. Jobs accepts a creation
+  whose source reference another non-terminal Job already carries, and an
+  administrator's manual retry whose predecessor's source reference another
+  live Job carries. Before, Jobs refused the creation with `creation_rejected`
+  and the code `duplicate_active_entity`, and refused the retry as a conflict.
+  Every such Job is dispatched like any other. A producer that wants at most
+  one live Job per entity keeps that rule on its own side. Jobs no longer
+  emits `duplicate_active_entity`.
+- The manual-retry affordance and the manual retry now agree: the retry no
+  longer refuses for a reason the affordance did not show.
+- Writing a Job with a source reference no longer locks the source row nor
+  reads the live Jobs of that source.
+
+### Added
+
+- `jobsJobsBySource(sourceBc, sourceEntityId, first = 50, after)`: every Job
+  of a source reference, terminal and soft-deleted ones included, newest first,
+  as a page of `JobsJobSummaryView` with their affordances. For administrators
+  only, like the other reads. The page costs two statements whatever its size.
+
+### Deprecated
+
+- `jobsJobBySource` answers with the newest non-terminal Job of the source
+  reference, or none, and will be removed in a later minor. Read
+  `jobsJobsBySource` instead.
+
+### Rollout
+
+- No migration. While 0.7.x pods still run, one of them may still refuse a
+  creation with `duplicate_active_entity`. Nothing 0.8.0 writes is unreadable
+  by 0.7.1.
+
 ## 0.7.1 - 2026-11-03
 
 ### Fixed

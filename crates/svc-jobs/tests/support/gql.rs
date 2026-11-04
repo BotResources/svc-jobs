@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::docs::{
     CANCEL_JOB, DELETE_JOB, DEPRECATE_RUNNER_TYPE, FLEET, JOB_BY_SOURCE, JOB_DETAIL, JOB_LOGS,
-    JOBS_LIST, MANUAL_RETRY_JOB, REACTIVATE_RUNNER_TYPE, RETIRE_RUNNER_TYPE,
+    JOBS_BY_SOURCE, JOBS_LIST, MANUAL_RETRY_JOB, REACTIVATE_RUNNER_TYPE, RETIRE_RUNNER_TYPE,
 };
 
 pub async fn ready(base_url: &str) -> bool {
@@ -115,6 +115,43 @@ pub async fn job_by_source(
         "the source lookup must answer without errors: {response}"
     );
     response["data"]["jobsJobBySource"].clone()
+}
+
+/// Every Job of a source reference, newest first, as the rows of the first
+/// page of `jobsJobsBySource`.
+pub async fn jobs_by_source(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    bc: &str,
+    entity_id: Uuid,
+) -> Vec<Value> {
+    edges_of(&jobs_by_source_page(gql, passport, bc, entity_id, 50, None).await)
+        .iter()
+        .map(|edge| edge["node"].clone())
+        .collect()
+}
+
+pub async fn jobs_by_source_page(
+    gql: &GraphqlClient,
+    passport: &Passport,
+    bc: &str,
+    entity_id: Uuid,
+    first: i64,
+    after: Option<&str>,
+) -> Value {
+    let response = gql
+        .query(
+            passport,
+            JOBS_BY_SOURCE,
+            json!({ "bc": bc, "entityId": entity_id.to_string(), "first": first, "after": after }),
+        )
+        .await;
+    data_of(&response, "jobsJobsBySource")
+}
+
+/// The ids of `rows`, in the order the read gave them.
+pub fn ids_of(rows: &[Value]) -> Vec<Value> {
+    rows.iter().map(|row| row["job"]["id"].clone()).collect()
 }
 
 pub async fn job_view(gql: &GraphqlClient, passport: &Passport, id: Uuid) -> Value {

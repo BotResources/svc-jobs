@@ -99,17 +99,28 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
     support::views::assert_views_agree(&durable, &client, admin, job_id, "a job nobody serves yet")
         .await;
 
-    let by_source = gql::job_by_source(&client, admin, "projects", entity_id).await;
+    let of_source = gql::jobs_by_source(&client, admin, "projects", entity_id).await;
     let listed = gql::list_jobs(&client, admin, json!({ "runnerTypes": [runner_type] })).await;
-    assert_eq!(by_source["job"]["id"], json!(job_id.to_string()));
-    assert_eq!(by_source["job"]["status"], json!("PENDING"));
+    assert_eq!(
+        gql::ids_of(&of_source),
+        vec![json!(job_id.to_string())],
+        "the one job of the source is the one the source lists: {of_source:?}",
+    );
+    assert_eq!(of_source[0]["job"]["status"], json!("PENDING"));
     assert_eq!(
         listed
             .iter()
             .filter(|row| row["job"]["id"] == json!(job_id.to_string()))
             .count(),
         1,
-        "`jobs`, `jobsJob` and `jobsJobBySource` answer with the same single identity",
+        "`jobs`, `jobsJob` and `jobsJobsBySource` answer with the same single identity",
+    );
+    delta::assert_active_affordances(&of_source[0]);
+    let by_source = gql::job_by_source(&client, admin, "projects", entity_id).await;
+    assert_eq!(
+        by_source["job"]["id"],
+        json!(job_id.to_string()),
+        "the deprecated single lookup still answers with the newest non-terminal job",
     );
     delta::assert_active_affordances(&by_source);
     delta::assert_active_affordances(&gql::listed_row(&listed, job_id));
@@ -408,12 +419,20 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         job_id,
         "COMPLETED",
     ));
+    let of_source = gql::jobs_by_source(&client, admin, "projects", entity_id).await;
+    assert_eq!(
+        gql::ids_of(&of_source),
+        vec![json!(job_id.to_string())],
+        "a finished job stays one of the jobs of its source: {of_source:?}",
+    );
+    assert_eq!(of_source[0]["job"]["status"], json!("COMPLETED"));
+    delta::assert_completed_affordances(&of_source[0]);
     assert!(
         gql::job_by_source(&client, admin, "projects", entity_id)
             .await
             .is_null(),
-        "the source lookup answers with the single NON-TERMINAL job for that reference, so a \
-         finished one no longer answers for its source",
+        "the deprecated single lookup answers with a NON-TERMINAL job only, so a finished one \
+         no longer answers for its source there",
     );
 
     support::views::assert_views_agree(&durable, &client, admin, job_id, "a completed job").await;
@@ -560,7 +579,7 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         "a refused deletion leaves no trace on the job",
     );
 
-    // Then: a terminal job frees its source reference for the work that comes after it
+    // Then: later work on the same source is declared like any other, and the source lists both
     let reclaiming = JobDeclaration::new(&runner_type).with_source("projects", entity_id);
     let reclaiming_id = reclaiming.job_id;
     producer.declare(&reclaiming).await;
@@ -571,10 +590,9 @@ async fn an_administrator_follows_a_job_from_declaration_to_audited_deletion() {
         .expect_none(wire::FACT_CREATION_REJECTED, reclaiming_id, QUIET)
         .await;
     assert_eq!(
-        gql::job_by_source(&client, admin, "projects", entity_id).await["job"]["id"],
-        json!(reclaiming_id.to_string()),
-        "at most one NON-TERMINAL job per source is a rule about live work — a claim kept for good \
-         would bar every future job on an entity already processed once",
+        gql::ids_of(&gql::jobs_by_source(&client, admin, "projects", entity_id).await),
+        vec![json!(reclaiming_id.to_string()), json!(job_id.to_string())],
+        "the jobs of a source read newest first, the finished one kept",
     );
 
     // Then: the administrator's list is windowed and filtered exactly as asked
