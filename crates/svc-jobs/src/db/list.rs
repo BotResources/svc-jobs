@@ -55,7 +55,7 @@ fn cursor(created_at: DateTime<Utc>, id: Uuid) -> String {
     format!("{}|{}", created_at.timestamp_micros(), id)
 }
 
-fn parse_cursor(cursor: &str) -> Option<(DateTime<Utc>, Uuid)> {
+pub(super) fn parse_cursor(cursor: &str) -> Option<(DateTime<Utc>, Uuid)> {
     let (micros, id) = cursor.split_once('|')?;
     let micros: i64 = micros.parse().ok()?;
     Some((

@@ -53,7 +53,6 @@ impl JobsError {
                 json!({ "size": size, "maximum": maximum })
             }
             Self::JobIdConflict { job_id } => json!({ "jobId": job_id }),
-            Self::SourceAlreadyActive { active_job_id } => json!({ "activeJobId": active_job_id }),
             Self::ParentJobUnknown { parent_job_id }
             | Self::ParentJobTerminal { parent_job_id }
             | Self::ParentJobDeleted { parent_job_id } => json!({ "parentJobId": parent_job_id }),

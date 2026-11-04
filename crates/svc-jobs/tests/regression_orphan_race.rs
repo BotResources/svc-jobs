@@ -104,8 +104,8 @@ async fn a_creation_that_waits_for_a_payload_erased_meanwhile_is_refused_and_cre
         payload: Some(JobPayload::Kept),
         call: None,
     };
-    let CreateOutcome::Queued(queued) = create_job(declaration, None, None, None, None, &limits())
-        .expect("the declaration is accepted")
+    let CreateOutcome::Queued(queued) =
+        create_job(declaration, None, None, None, &limits()).expect("the declaration is accepted")
     else {
         panic!("a fresh job id is queued");
     };

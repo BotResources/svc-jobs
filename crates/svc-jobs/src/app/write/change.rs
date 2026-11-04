@@ -3,7 +3,6 @@ use bc_jobs::domain::ids::{CommandId, JobId, RunId};
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
 use bc_jobs::domain::payload::CallMode;
-use bc_jobs::domain::references::SourceReference;
 use bc_jobs::domain::requester::Requester;
 use bc_jobs::event::job::JobEvent;
 use br_core_events::EventMetadata;
@@ -17,7 +16,6 @@ pub struct JobChange {
     pub before: Option<Job>,
     pub events: Vec<JobEvent>,
     pub note: Option<String>,
-    pub claimed_source: Option<SourceReference>,
     pub metadata: Option<EventMetadata>,
     pub answers: Vec<integration::Published>,
     pub priority_premise: Option<PriorityPremise>,
@@ -51,7 +49,6 @@ impl JobChange {
             before,
             events,
             note: None,
-            claimed_source: None,
             metadata: None,
             answers: Vec::new(),
             priority_premise: None,
@@ -133,11 +130,6 @@ impl JobChange {
 
     pub fn with_note(mut self, note: Option<String>) -> Self {
         self.note = note;
-        self
-    }
-
-    pub fn claiming_source(mut self, source: Option<SourceReference>) -> Self {
-        self.claimed_source = source;
         self
     }
 }

@@ -5,7 +5,6 @@ use chrono::{DateTime, TimeDelta, Utc};
 use crate::domain::ids::{EventId, JobId};
 use crate::domain::job::Job;
 use crate::domain::keys::RunnerTypeKey;
-use crate::domain::references::SourceReference;
 use crate::event::job::JobEvent;
 use crate::ports::PortError;
 
@@ -14,11 +13,6 @@ pub trait JobReader: Send + Sync {
     async fn load(&self, id: JobId) -> Result<Option<Job>, PortError>;
 
     async fn load_descendants(&self, id: JobId) -> Result<Vec<Job>, PortError>;
-
-    async fn load_active_for_source(
-        &self,
-        source: &SourceReference,
-    ) -> Result<Option<Job>, PortError>;
 }
 
 #[async_trait]

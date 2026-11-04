@@ -13,7 +13,6 @@ use bc_jobs::domain::ownership::CancelRequester;
 use bc_jobs::domain::priority::PriorityBasis;
 use bc_jobs::domain::references::KnownUser;
 use bc_jobs::ports::fleet::FleetReader;
-use bc_jobs::ports::job::JobReader;
 use bc_jobs::ports::user::UserMaxPriorityReader;
 use br_core_events::{Actor, EventMetadata};
 use uuid::Uuid;
@@ -127,15 +126,9 @@ async fn start_manual_retry(
         admitted_under,
         user_maximum.as_ref(),
     );
-    let claimed_source = predecessor.source();
-    let active = match &claimed_source {
-        Some(source) => JobReader::load_active_for_source(&jobs.store, source).await?,
-        None => None,
-    };
     let outcome = decide_manual_retry(
         predecessor,
         ParentContext::of(parent.as_ref()),
-        active.as_ref(),
         command.clone(),
     )?;
     match outcome {
@@ -143,7 +136,6 @@ async fn start_manual_retry(
         ManualRetryOutcome::Started(plan) => {
             let mut successor =
                 JobChange::new(command.successor_job_id, None, plan.successor.events)
-                    .claiming_source(claimed_source)
                     .on_priority_premise(premise);
             if matches!(dispatch, SuccessorDispatch::Push { .. }) {
                 successor = successor.requiring_free_capacity(predecessor.runner_type().clone());

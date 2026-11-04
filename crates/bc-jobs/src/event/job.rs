@@ -263,7 +263,7 @@ mod tests {
             call: None,
         };
         let limits = crate::domain::policy::ServiceLimits::default();
-        match create_job(command, None, None, None, None, &limits) {
+        match create_job(command, None, None, None, &limits) {
             Ok(CreateOutcome::Queued(result)) => result.events.into_iter().next().unwrap(),
             other => panic!("a fresh declaration is queued, got {other:?}"),
         }

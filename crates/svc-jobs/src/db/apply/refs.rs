@@ -56,21 +56,6 @@ pub async fn source_entity_id(
     Ok(row.get("id"))
 }
 
-pub async fn lock_source_entity(
-    tx: &mut PgConnection,
-    producer: &ProducerKey,
-    external_id: Uuid,
-) -> Result<(), PortError> {
-    let producer_id = producer_id(tx, producer).await?;
-    let entity_id = source_entity_id(tx, producer_id, external_id).await?;
-    sqlx::query("SELECT id FROM source_entities WHERE id = $1 FOR UPDATE")
-        .bind(entity_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-    Ok(())
-}
-
 pub async fn runner_instance_id(
     tx: &mut PgConnection,
     runner_type: Uuid,

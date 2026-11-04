@@ -32,6 +32,7 @@ pub mod restart;
 pub mod rows;
 pub mod saved_states;
 pub mod scrub;
+pub mod source_jobs;
 pub mod tree_lock;
 pub mod trigger_ledger;
 pub mod waiting_repair;

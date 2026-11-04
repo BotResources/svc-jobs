@@ -68,14 +68,7 @@ fn sync_call_under(
 }
 
 fn create_under(parent: &Job, command: CreateJob) -> Result<CreateOutcome, JobsError> {
-    create_job(
-        command,
-        None,
-        None,
-        Some(parent),
-        None,
-        &ServiceLimits::default(),
-    )
+    create_job(command, None, Some(parent), None, &ServiceLimits::default())
 }
 
 #[test]
@@ -163,7 +156,7 @@ fn a_root_naming_a_known_user_who_is_not_the_user_of_its_passport_is_refused() {
         passport: Some(passport_from(document_of(&alice))),
         ..command()
     };
-    let result = create_job(command, None, None, None, None, &ServiceLimits::default());
+    let result = create_job(command, None, None, None, &ServiceLimits::default());
     // Then: the KnownUser is not the user of the Passport
     assert_eq!(result, Err(JobsError::PassportUserMismatch));
 }
@@ -177,8 +170,7 @@ fn a_root_naming_no_known_user_runs_for_the_user_of_its_passport_known_by_id() {
         passport: Some(passport_from(document_of(&alice))),
         ..command()
     };
-    let fact =
-        queued(create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap());
+    let fact = queued(create_job(command, None, None, None, &ServiceLimits::default()).unwrap());
     // Then: the KnownUser is Alice, known only by her id
     assert_eq!(
         fact.triggered_by,
@@ -221,7 +213,6 @@ fn a_redelivered_call_with_the_passport_of_its_parent_is_absorbed() {
     let outcome = create_job(
         child,
         Some(&existing),
-        None,
         Some(&parent),
         None,
         &ServiceLimits::default(),

@@ -14,7 +14,6 @@ fn a_child_job_is_owned_by_the_runner_of_its_parent() {
     let outcome = create_job(
         command,
         None,
-        None,
         Some(&parent),
         None,
         &ServiceLimits::default(),
@@ -46,7 +45,6 @@ fn a_child_of_a_terminal_parent_is_rejected() {
     let result = create_job(
         command,
         None,
-        None,
         Some(&parent),
         None,
         &ServiceLimits::default(),
@@ -69,7 +67,7 @@ fn a_child_naming_an_unknown_parent_is_rejected() {
         ..command()
     };
     // When: it is judged with no parent loaded
-    let result = create_job(command, None, None, None, None, &ServiceLimits::default());
+    let result = create_job(command, None, None, None, &ServiceLimits::default());
     // Then: the producer gets a definite rejection rather than an orphan
     assert_eq!(
         result,
@@ -89,7 +87,7 @@ fn a_job_declaring_itself_as_its_own_parent_is_rejected() {
         ..command()
     };
     // When: it is judged
-    let result = create_job(command, None, None, None, None, &ServiceLimits::default());
+    let result = create_job(command, None, None, None, &ServiceLimits::default());
     // Then: the cycle is refused
     assert_eq!(
         result,

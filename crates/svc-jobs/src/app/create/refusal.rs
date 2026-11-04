@@ -4,9 +4,7 @@ use bc_jobs::domain::requester::Requester;
 use bc_jobs::domain::runner::call_notices::CallNotices;
 use br_core_events::EventMetadata;
 use contract_jobs::command_v3::CreateJobV3;
-use contract_jobs::event::{
-    REASON_DUPLICATE_ACTIVE_ENTITY, REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD,
-};
+use contract_jobs::event::{REASON_ID_REUSE, REASON_MALFORMED_PAYLOAD};
 use serde_json::{Value, json};
 
 use super::declare;
@@ -98,7 +96,6 @@ fn refusal_words(job_id: uuid::Uuid, reason_code: &str) -> String {
 fn published_code(refusal: &JobsError) -> &'static str {
     match refusal {
         JobsError::JobIdConflict { .. } => REASON_ID_REUSE,
-        JobsError::SourceAlreadyActive { .. } => REASON_DUPLICATE_ACTIVE_ENTITY,
         other => other.code(),
     }
 }

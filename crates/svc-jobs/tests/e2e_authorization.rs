@@ -72,10 +72,10 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
     delta::assert_failed_affordances(&listed_failed);
     gql::assert_affordances_well_formed(&listed_failed, "the list row of a failed job");
 
-    let by_source = gql::job_by_source(&client, admin, "projects", source_entity).await;
-    assert_eq!(by_source["job"]["id"], json!(running_id.to_string()));
-    delta::assert_active_affordances(&by_source);
-    gql::assert_affordances_well_formed(&by_source, "the source lookup");
+    let of_source = gql::jobs_by_source(&client, admin, "projects", source_entity).await;
+    assert_eq!(gql::ids_of(&of_source), vec![json!(running_id.to_string())]);
+    delta::assert_active_affordances(&of_source[0]);
+    gql::assert_affordances_well_formed(&of_source[0], "the source lookup");
 
     let fleet = gql::fleet_of(&client, admin, &runner_type).await;
     assert_eq!(
@@ -112,9 +112,14 @@ async fn platform_administrators_alone_can_observe_and_operate_jobs() {
             "the job list",
         ),
         (
+            docs::JOBS_BY_SOURCE,
+            json!({ "bc": "projects", "entityId": source_entity.to_string(), "first": 50 }),
+            "the source lookup",
+        ),
+        (
             docs::JOB_BY_SOURCE,
             json!({ "bc": "projects", "entityId": source_entity.to_string() }),
-            "the source lookup",
+            "the deprecated single source lookup",
         ),
         (
             docs::JOB_LOGS,

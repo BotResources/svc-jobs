@@ -7,8 +7,7 @@ fn the_successor_copies_the_declaration_and_is_dispatched_at_once() {
     let resolution = resolution_id();
     let predecessor = failed_predecessor(resolution).build();
     // When: it is manually retried
-    let plan =
-        plan(manual_retry(&predecessor, ParentContext::Root, None, command(resolution)).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command(resolution)).unwrap());
     // Then: the successor copies the declaration and its first run goes out
     match plan.successor.events.as_slice() {
         [
@@ -51,8 +50,7 @@ fn the_successor_is_dispatched_even_when_the_predecessor_exhausted_its_budget() 
         )
         .build();
     // When: an administrator retries it manually
-    let plan =
-        plan(manual_retry(&predecessor, ParentContext::Root, None, command(resolution)).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command(resolution)).unwrap());
     // Then: the successor starts on a fresh budget, its first run dispatched
     assert!(matches!(
         plan.successor.events.last(),
@@ -75,7 +73,6 @@ fn a_failed_child_is_retried_under_the_parent_that_still_owns_it() {
         manual_retry(
             &predecessor,
             ParentContext::Loaded(&parent),
-            None,
             command(resolution),
         )
         .unwrap(),
@@ -99,8 +96,7 @@ fn the_successor_runs_for_the_user_of_its_predecessor_stating_no_name_of_theirs(
         .with_triggered_by(known.clone())
         .build();
     // When: it is manually retried
-    let plan =
-        plan(manual_retry(&predecessor, ParentContext::Root, None, command(resolution)).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command(resolution)).unwrap());
     // Then: the successor runs for the same user, known only by id, so that it
     // writes no name back over one renamed since
     match plan.successor.events.first() {

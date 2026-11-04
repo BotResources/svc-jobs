@@ -99,7 +99,11 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         .expect_exactly(wire::FACT_QUEUED, accepted_id, 1, QUIET)
         .await;
 
-    let over_budget = JobDeclaration::new(&runner_type).with_max_attempts(10);
+    // The over-budget declaration names the accepted job's source pair too: a
+    // refusal for another cause must leave that source with its one job.
+    let over_budget = JobDeclaration::new(&runner_type)
+        .with_max_attempts(10)
+        .with_source("projects", entity_id);
     let over_budget_id = over_budget.job_id;
     producer.declare(&over_budget).await;
     let budget = events
@@ -114,22 +118,6 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         ),
     ));
     assert_absent(&client, admin, over_budget_id).await;
-
-    let duplicate_source = JobDeclaration::new(&runner_type).with_source("projects", entity_id);
-    let duplicate_id = duplicate_source.job_id;
-    producer.declare(&duplicate_source).await;
-    let duplicate = events
-        .expect_one(wire::FACT_CREATION_REJECTED, duplicate_id, LONG)
-        .await;
-    refusals.push((
-        "a second non-terminal job for one source",
-        rejection_code(
-            &duplicate,
-            "a second non-terminal job for one source reference",
-            &[&entity_id.to_string()],
-        ),
-    ));
-    assert_absent(&client, admin, duplicate_id).await;
 
     let not_time_ordered = JobDeclaration::new(&runner_type).with_id(Uuid::new_v4());
     let not_time_ordered_id = not_time_ordered.job_id;
@@ -185,7 +173,7 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
     ));
     assert_absent(&client, admin, unattributed_id).await;
 
-    // Then: the six causes stay distinguishable, and nothing else moved
+    // Then: the five causes stay distinguishable, and nothing else moved
     codes::assert_pairwise_distinct(&refusals);
     assert_eq!(
         gql::job_view(&client, admin, accepted_id).await,
@@ -214,7 +202,6 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
 
     for rejected in [
         over_budget_id,
-        duplicate_id,
         not_time_ordered_id,
         orphan_id,
         unattributed_id,
@@ -237,10 +224,14 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         );
     }
     assert_eq!(
+        gql::ids_of(&gql::jobs_by_source(&client, admin, "projects", entity_id).await),
+        vec![json!(accepted_id.to_string())],
+        "a refused creation that named the source leaves the source with its one accepted job",
+    );
+    assert_eq!(
         durable.count(db::SOURCE_CLAIMS_OF_ENTITY, entity_id).await,
         1,
-        "a refused creation never claims the source entity — a stale claim would silently block \
-         every future job for that source",
+        "the entity is recorded once for its producer, by the accepted job alone",
     );
 
     // When: another bounded context declares work on an entity id of its own that happens to match
@@ -254,20 +245,20 @@ async fn a_producing_service_receives_a_definite_rejection_without_orphaned_work
         .expect_none(wire::FACT_CREATION_REJECTED, cross_id, QUIET)
         .await;
     assert_eq!(
-        gql::job_by_source(&client, admin, "chat", entity_id).await["job"]["id"],
-        json!(cross_id.to_string()),
+        gql::ids_of(&gql::jobs_by_source(&client, admin, "chat", entity_id).await),
+        vec![json!(cross_id.to_string())],
         "a source reference is the producer and the entity together, so each context looks its \
          own work up",
     );
     assert_eq!(
-        gql::job_by_source(&client, admin, "projects", entity_id).await["job"]["id"],
-        json!(accepted_id.to_string()),
+        gql::ids_of(&gql::jobs_by_source(&client, admin, "projects", entity_id).await),
+        vec![json!(accepted_id.to_string())],
     );
     assert_eq!(
         durable.count(db::SOURCE_CLAIMS_OF_ENTITY, entity_id).await,
         2,
-        "one claim per producer for the same entity id — a uniqueness constraint set on the \
-         entity alone would lock every other context out",
+        "one source row per producer for the same entity id — the producer and the entity \
+         together name a source",
     );
 
     // When: the runner type finally becomes available

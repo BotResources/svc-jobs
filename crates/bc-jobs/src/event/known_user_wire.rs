@@ -63,7 +63,7 @@ fn queued_for(user: &KnownUser) -> JobEvent {
         call: None,
     };
     let limits = crate::domain::policy::ServiceLimits::default();
-    let outcome = create_job(command, None, None, None, None, &limits);
+    let outcome = create_job(command, None, None, None, &limits);
     match outcome {
         Ok(CreateOutcome::Queued(result)) => result.events.into_iter().next().unwrap(),
         other => panic!("a fresh declaration is queued, got {other:?}"),

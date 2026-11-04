@@ -14,7 +14,6 @@ impl JobsError {
             Self::OutOfRange { .. } => "out_of_range",
             Self::NotAJsonObject { .. } => "not_a_json_object",
             Self::JobIdConflict { .. } => "job_id_conflict",
-            Self::SourceAlreadyActive { .. } => "source_already_active",
             Self::ParentJobUnknown { .. } => "parent_job_unknown",
             Self::ParentJobTerminal { .. } => "parent_job_terminal",
             Self::ParentJobDeleted { .. } => "parent_job_deleted",

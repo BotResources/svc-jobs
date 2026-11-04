@@ -51,7 +51,7 @@ fn queued(outcome: CreateOutcome) -> JobQueued {
 fn a_declared_job_is_queued_under_the_id_its_producer_minted() {
     let command = command();
     let id = command.id;
-    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
     let fact = queued(outcome);
     assert_eq!(fact.job_id, id);
     assert_eq!(fact.runner_type, runner_type());
@@ -67,7 +67,7 @@ fn the_queued_fact_carries_the_user_the_work_runs_for() {
         passport: Some(user_passport(&known)),
         ..command()
     };
-    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
     assert_eq!(queued(outcome).triggered_by, Some(known));
 }
 
@@ -78,7 +78,6 @@ fn an_identical_redelivery_of_a_creation_is_absorbed() {
     let outcome = create_job(
         command,
         Some(&existing),
-        None,
         None,
         None,
         &ServiceLimits::default(),
@@ -100,7 +99,6 @@ fn reusing_a_known_id_with_different_input_is_rejected() {
         Some(&existing),
         None,
         None,
-        None,
         &ServiceLimits::default(),
     );
     assert_eq!(
@@ -112,49 +110,17 @@ fn reusing_a_known_id_with_different_input_is_rejected() {
 }
 
 #[test]
-fn a_second_live_job_for_one_source_reference_is_rejected() {
+fn a_creation_carrying_a_source_reference_queues_the_job_for_that_source() {
+    // Given: a creation that names the entity of its producer it works for
     let entity = source_entity_id();
-    let active = JobBuilder::new().with_source(entity).build();
     let command = CreateJob {
         source_entity_id: Some(entity),
         ..command()
     };
-    let result = create_job(
-        command,
-        None,
-        Some(&active),
-        None,
-        None,
-        &ServiceLimits::default(),
-    );
-    assert_eq!(
-        result,
-        Err(JobsError::SourceAlreadyActive {
-            active_job_id: active.id().as_uuid()
-        })
-    );
-}
-
-#[test]
-fn a_source_whose_previous_job_is_terminal_may_be_declared_again() {
-    let entity = source_entity_id();
-    let settled = JobBuilder::new()
-        .with_source(entity)
-        .with_resolution(JobResolution::completed(resolution_id(), ts(30)))
-        .build();
-    let command = CreateJob {
-        source_entity_id: Some(entity),
-        ..command()
-    };
-    let outcome = create_job(
-        command,
-        None,
-        Some(&settled),
-        None,
-        None,
-        &ServiceLimits::default(),
-    )
-    .unwrap();
+    // When: it is judged, with no other Job of that source in sight
+    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
+    // Then: the Job is queued and carries its source reference; whether other
+    // Jobs of that source are live is no input of the decision
     let fact = queued(outcome);
     assert_eq!(fact.source.map(|source| source.entity_id()), Some(entity));
 }
@@ -165,7 +131,7 @@ fn a_budget_above_the_service_ceiling_is_rejected() {
         max_attempts: Some(MaxAttempts::new(99).unwrap()),
         ..command()
     };
-    let result = create_job(command, None, None, None, None, &ServiceLimits::default());
+    let result = create_job(command, None, None, None, &ServiceLimits::default());
     assert_eq!(
         result,
         Err(JobsError::MaxAttemptsAboveCeiling {
@@ -181,7 +147,7 @@ fn the_queued_fact_carries_the_runner_configuration_the_producer_declared() {
         config: Some(config()),
         ..command()
     };
-    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
     assert_eq!(queued(outcome).config, Some(config()));
 }
 
@@ -200,7 +166,6 @@ fn an_identical_redelivery_of_a_creation_carrying_a_configuration_is_absorbed() 
         Some(&existing),
         None,
         None,
-        None,
         &ServiceLimits::default(),
     )
     .unwrap();
@@ -210,6 +175,6 @@ fn an_identical_redelivery_of_a_creation_carrying_a_configuration_is_absorbed() 
 #[test]
 fn a_root_job_is_owned_by_the_producer_that_declared_it() {
     let command = command();
-    let outcome = create_job(command, None, None, None, None, &ServiceLimits::default()).unwrap();
+    let outcome = create_job(command, None, None, None, &ServiceLimits::default()).unwrap();
     assert_eq!(queued(outcome).owner, JobOwner::Producer(producer()));
 }

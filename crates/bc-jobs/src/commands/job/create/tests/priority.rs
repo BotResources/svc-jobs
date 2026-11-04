@@ -22,17 +22,8 @@ fn a_users_cap_applies_at_admission_and_the_request_is_kept() {
         ..command()
     };
     // When: that user's job requesting 5 is admitted
-    let fact = queued(
-        create_job(
-            command,
-            None,
-            None,
-            None,
-            Some(&cap),
-            &ServiceLimits::default(),
-        )
-        .unwrap(),
-    );
+    let fact =
+        queued(create_job(command, None, None, Some(&cap), &ServiceLimits::default()).unwrap());
     // Then: it waits at 3, and its request stays 5
     assert_eq!(fact.requested_priority, level(5));
     assert_eq!(fact.effective_priority, level(3));
@@ -52,17 +43,8 @@ fn a_root_with_a_users_passport_and_no_known_user_is_capped_by_that_users_maximu
     let runs_for = command.user_the_work_runs_for(None).unwrap();
     assert_eq!(runs_for, Some(known.without_name()));
     let cap = capped_at(&known, Some(1));
-    let fact = queued(
-        create_job(
-            command,
-            None,
-            None,
-            None,
-            Some(&cap),
-            &ServiceLimits::default(),
-        )
-        .unwrap(),
-    );
+    let fact =
+        queued(create_job(command, None, None, Some(&cap), &ServiceLimits::default()).unwrap());
     // Then: it waits at 1, for that user, and its request stays 5
     assert_eq!(fact.triggered_by, runs_for);
     assert_eq!(fact.requested_priority, level(5));
@@ -80,14 +62,7 @@ fn a_maximum_of_another_user_than_the_one_the_work_runs_for_is_refused() {
     };
     let other = capped_at(&user(), Some(5));
     // When: it is admitted against that maximum
-    let result = create_job(
-        command,
-        None,
-        None,
-        None,
-        Some(&other),
-        &ServiceLimits::default(),
-    );
+    let result = create_job(command, None, None, Some(&other), &ServiceLimits::default());
     // Then: the wiring gap fails loud instead of capping the Job by the wrong user
     assert_eq!(
         result,
@@ -109,7 +84,7 @@ fn a_job_created_without_a_priority_requests_three_under_the_default_cap() {
         ..command()
     };
     // When: the job is admitted
-    let fact = queued(create_job(command, None, None, None, Some(&cap), &limits).unwrap());
+    let fact = queued(create_job(command, None, None, Some(&cap), &limits).unwrap());
     // Then: it requested 3 and the default caps it at 2
     assert_eq!(fact.requested_priority, Priority::DEFAULT);
     assert_eq!(fact.effective_priority, level(2));
@@ -124,7 +99,7 @@ fn a_job_that_runs_for_nobody_is_capped_by_the_service_default() {
         ..command()
     };
     // When: an autonomous job requesting 5 is admitted
-    let fact = queued(create_job(command, None, None, None, None, &limits).unwrap());
+    let fact = queued(create_job(command, None, None, None, &limits).unwrap());
     // Then: the default caps it
     assert_eq!(fact.effective_priority, level(4));
 }
@@ -150,7 +125,6 @@ fn a_child_waits_at_its_parents_effective_priority_whatever_it_requested() {
     let fact = queued(
         create_job(
             command,
-            None,
             None,
             Some(&parent),
             Some(&cap),
@@ -180,7 +154,6 @@ fn a_child_under_a_forced_parent_is_born_forced_at_the_parents_level() {
         create_job(
             command,
             None,
-            None,
             Some(&parent),
             None,
             &ServiceLimits::default(),
@@ -209,7 +182,6 @@ fn a_child_under_an_unforced_parent_is_not_forced() {
         create_job(
             command,
             None,
-            None,
             Some(&parent),
             None,
             &ServiceLimits::default(),
@@ -234,7 +206,6 @@ fn a_redelivery_requesting_another_priority_is_a_conflicting_reuse() {
     let result = create_job(
         conflicting,
         Some(&existing),
-        None,
         None,
         None,
         &ServiceLimits::default(),
@@ -269,7 +240,6 @@ fn a_redelivered_child_creation_is_absorbed_whatever_priority_it_names() {
     let outcome = create_job(
         redelivered,
         Some(&existing),
-        None,
         Some(&parent),
         None,
         &ServiceLimits::default(),

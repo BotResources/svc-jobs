@@ -20,7 +20,6 @@ fn retry_of(predecessor: &Job, successor: JobId) -> Result<ManualRetryOutcome, J
     manual_retry(
         predecessor,
         ParentContext::of(None),
-        None,
         ManualRetryJob {
             manual_retry_id: ManualRetryId::new(Uuid::now_v7()).expect("a v7 retry id"),
             failed_resolution_id: predecessor

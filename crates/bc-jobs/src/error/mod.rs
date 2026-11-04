@@ -43,9 +43,6 @@ pub enum JobsError {
     JobIdConflict {
         job_id: Uuid,
     },
-    SourceAlreadyActive {
-        active_job_id: Uuid,
-    },
     ParentJobUnknown {
         parent_job_id: Uuid,
     },
