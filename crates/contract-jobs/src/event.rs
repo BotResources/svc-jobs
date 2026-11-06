@@ -14,6 +14,12 @@ pub const EVENT_TYPE_CANCELLED: &str = "job.cancelled";
 pub const SCHEMA_VERSION: u8 = 1;
 
 pub const REASON_ID_REUSE: &str = "id_reuse";
+/// No longer emitted. Up to svc-jobs 0.7, Jobs refused a creation, and a manual
+/// retry, whose source reference was held by another non-terminal Job; since
+/// svc-jobs 0.8 a source reference may carry any number of live Jobs and no
+/// `creation_rejected` carries this code. The constant stays so that a consumer
+/// matching on it keeps compiling; a producer that wants one live Job per
+/// entity keeps that rule on its own side.
 pub const REASON_DUPLICATE_ACTIVE_ENTITY: &str = "duplicate_active_entity";
 pub const REASON_MALFORMED_PAYLOAD: &str = "malformed_payload";
 

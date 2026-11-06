@@ -1,4 +1,3 @@
-use crate::commands::job::source::guard_source_free;
 use crate::commands::{CommandResult, JobCommandResult};
 use crate::domain::attempts::AttemptNumber;
 use crate::domain::ids::{JobId, ManualRetryId, ResolutionId};
@@ -38,7 +37,6 @@ pub enum ManualRetryOutcome {
 pub fn manual_retry(
     predecessor: &Job,
     parent: ParentContext<'_>,
-    active_for_source: Option<&Job>,
     command: ManualRetryJob,
 ) -> Result<ManualRetryOutcome, JobsError> {
     if let Some(record) = predecessor.manual_retry() {
@@ -58,7 +56,6 @@ pub fn manual_retry(
         });
     }
     guard_current_failure(predecessor, command.failed_resolution_id)?;
-    guard_source_free(predecessor.source(), active_for_source)?;
     let basis = match parent.resolve(predecessor.parent_job_id())? {
         Some(parent) => PriorityBasis::inherited_from(parent),
         None => PriorityBasis::Capped {
@@ -74,7 +71,7 @@ pub fn manual_retry(
         owner: predecessor.owner().clone(),
         parent_job_id: predecessor.parent_job_id(),
         predecessor_job_id: Some(predecessor.id()),
-        triggered_by: predecessor.triggered_by().cloned(),
+        triggered_by: predecessor.triggered_by().map(KnownUser::without_name),
         source: predecessor.source(),
         max_attempts: predecessor.max_attempts(),
         requested_priority: priority.requested(),

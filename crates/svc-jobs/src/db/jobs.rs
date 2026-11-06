@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use bc_jobs::domain::ids::{JobId, RunId};
 use bc_jobs::domain::job::Job;
-use bc_jobs::domain::references::SourceReference;
 use bc_jobs::ports::PortError;
 use bc_jobs::ports::job::JobReader;
 use chrono::{DateTime, Utc};
@@ -18,13 +17,6 @@ pub(crate) const NO_ACTIVE_RUN: &str = "NOT EXISTS (SELECT 1 FROM runs r \
 
 pub(crate) const NOT_RESOLVED: &str = "NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
      AND NOT EXISTS (SELECT 1 FROM job_deletions jd WHERE jd.job_id = j.id)";
-
-const ACTIVE_FOR_SOURCE_SQL: &str = "SELECT j.id::uuid AS id FROM jobs j \
-     JOIN source_entities se ON se.id = j.source_entity_id \
-     JOIN producers p ON p.id = se.producer_id \
-     WHERE p.bc_key = $1 AND se.external_id = $2 \
-       AND NOT EXISTS (SELECT 1 FROM job_resolutions jr WHERE jr.job_id = j.id) \
-     ORDER BY j.created_at DESC, j.id DESC LIMIT 1";
 
 pub(crate) const UNCONSUMED_RETRY: &str = "SELECT s.due_at FROM run_retry_schedules s \
      JOIN runs fr ON fr.id = s.failed_run_id \
@@ -55,18 +47,6 @@ impl PgStore {
             .await
             .map_err(unavailable)?;
         Ok(rows.iter().map(|row| row.get("id")).collect())
-    }
-
-    pub async fn active_job_for_source_in(
-        tx: &mut PgConnection,
-        source: &SourceReference,
-    ) -> Result<Option<Uuid>, PortError> {
-        sqlx::query_scalar(ACTIVE_FOR_SOURCE_SQL)
-            .bind(source.bc().as_str())
-            .bind(source.entity_id().as_uuid())
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(unavailable)
     }
 
     pub async fn load_in(tx: &mut PgConnection, job_id: JobId) -> Result<Option<Job>, PortError> {
@@ -233,21 +213,5 @@ impl JobReader for PgStore {
         .map_err(unavailable)?;
         let ids: Vec<Uuid> = rows.iter().map(|row| row.get("id")).collect();
         self.load_batch(&ids).await
-    }
-
-    async fn load_active_for_source(
-        &self,
-        source: &SourceReference,
-    ) -> Result<Option<Job>, PortError> {
-        let found: Option<Uuid> = sqlx::query_scalar(ACTIVE_FOR_SOURCE_SQL)
-            .bind(source.bc().as_str())
-            .bind(source.entity_id().as_uuid())
-            .fetch_optional(self.pool())
-            .await
-            .map_err(unavailable)?;
-        match found {
-            None => Ok(None),
-            Some(id) => Ok(self.load_batch(&[id]).await?.pop()),
-        }
     }
 }

@@ -3,7 +3,6 @@ use bc_jobs::domain::directory::caller_address::guard_caller_address;
 use bc_jobs::domain::ids::JobId;
 use bc_jobs::domain::job::Job;
 use bc_jobs::domain::keys::RunnerTypeKey;
-use bc_jobs::domain::references::SourceReference;
 use bc_jobs::domain::runner::kept_payload::guard_kept_payload_uploaded;
 use bc_jobs::event::job::JobEvent;
 use bc_jobs::event::queued::QueuedTree;
@@ -12,8 +11,8 @@ use uuid::Uuid;
 use super::change::JobChange;
 use super::routing::RoutedRunnerType;
 use crate::app::fingerprint;
+use crate::db::PgStore;
 use crate::db::fleet::capacity;
-use crate::db::{PgStore, apply};
 use crate::error::ServiceError;
 
 pub async fn guard_free_capacity(
@@ -67,22 +66,6 @@ pub(super) fn guard_decision_still_holds(
         Ok(())
     } else {
         Err(ServiceError::write_race())
-    }
-}
-
-pub(super) async fn claim_source(
-    tx: &mut sqlx::PgConnection,
-    job_id: JobId,
-    source: &SourceReference,
-) -> Result<(), ServiceError> {
-    apply::refs::lock_source_entity(tx, source.bc(), source.entity_id().as_uuid()).await?;
-    match PgStore::active_job_for_source_in(tx, source).await? {
-        Some(active) if active != job_id.as_uuid() => Err(ServiceError::Domain(
-            bc_jobs::JobsError::SourceAlreadyActive {
-                active_job_id: active,
-            },
-        )),
-        _ => Ok(()),
     }
 }
 

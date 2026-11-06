@@ -5,6 +5,9 @@ pub mod queued;
 pub mod run_inbox;
 pub mod user;
 
+#[cfg(test)]
+mod known_user_wire;
+
 use br_core_events::{DomainEvent, EventMetadata};
 use chrono::{DateTime, Utc};
 

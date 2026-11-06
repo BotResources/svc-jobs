@@ -38,7 +38,7 @@ fn queued() -> JobEvent {
         payload: None,
         call: None,
     };
-    match create_job(command, None, None, None, None, &ServiceLimits::default()) {
+    match create_job(command, None, None, None, &ServiceLimits::default()) {
         Ok(CreateOutcome::Queued(result)) => result.events.into_iter().next().unwrap(),
         other => panic!("a fresh declaration is queued, got {other:?}"),
     }

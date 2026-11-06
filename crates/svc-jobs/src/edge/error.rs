@@ -62,7 +62,6 @@ pub fn of_domain(error: &JobsError) -> EdgeError {
         | JobsError::MaxAttemptsAboveCeiling { .. } => EdgeError::bad_user_input(),
 
         JobsError::JobIdConflict { .. }
-        | JobsError::SourceAlreadyActive { .. }
         | JobsError::SelfReference { .. }
         | JobsError::SuccessorStillActive { .. }
         | JobsError::ManualRetryAlreadyStarted { .. }

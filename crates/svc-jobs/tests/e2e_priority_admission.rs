@@ -200,3 +200,42 @@ async fn a_user_capped_at_three_is_admitted_at_three_whatever_they_request() {
     events.stop().await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_root_with_a_users_passport_and_no_known_user_is_capped_by_that_users_maximum() {
+    let fixture = JobsFixture::start_with(Knobs {
+        default_max_priority: Some(5),
+        ..Knobs::default()
+    })
+    .await;
+    let answers = EventLog::open_v2(fixture.fabric()).await;
+    let client = fixture.gql();
+    let admin = fixture.admin();
+    let user_id = fixture::ordinary_member().actor_id();
+    let runner_type = wire::unique_runner_type("passport-capped");
+    let producer = Producer::new(fixture.fabric(), "projects");
+    gql::expect_success(
+        &priority::set_user_max_priority(&client, admin, user_id, 1).await,
+        wire::FIELD_SET_USER_MAX_PRIORITY,
+        "a super user caps a user at 1",
+    );
+
+    // Given: a root creation that carries the user's Passport, names no KnownUser and requests 5
+    let declaration = JobDeclaration::new(&runner_type)
+        .triggered_by_user(user_id)
+        .with_priority(5);
+    let mut body = declaration.payload("projects");
+    body["triggered_by"] = serde_json::Value::Null;
+    producer.declare_payload(body).await;
+
+    // Then: the Job runs for that user and their maximum caps it at 1
+    answers
+        .expect_one(wire::FACT_QUEUED, declaration.job_id, LONG)
+        .await;
+    let job = priority::job(&client, admin, declaration.job_id).await;
+    priority::assert_priorities(&job, 5, 1, None, "a root for the Passport's user");
+    let view = gql::job(&client, admin, declaration.job_id).await;
+    assert_eq!(view["triggeredBy"]["id"], user_id.to_string(), "{view}");
+    answers.stop().await;
+    fixture.shutdown().await;
+}

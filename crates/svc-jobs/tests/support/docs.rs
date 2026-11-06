@@ -60,6 +60,25 @@ query($bc: String!, $entityId: UUID!) {
 }
 "#;
 
+pub const JOBS_BY_SOURCE: &str = r#"
+query($bc: String!, $entityId: UUID!, $first: Int!, $after: String) {
+  jobsJobsBySource(sourceBc: $bc, sourceEntityId: $entityId, first: $first, after: $after) {
+    edges {
+      cursor
+      node {
+        job {
+          id runnerType producer status attemptCount activeRunId isDeleted
+          predecessorJobId successorJobId
+          source { bc entityId }
+        }
+        affordances { action allowed reasonCode params }
+      }
+    }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+  }
+}
+"#;
+
 pub const JOB_LOGS: &str = r#"
 query($jobId: UUID!, $runId: UUID, $first: Int, $after: String, $last: Int, $before: String) {
   jobsLogs(jobId: $jobId, runId: $runId, first: $first, after: $after, last: $last, before: $before) {

@@ -1,3 +1,4 @@
+use br_core_auth::{AuthMethod, Passport, PassportClaims};
 use br_core_events::UserId;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -14,7 +15,7 @@ use crate::domain::job::resolution::JobResolution;
 use crate::domain::job::{Job, JobCall, JobState};
 use crate::domain::keys::{DisplayName, InstanceKey, ProducerKey, RunnerTypeKey, StepLabel};
 use crate::domain::ownership::JobOwner;
-use crate::domain::passport::{JobPassport, PassportSubject};
+use crate::domain::passport::JobPassport;
 use crate::domain::priority::{JobPriority, Priority};
 use crate::domain::references::KnownUser;
 use crate::domain::requester::Requester;
@@ -79,21 +80,27 @@ pub fn instance() -> RunnerInstanceReference {
 }
 
 pub fn service_passport() -> JobPassport {
-    JobPassport::new(
-        PassportSubject::Service(Uuid::from_u128(7)),
-        None,
-        serde_json::json!({ "kind": "service" }),
-    )
-    .expect("valid passport")
+    passport_of(Passport::service(Uuid::from_u128(7), PassportClaims::new()))
 }
 
 pub fn user_passport(known: &KnownUser) -> JobPassport {
-    JobPassport::new(
-        PassportSubject::User(known.id().0),
-        Some(known.display_name().as_str().to_owned()),
-        serde_json::json!({ "kind": "user" }),
+    passport_of(human_passport(known.id().0))
+}
+
+pub fn human_passport(user_id: Uuid) -> Passport {
+    Passport::human(
+        user_id,
+        false,
+        true,
+        AuthMethod::Jwt,
+        None,
+        PassportClaims::new(),
     )
-    .expect("valid passport")
+}
+
+pub fn passport_of(passport: Passport) -> JobPassport {
+    let document = serde_json::to_value(passport).expect("a Passport serializes");
+    JobPassport::from_document(document).expect("valid passport")
 }
 
 pub fn user() -> KnownUser {

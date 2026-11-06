@@ -63,7 +63,7 @@ fn a_manual_retry_records_the_intervention_on_the_failed_predecessor() {
     let command = command(resolution);
     let successor_job_id = command.successor_job_id;
     // When: the intervention is recorded
-    let plan = plan(manual_retry(&predecessor, ParentContext::Root, None, command).unwrap());
+    let plan = plan(manual_retry(&predecessor, ParentContext::Root, command).unwrap());
     // Then: the predecessor records the human act, pinning the resolution retried
     match plan.predecessor.events.as_slice() {
         [JobEvent::ManualRetryStarted(fact)] => {
@@ -76,74 +76,28 @@ fn a_manual_retry_records_the_intervention_on_the_failed_predecessor() {
 }
 
 #[test]
-fn a_retry_whose_source_a_live_job_has_taken_over_is_rejected() {
-    // Given: a failed job whose source reference a newer job already occupies
+fn a_retry_copies_the_source_reference_of_its_predecessor() {
+    // Given: a failed job declared for a source reference
     let resolution = resolution_id();
     let source = source_entity_id();
     let predecessor = failed_predecessor(resolution).with_source(source).build();
-    let live = JobBuilder::new()
-        .with_source(source)
-        .with_run(RunBuilder::new(1).started(ts(5)).build())
-        .build();
-    // When: an administrator retries the old one, which would copy that same source
-    let result = manual_retry(
-        &predecessor,
-        ParentContext::Root,
-        Some(&live),
-        command(resolution),
-    );
-    // Then: it is refused — one source reference never carries two live jobs
+    // When: the administrator retries it, whatever other Jobs that source has
+    let outcome = manual_retry(&predecessor, ParentContext::Root, command(resolution)).unwrap();
+    // Then: the successor carries the same source reference; another live Job of
+    // that source is no input of the decision, so it never refuses the retry
+    let ManualRetryOutcome::Started(plan) = outcome else {
+        panic!("expected the retry to start");
+    };
+    let JobEvent::JobQueued(queued) = &plan.successor.events[0] else {
+        panic!("the successor opens with its JobQueued fact");
+    };
+    assert_eq!(queued.source, predecessor.source());
     assert_eq!(
-        result,
-        Err(JobsError::SourceAlreadyActive {
-            active_job_id: live.id().as_uuid()
-        })
-    );
-}
-
-#[test]
-fn a_retry_is_admitted_once_the_job_holding_its_source_has_settled() {
-    // Given: a failed job whose source is held only by another settled job
-    let resolution = resolution_id();
-    let source = source_entity_id();
-    let predecessor = failed_predecessor(resolution).with_source(source).build();
-    let settled = JobBuilder::new()
-        .with_source(source)
-        .with_resolution(JobResolution::completed(resolution_id(), ts(40)))
-        .build();
-    // When: the administrator retries it
-    let outcome = manual_retry(
-        &predecessor,
-        ParentContext::Root,
-        Some(&settled),
-        command(resolution),
-    );
-    // Then: the successor is queued — nothing live competes for the source
-    assert!(matches!(outcome.unwrap(), ManualRetryOutcome::Started(_)));
-}
-
-#[test]
-fn a_job_holding_an_unrelated_source_never_blocks_the_retry_silently() {
-    // Given: a live job that holds some other source reference entirely
-    let resolution = resolution_id();
-    let predecessor = failed_predecessor(resolution).build();
-    let unrelated = JobBuilder::new()
-        .with_source(source_entity_id())
-        .with_run(RunBuilder::new(1).started(ts(5)).build())
-        .build();
-    // When: it is offered as the holder of the predecessor's source
-    let result = manual_retry(
-        &predecessor,
-        ParentContext::Root,
-        Some(&unrelated),
-        command(resolution),
-    );
-    // Then: the mismatch fails loud rather than refusing a legitimate intervention
-    assert_eq!(
-        result,
-        Err(JobsError::CorruptState {
-            reason_code: "active_job_is_not_for_the_command_source"
-        })
+        queued
+            .source
+            .as_ref()
+            .map(|reference| reference.entity_id()),
+        Some(source)
     );
 }
 
@@ -153,12 +107,7 @@ fn a_stale_failed_resolution_is_rejected() {
     let resolution = resolution_id();
     let predecessor = failed_predecessor(resolution).build();
     // When: the administrator acts on a resolution that is no longer current
-    let result = manual_retry(
-        &predecessor,
-        ParentContext::Root,
-        None,
-        command(resolution_id()),
-    );
+    let result = manual_retry(&predecessor, ParentContext::Root, command(resolution_id()));
     // Then: it is rejected, naming the resolution that is current
     assert_eq!(
         result,
@@ -176,7 +125,7 @@ fn a_job_that_did_not_fail_may_not_be_manually_retried() {
         .with_resolution(JobResolution::completed(resolution, ts(30)))
         .build();
     // When: a manual retry is attempted
-    let result = manual_retry(&predecessor, ParentContext::Root, None, command(resolution));
+    let result = manual_retry(&predecessor, ParentContext::Root, command(resolution));
     // Then: only failed jobs are retried
     assert_eq!(
         result,
@@ -192,7 +141,7 @@ fn a_deleted_job_may_not_be_manually_retried() {
     let resolution = resolution_id();
     let predecessor = failed_predecessor(resolution).deleted(ts(90)).build();
     // When: a manual retry is attempted
-    let result = manual_retry(&predecessor, ParentContext::Root, None, command(resolution));
+    let result = manual_retry(&predecessor, ParentContext::Root, command(resolution));
     // Then: the audit record spawns no new work
     assert_eq!(result, Err(JobsError::JobDeleted));
 }
@@ -209,7 +158,6 @@ fn no_successor_is_ever_born_under_a_parent_that_has_finished() {
     let result = manual_retry(
         &predecessor,
         ParentContext::Loaded(&parent),
-        None,
         command(resolution),
     );
     // Then: it is refused exactly as a fresh creation would be — nobody could resolve it
@@ -227,7 +175,7 @@ fn retrying_a_child_without_its_parent_loaded_is_refused_rather_than_assumed() {
     let resolution = resolution_id();
     let predecessor = failed_predecessor(resolution).with_parent(job_id()).build();
     // When: the retry is judged with no parent supplied
-    let result = manual_retry(&predecessor, ParentContext::Root, None, command(resolution));
+    let result = manual_retry(&predecessor, ParentContext::Root, command(resolution));
     // Then: the parent is a precondition of the judgement, never assumed away
     assert_eq!(
         result,

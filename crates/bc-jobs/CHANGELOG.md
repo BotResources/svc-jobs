@@ -8,6 +8,66 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.11.0 - 2026-11-04
+
+### Removed
+
+- `JobsError::SourceAlreadyActive` and its code `source_already_active`. A
+  source reference is no longer a uniqueness key.
+- `commands::job::source` and its `guard_source_free`.
+- `ports::job::JobReader::load_active_for_source`.
+
+### Changed
+
+- `commands::job::create::create_job` and
+  `commands::job::manual_retry::manual_retry` lose their `active_for_source`
+  argument: the other Jobs of a source reference are no input of either
+  decision. A creation or a retry carries its source reference into
+  `JobQueued` as before.
+
+## 0.10.0 - 2026-11-03
+
+### Fixed
+
+- `commands::job::create::create_job` accepts a child whose Passport has the
+  document of its parent's, whatever `triggered_by` the two creations name. It
+  refused `PassportParentMismatch` when the names differed, because the
+  Passport held the display name of `triggered_by`.
+- `CreateJob::user_the_work_runs_for(parent)` is the one decision on the
+  KnownUser of a new Job: `create_job` stores it, and its maximum is the one
+  that caps a root Job. A root with a user's Passport and no `triggered_by` runs
+  for that user and is capped by that user's maximum; it was capped by the
+  service default. `create_job` refuses a maximum of another user
+  (`CorruptState`, `user_maximum_of_another_user`).
+- A KnownUser a creation does not name is known only by id: the user of the
+  Passport, or the user of the parent for a Job without a Passport. A restart
+  and a manual retry also carry their origin's KnownUser by id only. Such a
+  fact states no name, so it never replaces a name Jobs knows, nor brings back
+  one a rename replaced.
+
+### Changed
+
+- `domain::passport::JobPassport` is its document: `JobPassport::from_document`
+  reads the subject from a Passport document and refuses one that is not a
+  Passport (`PassportMalformed`); `JobPassport::new` is removed. Two Passports
+  are equal when their documents are. The Passport holds no display name. A
+  Passport serialized with a `display_name` (0.9.0 and earlier, in `JobQueued`
+  and in the stored Job) still deserializes; the field is ignored.
+- bc-jobs depends on `br-core-auth`, the crate of the Passport schema, to read
+  a Passport document.
+- `JobPassport::guard_is_the_passport_of_parent`: the parent check, refusing
+  `PassportParentMismatch`.
+- `domain::references::KnownUser` has a typed case for a user known only by id:
+  `KnownUser::id_only`, `KnownUser::without_name`; `display_name()` returns
+  `Option<&DisplayName>`. `new` with a name that is the user's own id text
+  gives the id-only case. At the storage and wire boundary only, an id-only
+  user is written under its id text (`stored_name()`, `shown_name()`) and read
+  back by `KnownUser::from_stored`; the serialized shape is the one 0.9.0 reads
+  (`{ id, display_name }`, always a string), and a null or missing name reads
+  as id-only.
+- Removed `JobPassport::known_user`. `CreateJob::user_the_work_runs_for` now
+  takes the parent.
+
 ## 0.9.0 - 2026-11-02
 
 - `domain::auto_finish::AutoFinishFacts` and its `decide`

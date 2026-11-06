@@ -166,11 +166,12 @@ async fn decide(
         Some(parent) => JobReader::load(&jobs.store, parent).await?,
         None => None,
     };
-    let active = match command.source() {
-        Some(source) => JobReader::load_active_for_source(&jobs.store, &source).await?,
-        None => None,
-    };
-    let user_maximum = match &command.triggered_by {
+    // The user whose maximum caps the Job is the one `create_job` stores. A
+    // creation it refuses loads none: the refusal is `create_job`'s to give.
+    let runs_for = command
+        .user_the_work_runs_for(parent.as_ref())
+        .unwrap_or_default();
+    let user_maximum = match runs_for {
         Some(user) => Some(
             UserMaxPriorityReader::load_one(&jobs.store, KnownUserId::new(user.id().0)?).await?,
         ),
@@ -179,7 +180,6 @@ async fn decide(
     let outcome = create_job(
         command.clone(),
         existing.as_ref(),
-        active.as_ref(),
         parent.as_ref(),
         user_maximum.as_ref(),
         &jobs.limits,
@@ -198,7 +198,6 @@ async fn decide(
                 Requester::Service(_) => None,
             };
             let mut change = write::JobChange::new(command.id, None, result.events)
-                .claiming_source(command.source())
                 .holding_caller_address(caller_premise)
                 .on_priority_premise(premise);
             if command
@@ -210,8 +209,7 @@ async fn decide(
             }
             match jobs.commit(vec![change], metadata).await {
                 Err(ServiceError::Domain(
-                    refusal @ (JobsError::SourceAlreadyActive { .. }
-                    | JobsError::RunnerTypeRetired { .. }
+                    refusal @ (JobsError::RunnerTypeRetired { .. }
                     | JobsError::ParentJobTerminal { .. }
                     | JobsError::ParentJobDeleted { .. }
                     | JobsError::ParentJobUnknown { .. }

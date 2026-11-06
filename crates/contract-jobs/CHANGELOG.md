@@ -5,6 +5,12 @@ here. This crate is the inter-BC contract: a breaking change here ripples to
 every consumer, so each version is deliberate. Release headings are plain
 `## x.y.z` — the release pipeline greps that exact form before tagging.
 
+## Unreleased
+
+- `event::REASON_DUPLICATE_ACTIVE_ENTITY` is documented as no longer emitted:
+  since svc-jobs 0.8.0 a source reference may carry any number of live Jobs.
+  The constant and its value are unchanged, so no consumer has to change.
+
 ## 0.8.0 - 2026-11-02
 
 Implements the offers of Jobs 0.7.0 (50 offers). No subject, constant, type or field

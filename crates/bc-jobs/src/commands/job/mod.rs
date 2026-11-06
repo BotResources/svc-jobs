@@ -12,6 +12,5 @@ pub mod restart;
 pub mod run_outcome;
 pub mod run_progress;
 pub mod run_start_request;
-pub mod source;
 pub mod terminated_trigger;
 pub mod withdrawal;

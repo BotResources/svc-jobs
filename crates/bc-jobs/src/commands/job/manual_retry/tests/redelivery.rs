@@ -17,7 +17,7 @@ fn a_redelivered_intervention_is_absorbed() {
         ))
         .build();
     // When: the same command is delivered again
-    let outcome = manual_retry(&predecessor, ParentContext::Root, None, command).unwrap();
+    let outcome = manual_retry(&predecessor, ParentContext::Root, command).unwrap();
     // Then: no second successor is created
     assert_eq!(outcome, ManualRetryOutcome::AlreadyStarted);
 }
@@ -42,7 +42,7 @@ fn reusing_an_intervention_id_for_another_successor_is_rejected() {
         successor_job_id: job_id(),
         ..first.clone()
     };
-    let result = manual_retry(&predecessor, ParentContext::Root, None, conflicting);
+    let result = manual_retry(&predecessor, ParentContext::Root, conflicting);
     // Then: the conflict is rejected, naming the successor already recorded
     assert_eq!(
         result,
