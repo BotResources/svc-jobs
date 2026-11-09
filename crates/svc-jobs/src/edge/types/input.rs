@@ -10,6 +10,8 @@ pub struct GqlJobFilterInput {
     pub statuses: Option<Vec<GqlJobStatus>>,
     pub runner_types: Option<Vec<String>>,
     pub producers: Option<Vec<String>>,
+    // The users a Job runs for (`triggered_by`); a Job without one matches none.
+    pub triggered_by: Option<Vec<Uuid>>,
     #[graphql(default_with = "Some(GqlDeletedFilter::ExcludeDeleted)")]
     pub deleted: Option<GqlDeletedFilter>,
 }
@@ -25,6 +27,7 @@ impl GqlJobFilterInput {
             }),
             runner_types: self.runner_types,
             producers: self.producers,
+            triggered_by: self.triggered_by,
             deleted: Some(
                 self.deleted
                     .unwrap_or(GqlDeletedFilter::ExcludeDeleted)

@@ -16,18 +16,21 @@ const LIST_SQL: &str = "SELECT j.id::uuid AS id, j.created_at FROM jobs j \
      WHERE ($1::text[] IS NULL OR st.status = ANY($1)) \
        AND ($2::text[] IS NULL OR rt.type_key = ANY($2)) \
        AND ($3::text[] IS NULL OR coalesce(p.bc_key, sp.bc_key) = ANY($3)) \
-       AND (CASE $4::text \
+       AND ($4::uuid[] IS NULL OR j.triggered_by_id = ANY($4)) \
+       AND (CASE $5::text \
               WHEN 'ONLY_DELETED' THEN st.is_deleted \
               WHEN 'INCLUDE_DELETED' THEN true \
               ELSE NOT st.is_deleted END) \
-       AND ($5::timestamptz IS NULL OR (j.created_at, j.id::uuid) < ($5, $6::uuid)) \
-     ORDER BY j.created_at DESC, j.id DESC LIMIT $7";
+       AND ($6::timestamptz IS NULL OR (j.created_at, j.id::uuid) < ($6, $7::uuid)) \
+     ORDER BY j.created_at DESC, j.id DESC LIMIT $8";
 
 #[derive(Clone, Default)]
 pub struct JobFilter {
     pub statuses: Option<Vec<String>>,
     pub runner_types: Option<Vec<String>>,
     pub producers: Option<Vec<String>>,
+    /// The users a Job runs for; a Job without `triggered_by` matches none.
+    pub triggered_by: Option<Vec<Uuid>>,
     pub deleted: Option<String>,
 }
 
@@ -79,6 +82,7 @@ impl PgStore {
             .bind(filter.statuses.as_deref())
             .bind(filter.runner_types.as_deref())
             .bind(filter.producers.as_deref())
+            .bind(filter.triggered_by.as_deref())
             .bind(filter.deleted.as_deref())
             .bind(at)
             .bind(id)
@@ -132,6 +136,7 @@ impl PgStore {
             .bind(filter.statuses.as_deref())
             .bind(filter.runner_types.as_deref())
             .bind(filter.producers.as_deref())
+            .bind(filter.triggered_by.as_deref())
             .bind(filter.deleted.as_deref())
             .bind(job_ids)
             .fetch_all(self.pool())
@@ -150,8 +155,9 @@ const LIST_SQL_MATCH: &str = "SELECT j.id::uuid AS id FROM jobs j \
      WHERE ($1::text[] IS NULL OR st.status = ANY($1)) \
        AND ($2::text[] IS NULL OR rt.type_key = ANY($2)) \
        AND ($3::text[] IS NULL OR coalesce(p.bc_key, sp.bc_key) = ANY($3)) \
-       AND (CASE $4::text \
+       AND ($4::uuid[] IS NULL OR j.triggered_by_id = ANY($4)) \
+       AND (CASE $5::text \
               WHEN 'ONLY_DELETED' THEN st.is_deleted \
               WHEN 'INCLUDE_DELETED' THEN true \
               ELSE NOT st.is_deleted END) \
-       AND j.id = ANY($5)";
+       AND j.id = ANY($6)";

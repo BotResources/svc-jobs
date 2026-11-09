@@ -89,6 +89,12 @@ pub fn jobs_changed_pending(runner_type: &str, first: i64) -> String {
     )
 }
 
+/// A list window over the raw `JobsJobFilterInput` fields given, e.g.
+/// `runnerTypes: ["t"], triggeredBy: ["…"]`.
+pub fn jobs_changed_filtered(filter: &str) -> String {
+    jobs_changed_window(filter, 50)
+}
+
 fn jobs_changed_with(runner_types: &[&str], deleted: &str) -> String {
     let types = runner_types
         .iter()
