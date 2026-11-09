@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## 0.8.1 - 2026-11-09
+
+Registry patch 0.8.1 of Jobs (`01a1bfed-2ac1-7ced-91e0-a06c79b955bd`).
+
+### Added
+
+- `JobsJobFilterInput.triggeredBy: [UUID!]`: administrators filter the Jobs
+  list by the user a Job runs for. A Job matches when its `triggered_by` user
+  is one of the ids given; a Job without `triggered_by` matches no user
+  filter. The filter combines with the others, on the `jobs` query and on the
+  `jobsChanged` subscription alike: a Job outside the filter never enters the
+  window, and a Job that leaves it is removed from it.
+
+### Rollout
+
+- No migration: the read uses the existing `jobs_triggered_by` index. A 0.8.0
+  pod refuses a request that carries `triggeredBy` as an unknown field.
+
 ## 0.8.0 - 2026-11-04
 
 ### Changed
