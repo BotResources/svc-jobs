@@ -8,13 +8,16 @@ use br_util_graphql::{Connection, Edge, EdgeError};
 use uuid::Uuid;
 
 use super::error::edge_error;
+use super::error::of_service;
 use super::project;
-use super::state::{EdgeState, administrator, own_user, principal};
+use super::state::{EdgeState, administrator, job_user, own_user, principal};
 use super::types::directory::GqlDirectoryAgent;
+use super::types::enums::GqlJobStatus;
 use super::types::fleet::GqlRunnerTypeView;
 use super::types::input::GqlJobFilterInput;
 use super::types::job::{GqlJobSummaryView, GqlJobView};
 use super::types::log::GqlRunLog;
+use super::types::my_job::GqlMyJobView;
 use super::types::priority::{GqlMyMaxPriority, GqlUserMaxPriority};
 use crate::db::list;
 use crate::db::logs::LogWindow;
@@ -143,27 +146,71 @@ impl QueryRoot {
         administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?;
         let job_id = JobId::new(job_id).map_err(edge_error)?;
-        let run_id = run_id.map(RunId::new).transpose().map_err(edge_error)?;
-        if first.is_some() && last.is_some() {
-            return Err(async_graphql::Error::from(
-                EdgeError::bad_user_input().with_reason("first_and_last_together"),
-            ));
-        }
+        log_page_of(state, job_id, run_id, first, after, last, before).await
+    }
+
+    /// The Jobs that run for the caller, newest first, soft-deleted ones
+    /// excepted. Open to any active human.
+    async fn jobs_my_jobs(
+        &self,
+        ctx: &Context<'_>,
+        statuses: Option<Vec<GqlJobStatus>>,
+        #[graphql(default = 50)] first: i32,
+        after: Option<String>,
+    ) -> Result<Connection<GqlJobSummaryView>> {
+        let (_, user) = job_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let filter = GqlJobFilterInput::of_user(user.id().0, statuses);
         let page = state
             .store
-            .log_page(
-                job_id,
-                run_id,
-                LogWindow {
-                    first: first.map(i64::from),
-                    last: last.map(i64::from),
-                },
-                after.as_deref(),
-                before.as_deref(),
-            )
+            .job_page(&filter, i64::from(first), after.as_deref())
             .await
             .map_err(edge_error)?;
-        Ok(log_connection(page))
+        let cursors: Vec<String> = page.jobs.iter().map(list::cursor_of).collect();
+        let views = project::summary_views(&state.store, page.jobs)
+            .await?
+            .into_iter()
+            .zip(cursors)
+            .map(|(view, cursor)| Edge::new(view, cursor))
+            .collect();
+        Ok(Connection::forward(views, page.has_next_page))
+    }
+
+    /// One Job that runs for the caller. Any other Job is `job_not_found`.
+    async fn jobs_my_job(&self, ctx: &Context<'_>, id: Uuid) -> Result<GqlMyJobView> {
+        let (principal, _) = job_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let job_id = JobId::new(id).map_err(edge_error)?;
+        let job = crate::app::own_jobs::own_job(&state.jobs, &principal, job_id)
+            .await
+            .map_err(|error| async_graphql::Error::from(of_service(error)))?;
+        let parent = project::parent_of(&state.store, &job).await?;
+        Ok(GqlMyJobView {
+            job: std::sync::Arc::new(job),
+            parent,
+        })
+    }
+
+    /// The log lines of a Job that runs for the caller, by Job or Run. Any
+    /// other Job is `job_not_found`.
+    #[allow(clippy::too_many_arguments)] // one GraphQL argument per log filter
+    async fn jobs_my_job_logs(
+        &self,
+        ctx: &Context<'_>,
+        job_id: Uuid,
+        run_id: Option<Uuid>,
+        first: Option<i32>,
+        after: Option<String>,
+        last: Option<i32>,
+        before: Option<String>,
+    ) -> Result<Connection<GqlRunLog>> {
+        let (principal, _) = job_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?;
+        let job_id = JobId::new(job_id).map_err(edge_error)?;
+        crate::app::own_jobs::own_job(&state.jobs, &principal, job_id)
+            .await
+            .map_err(|error| async_graphql::Error::from(of_service(error)))?;
+        log_page_of(state, job_id, run_id, first, after, last, before).await
     }
 
     async fn jobs_fleet(
@@ -198,6 +245,38 @@ impl QueryRoot {
             .map_err(edge_error)?;
         Ok(views.into_iter().map(GqlUserMaxPriority::from).collect())
     }
+}
+
+async fn log_page_of(
+    state: &EdgeState,
+    job_id: JobId,
+    run_id: Option<Uuid>,
+    first: Option<i32>,
+    after: Option<String>,
+    last: Option<i32>,
+    before: Option<String>,
+) -> Result<Connection<GqlRunLog>> {
+    let run_id = run_id.map(RunId::new).transpose().map_err(edge_error)?;
+    if first.is_some() && last.is_some() {
+        return Err(async_graphql::Error::from(
+            EdgeError::bad_user_input().with_reason("first_and_last_together"),
+        ));
+    }
+    let page = state
+        .store
+        .log_page(
+            job_id,
+            run_id,
+            LogWindow {
+                first: first.map(i64::from),
+                last: last.map(i64::from),
+            },
+            after.as_deref(),
+            before.as_deref(),
+        )
+        .await
+        .map_err(edge_error)?;
+    Ok(log_connection(page))
 }
 
 fn source_reference(source_bc: String, source_entity_id: Uuid) -> Result<SourceReference> {

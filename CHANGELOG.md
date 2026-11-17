@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Release headings are plain `## x.y.z` — the release pipeline greps that exact
 form to decide whether a version ships.
 
+## 0.9.0 - 2026-11-17
+
+Registry minor 0.9 of Jobs (patch 0.9.0, `01a1ea72-3bba-78c6-acab-c951e0d53f22`).
+
+### Added
+
+- The user surface over the Jobs that run for the caller (their
+  `triggered_by`), open to any active human:
+  - `jobsMyJobs(statuses: [JobsJobStatus!], first: Int = 50, after: String)`:
+    their Jobs, newest first, by page, soft-deleted ones excepted. Same
+    `JobsJobSummaryView` rows as `jobs`.
+  - `jobsMyJobsChanged(statuses: [JobsJobStatus!], window: JobsConnectionWindowInput!)`:
+    the same list live, a `JobsJobsSnapshot` then `JobsJobsDelta`s, like
+    `jobsChanged`.
+  - `jobsMyJob(id: UUID!): JobsMyJobView!`: one of their Jobs with its Runs,
+    their failure reports and the terminal resolution. No Passport, payload,
+    configuration or requester.
+  - `jobsMyJobLogs(jobId, runId, first, after, last, before)`: the log lines
+    of one of their Jobs, shaped like `jobsLogs`.
+  - Any other Job, a soft-deleted one included, answers `NOT_FOUND` /
+    `job_not_found` on the user surface.
+- `jobsCancelJob` is open to the user a Job runs for. Cancelling a Job that
+  does not run for the caller is refused `FORBIDDEN` / `not_job_user`.
+  Administrators cancel as before.
+
+### Changed
+
+- Job affordances depend on the caller. `cancel` is allowed to an
+  administrator, or to the user the Job runs for, and is blocked
+  `not_job_user` for anyone else. `manual_retry` and `delete` are blocked
+  `not_platform_administrator` for anyone who is not an administrator, and
+  `force_priority` stays blocked `not_super_user`. Administrators see the same
+  affordances as before.
+
+### Rollout
+
+- No migration. The list reads use the existing `jobs_triggered_by` index.
+
 ## 0.8.1 - 2026-11-09
 
 Registry patch 0.8.1 of Jobs (`01a1bfed-2ac1-7ced-91e0-a06c79b955bd`).

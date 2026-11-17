@@ -22,7 +22,7 @@ const ROOT_FIELD_PREFIX: &str = "jobs";
 const DOWN_PHASE_WINDOW: Duration = Duration::from_secs(2);
 const DOWN_PHASE_PROBE_INTERVAL: Duration = Duration::from_millis(50);
 
-const DECLARED_QUERIES: [&str; 14] = [
+const DECLARED_QUERIES: [&str; 17] = [
     "jobs",
     roots::ATTACHMENT_ROOT,
     "jobsFleet",
@@ -31,6 +31,9 @@ const DECLARED_QUERIES: [&str; 14] = [
     "jobsJobsBySource",
     "jobsLogs",
     roots::MAIL_ROOT,
+    "jobsMyJob",
+    "jobsMyJobLogs",
+    "jobsMyJobs",
     "jobsMyMaxPriority",
     roots::PAYLOAD_ROOT,
     roots::SAVED_STATE_ROOT,
@@ -60,11 +63,12 @@ const DECLARED_MUTATIONS: [&str; 18] = [
     roots::UPLOAD_RESULT_ROOT,
 ];
 
-const DECLARED_SUBSCRIPTIONS: [&str; 6] = [
+const DECLARED_SUBSCRIPTIONS: [&str; 7] = [
     "jobsChanged",
     "jobsFleetChanged",
     "jobsJobChanged",
     "jobsJobLogTail",
+    "jobsMyJobsChanged",
     "jobsMyMaxPriorityChanged",
     "jobsUserMaxPrioritiesChanged",
 ];

@@ -46,6 +46,17 @@ pub fn own_user(ctx: &Context<'_>) -> Result<uuid::Uuid> {
     Ok(passport.actor_id())
 }
 
+/// The caller on the user surface: an active human, and the user whose Jobs
+/// are theirs.
+pub fn job_user(ctx: &Context<'_>) -> Result<(PrincipalFacts, KnownUser)> {
+    let passport = passport_of(ctx)?;
+    let principal = principal_of(passport);
+    principal
+        .guard_reads_own_max_priority()
+        .map_err(|refusal| async_graphql::Error::from(of_domain(&refusal)))?;
+    Ok((principal, known_user(passport)?))
+}
+
 pub fn known_administrator(passport: &Passport) -> Result<KnownUser> {
     if !is_platform_administrator(passport) {
         return Err(EdgeError::forbidden().into());

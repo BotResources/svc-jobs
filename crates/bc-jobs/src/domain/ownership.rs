@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::access::guard_runs_for;
 use crate::domain::ids::JobId;
 use crate::domain::keys::{ProducerKey, RunnerTypeKey};
 use crate::domain::references::KnownUser;
@@ -115,15 +116,27 @@ fn guard_service_requested(job_requester: &Requester) -> Result<(), JobsError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelRequester {
     Administrator(KnownUser),
+    /// The user a Job runs for, on the user surface.
+    User(KnownUser),
     Owner(DeclarationClaim),
     Declarant,
-    Cascade { originating_job_id: JobId },
-    Caller { caller: Caller, acts_for: ActsFor },
+    Cascade {
+        originating_job_id: JobId,
+    },
+    Caller {
+        caller: Caller,
+        acts_for: ActsFor,
+    },
 }
 
 impl CancelRequester {
-    pub fn guard_may_cancel(&self, job_requester: &Requester) -> Result<(), JobsError> {
+    pub fn guard_may_cancel(
+        &self,
+        job_requester: &Requester,
+        triggered_by: Option<&KnownUser>,
+    ) -> Result<(), JobsError> {
         match self {
+            Self::User(user) => guard_runs_for(triggered_by, user.id().0),
             Self::Owner(claim) => claim.guard_owns_the_job(),
             Self::Declarant => guard_service_requested(job_requester),
             Self::Caller { caller, acts_for } => job_requester.guard_cancels(caller, acts_for),
@@ -213,7 +226,7 @@ mod tests {
     fn a_legacy_cancellation_still_requires_the_declaring_actor() {
         let requester = CancelRequester::Owner(DeclarationClaim::new(Some(actor()), actor()));
         assert_eq!(
-            requester.guard_may_cancel(&Requester::Service(None)),
+            requester.guard_may_cancel(&Requester::Service(None), None),
             Err(JobsError::NotOwner)
         );
     }
@@ -222,7 +235,7 @@ mod tests {
     fn a_declarant_admitted_by_the_fabric_may_request_cancellation() {
         let requester = CancelRequester::Declarant;
         assert_eq!(
-            requester.guard_may_cancel(&Requester::Service(None)),
+            requester.guard_may_cancel(&Requester::Service(None), None),
             Ok(())
         );
     }

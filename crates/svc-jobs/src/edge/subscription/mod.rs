@@ -12,7 +12,8 @@ use tokio::sync::broadcast::Receiver;
 use uuid::Uuid;
 
 use super::error::edge_error;
-use super::state::{EdgeState, administrator, own_user, principal};
+use super::state::{EdgeState, administrator, job_user, own_user, principal};
+use super::types::enums::GqlJobStatus;
 use super::types::input::{GqlConnectionWindowInput, GqlJobFilterInput, GqlLogTailWindowInput};
 use super::types::priority::{GqlMyMaxPriorityStreamMessage, GqlUserMaxPrioritiesStreamMessage};
 use super::types::stream::{
@@ -37,6 +38,26 @@ impl SubscriptionRoot {
             state,
             list::Window {
                 filter: filter.unwrap_or_default().into_filter(),
+                first: i64::from(window.first),
+                after: window.after,
+            },
+        ))
+    }
+
+    /// The Jobs that run for the caller, as `jobsMyJobs` lists them: a
+    /// snapshot, then a delta for each change. Open to any active human.
+    async fn jobs_my_jobs_changed(
+        &self,
+        ctx: &Context<'_>,
+        statuses: Option<Vec<GqlJobStatus>>,
+        window: GqlConnectionWindowInput,
+    ) -> Result<impl Stream<Item = GqlJobsStreamMessage>> {
+        let (_, user) = job_user(ctx)?;
+        let state = ctx.data::<EdgeState>()?.clone();
+        Ok(list::list_stream(
+            state,
+            list::Window {
+                filter: GqlJobFilterInput::of_user(user.id().0, statuses),
                 first: i64::from(window.first),
                 after: window.after,
             },

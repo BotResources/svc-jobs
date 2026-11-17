@@ -37,7 +37,7 @@ fn a_live_job_may_be_cancelled_but_neither_retried_nor_deleted() {
     let job = JobBuilder::new()
         .with_run(RunBuilder::new(1).build())
         .build();
-    assert_eq!(job.can_cancel(), Availability::Available);
+    assert_eq!(job.can_cancel(&super_user()), Availability::Available);
     assert_eq!(
         job.can_manual_retry(ParentContext::Root)
             .unwrap()
@@ -55,7 +55,10 @@ fn a_failed_job_may_be_retried_and_deleted_but_no_longer_cancelled() {
         Availability::Available
     );
     assert_eq!(job.can_delete(), Availability::Available);
-    assert_eq!(job.can_cancel().reason_code(), Some("job_already_terminal"));
+    assert_eq!(
+        job.can_cancel(&super_user()).reason_code(),
+        Some("job_already_terminal")
+    );
 }
 
 #[test]
@@ -241,4 +244,54 @@ fn the_force_affordance_and_the_force_guard_are_the_same_verdict() {
             Some(refusal.code())
         );
     }
+}
+
+fn runs_for(id: uuid::Uuid) -> crate::domain::references::KnownUser {
+    crate::domain::references::KnownUser::id_only(br_core_events::UserId(id)).unwrap()
+}
+
+#[test]
+fn the_user_a_live_job_runs_for_may_cancel_it_and_nothing_else() {
+    let alice = uuid::Uuid::now_v7();
+    let job = JobBuilder::new().with_triggered_by(runs_for(alice)).build();
+    let listed = job
+        .affordances(ParentContext::Root, &member().acting_as(alice))
+        .unwrap();
+    let verdicts: Vec<(&str, Option<&str>)> = listed
+        .iter()
+        .map(|affordance| (affordance.action(), affordance.reason_code()))
+        .collect();
+    assert_eq!(
+        verdicts,
+        vec![
+            (CANCEL, None),
+            (MANUAL_RETRY, Some("not_platform_administrator")),
+            (DELETE, Some("not_platform_administrator")),
+            (FORCE_PRIORITY, Some("not_super_user")),
+        ]
+    );
+}
+
+#[test]
+fn another_user_may_not_cancel_a_job_and_the_guard_says_the_same() {
+    let job = JobBuilder::new()
+        .with_triggered_by(runs_for(uuid::Uuid::now_v7()))
+        .build();
+    let stranger = member().acting_as(uuid::Uuid::now_v7());
+    assert_eq!(
+        job.can_cancel(&stranger).reason_code(),
+        Some("not_job_user")
+    );
+    assert_eq!(job.guard_cancel_by(&stranger), Err(JobsError::NotJobUser));
+    assert_eq!(job.can_cancel(&super_user()), Availability::Available);
+}
+
+#[test]
+fn the_user_of_a_terminal_job_sees_its_cancel_blocked_by_the_job_state() {
+    let alice = uuid::Uuid::now_v7();
+    let job = failed_job().with_triggered_by(runs_for(alice)).build();
+    assert_eq!(
+        job.can_cancel(&member().acting_as(alice)).reason_code(),
+        Some("job_already_terminal")
+    );
 }

@@ -1,4 +1,15 @@
+use uuid::Uuid;
+
+use crate::domain::references::KnownUser;
 use crate::error::JobsError;
+
+/// A Job runs for a user when that user is its `triggered_by`.
+pub fn guard_runs_for(triggered_by: Option<&KnownUser>, user_id: Uuid) -> Result<(), JobsError> {
+    match triggered_by {
+        Some(user) if user.id().0 == user_id => Ok(()),
+        _ => Err(JobsError::NotJobUser),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalKind {
@@ -17,6 +28,7 @@ pub struct PrincipalFacts {
     kind: PrincipalKind,
     is_active: bool,
     role: PlatformRole,
+    user_id: Option<Uuid>,
 }
 
 impl PrincipalFacts {
@@ -25,7 +37,14 @@ impl PrincipalFacts {
             kind,
             is_active,
             role,
+            user_id: None,
         }
+    }
+
+    /// The user the caller is: the Jobs that run for that user are theirs.
+    pub fn acting_as(mut self, user_id: Uuid) -> Self {
+        self.user_id = Some(user_id);
+        self
     }
 
     fn is_active_human_holding(&self, role: PlatformRole) -> bool {
@@ -62,6 +81,30 @@ impl PrincipalFacts {
         } else {
             Err(JobsError::NotActiveHuman)
         }
+    }
+
+    /// The user surface reaches a Job only when it runs for the caller: an
+    /// active human whose id is the Job's `triggered_by`.
+    pub fn guard_job_runs_for_caller(
+        &self,
+        triggered_by: Option<&KnownUser>,
+    ) -> Result<(), JobsError> {
+        if !self.is_active_human_holding(PlatformRole::Member) {
+            return Err(JobsError::NotActiveHuman);
+        }
+        match self.user_id {
+            Some(caller) => guard_runs_for(triggered_by, caller),
+            None => Err(JobsError::NotJobUser),
+        }
+    }
+
+    /// A platform administrator cancels any Job; any other active human only a
+    /// Job that runs for them.
+    pub fn guard_cancels_job(&self, triggered_by: Option<&KnownUser>) -> Result<(), JobsError> {
+        if self.guard_platform_administrator().is_ok() {
+            return Ok(());
+        }
+        self.guard_job_runs_for_caller(triggered_by)
     }
 }
 
@@ -136,6 +179,60 @@ mod tests {
             human(true, true).guard_holds_runner_scope(true),
             Err(JobsError::NotRunnerService)
         );
+    }
+
+    fn someone(id: Uuid) -> KnownUser {
+        KnownUser::id_only(br_core_events::UserId(id)).unwrap()
+    }
+
+    #[test]
+    fn an_ordinary_human_reaches_only_the_jobs_that_run_for_them() {
+        let alice = Uuid::now_v7();
+        let member = human(true, false).acting_as(alice);
+        assert_eq!(
+            member.guard_job_runs_for_caller(Some(&someone(alice))),
+            Ok(())
+        );
+        assert_eq!(member.guard_cancels_job(Some(&someone(alice))), Ok(()));
+        for other in [Some(someone(Uuid::now_v7())), None] {
+            assert_eq!(
+                member.guard_job_runs_for_caller(other.as_ref()),
+                Err(JobsError::NotJobUser)
+            );
+            assert_eq!(
+                member.guard_cancels_job(other.as_ref()),
+                Err(JobsError::NotJobUser)
+            );
+        }
+    }
+
+    #[test]
+    fn an_administrator_cancels_any_job_but_follows_only_their_own_on_the_user_surface() {
+        let admin = human(true, true).acting_as(Uuid::now_v7());
+        let bob = someone(Uuid::now_v7());
+        assert_eq!(admin.guard_cancels_job(Some(&bob)), Ok(()));
+        assert_eq!(admin.guard_cancels_job(None), Ok(()));
+        assert_eq!(
+            admin.guard_job_runs_for_caller(Some(&bob)),
+            Err(JobsError::NotJobUser)
+        );
+    }
+
+    #[test]
+    fn a_deactivated_human_or_a_service_never_reaches_a_job_that_runs_for_them() {
+        let id = Uuid::now_v7();
+        let deactivated = human(false, false).acting_as(id);
+        let machine = service(false).acting_as(id);
+        for caller in [deactivated, machine] {
+            assert_eq!(
+                caller.guard_job_runs_for_caller(Some(&someone(id))),
+                Err(JobsError::NotActiveHuman)
+            );
+            assert_eq!(
+                caller.guard_cancels_job(Some(&someone(id))),
+                Err(JobsError::NotActiveHuman)
+            );
+        }
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod lineage;
 pub mod lock_wait;
 pub mod metrics;
 pub mod orphan_race;
+pub mod own_jobs;
 pub mod passports;
 pub mod priority;
 pub mod producer;

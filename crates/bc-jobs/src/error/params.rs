@@ -44,6 +44,7 @@ impl JobsError {
             | Self::NotPlatformAdministrator
             | Self::NotSuperUser
             | Self::NotActiveHuman
+            | Self::NotJobUser
             | Self::NotRunnerService
             | Self::JobStillActive
             | Self::RetryNotScheduled

@@ -64,7 +64,7 @@ impl Job {
         else {
             return Ok(None);
         };
-        requester.guard_may_cancel(self.requester())?;
+        requester.guard_may_cancel(self.requester(), self.triggered_by())?;
         Ok(Some(JobEvent::JobCancelled(JobCancelled {
             job_id: self.id(),
             resolution_id: resolution.id(),

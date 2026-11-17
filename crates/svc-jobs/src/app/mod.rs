@@ -16,6 +16,7 @@ pub mod fleet;
 pub mod followups;
 pub mod integration;
 pub mod logs;
+pub mod own_jobs;
 pub mod presence;
 pub mod priority;
 pub mod reclaim;
