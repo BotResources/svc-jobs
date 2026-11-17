@@ -62,8 +62,15 @@ impl Job {
         Availability::from_guard(self.guard_force_priority(principal))
     }
 
-    pub fn can_cancel(&self) -> Availability {
-        Availability::from_guard(self.guard_cancel())
+    /// Who may cancel comes first: an administrator any Job, another active
+    /// human a Job that runs for them; then the Job's own state.
+    pub fn guard_cancel_by(&self, principal: &PrincipalFacts) -> Result<(), JobsError> {
+        principal.guard_cancels_job(self.triggered_by())?;
+        self.guard_cancel()
+    }
+
+    pub fn can_cancel(&self, principal: &PrincipalFacts) -> Availability {
+        Availability::from_guard(self.guard_cancel_by(principal))
     }
 
     pub fn can_manual_retry(&self, parent: ParentContext<'_>) -> Result<Availability, JobsError> {
@@ -83,11 +90,23 @@ impl Job {
         principal: &PrincipalFacts,
     ) -> Result<Vec<Affordance>, JobsError> {
         Ok(vec![
-            Affordance::new(CANCEL, self.can_cancel()),
-            Affordance::new(MANUAL_RETRY, self.can_manual_retry(parent)?),
-            Affordance::new(DELETE, self.can_delete()),
+            Affordance::new(CANCEL, self.can_cancel(principal)),
+            Affordance::new(
+                MANUAL_RETRY,
+                administrators_only(principal, self.can_manual_retry(parent)?),
+            ),
+            Affordance::new(DELETE, administrators_only(principal, self.can_delete())),
             Affordance::new(FORCE_PRIORITY, self.can_force_priority(principal)),
         ])
+    }
+}
+
+/// Manual retry and deletion stay with platform administrators: anyone else
+/// sees them blocked by who they are before what the Job is.
+fn administrators_only(principal: &PrincipalFacts, on_the_job: Availability) -> Availability {
+    match principal.guard_platform_administrator() {
+        Ok(()) => on_the_job,
+        Err(refusal) => Availability::from_guard(Err(refusal)),
     }
 }
 

@@ -20,7 +20,7 @@ pub struct CancelJob {
 impl CancelRequester {
     fn known_user(&self) -> Option<&KnownUser> {
         match self {
-            Self::Administrator(user) => Some(user),
+            Self::Administrator(user) | Self::User(user) => Some(user),
             Self::Owner(_) | Self::Declarant | Self::Cascade { .. } | Self::Caller { .. } => None,
         }
     }
@@ -28,7 +28,11 @@ impl CancelRequester {
     fn originating_job_id(&self) -> Option<JobId> {
         match self {
             Self::Cascade { originating_job_id } => Some(*originating_job_id),
-            Self::Administrator(_) | Self::Owner(_) | Self::Declarant | Self::Caller { .. } => None,
+            Self::Administrator(_)
+            | Self::User(_)
+            | Self::Owner(_)
+            | Self::Declarant
+            | Self::Caller { .. } => None,
         }
     }
 }
@@ -43,13 +47,17 @@ impl Job {
             return Ok(absorbed);
         }
         if command.requester.may_cancel_a_terminal_job() && self.is_terminal() {
-            command.requester.guard_may_cancel(self.requester())?;
+            command
+                .requester
+                .guard_may_cancel(self.requester(), self.triggered_by())?;
             return Ok(CommandResult::nothing_happened(
                 CommandWarning::CancelledJobAlreadyTerminal,
             ));
         }
         self.guard_cancel()?;
-        command.requester.guard_may_cancel(self.requester())?;
+        command
+            .requester
+            .guard_may_cancel(self.requester(), self.triggered_by())?;
         let withdrawal = RunWithdrawal {
             reason_code: ReasonCode::new(CANCELLED_BY_JOB)?,
             requested_by: command.requester.known_user().cloned(),
@@ -395,6 +403,33 @@ mod tests {
                 requester: by(false)
             }),
             Err(JobsError::RunnerNotWorkingTheJob)
+        );
+    }
+
+    #[test]
+    fn the_user_a_job_runs_for_cancels_it_and_no_other_user_does() {
+        let alice = user();
+        let job = JobBuilder::new()
+            .with_run(RunBuilder::new(1).build())
+            .with_triggered_by(alice.clone())
+            .build();
+        let result = job
+            .cancel(CancelJob {
+                resolution_id: resolution_id(),
+                requester: CancelRequester::User(alice),
+            })
+            .unwrap();
+        assert!(matches!(
+            result.events.last(),
+            Some(JobEvent::JobCancelled(_))
+        ));
+        let stranger = KnownUser::id_only(br_core_events::UserId(Uuid::now_v7())).unwrap();
+        assert_eq!(
+            job.cancel(CancelJob {
+                resolution_id: resolution_id(),
+                requester: CancelRequester::User(stranger),
+            }),
+            Err(JobsError::NotJobUser)
         );
     }
 }

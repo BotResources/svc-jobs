@@ -7,7 +7,15 @@ use br_util_graphql::EdgeError;
 
 use super::runner::{RUNNER_SURFACE, holds_runner_scope};
 
-pub const USER_SURFACE: &[&str] = &["jobsMyMaxPriority", "jobsMyMaxPriorityChanged"];
+pub const USER_SURFACE: &[&str] = &[
+    "jobsMyMaxPriority",
+    "jobsMyMaxPriorityChanged",
+    "jobsMyJobs",
+    "jobsMyJobsChanged",
+    "jobsMyJob",
+    "jobsMyJobLogs",
+    "jobsCancelJob",
+];
 
 const TYPENAME: &str = "__typename";
 
@@ -21,7 +29,7 @@ pub fn principal_of(passport: &Passport) -> PrincipalFacts {
     } else {
         PlatformRole::Member
     };
-    PrincipalFacts::new(kind, passport.is_active(), role)
+    PrincipalFacts::new(kind, passport.is_active(), role).acting_as(passport.actor_id())
 }
 
 pub fn admit(passport: &Passport, query: &str) -> Result<(), (StatusCode, EdgeError)> {

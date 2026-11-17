@@ -17,6 +17,19 @@ pub struct GqlJobFilterInput {
 }
 
 impl GqlJobFilterInput {
+    /// The Jobs that run for one user, never soft-deleted ones: the user
+    /// surface's list.
+    pub fn of_user(user_id: Uuid, statuses: Option<Vec<GqlJobStatus>>) -> JobFilter {
+        Self {
+            statuses,
+            runner_types: None,
+            producers: None,
+            triggered_by: Some(vec![user_id]),
+            deleted: Some(GqlDeletedFilter::ExcludeDeleted),
+        }
+        .into_filter()
+    }
+
     pub fn into_filter(self) -> JobFilter {
         JobFilter {
             statuses: self.statuses.map(|statuses| {

@@ -2,7 +2,7 @@ use async_graphql::{Context, Object, Result};
 use br_util_graphql::MutationResult;
 
 use super::error::of_service;
-use super::state::{EdgeState, actor, administrator, principal};
+use super::state::{EdgeState, actor, administrator, job_user, principal};
 use super::types::input::{
     GqlCancelJobInput, GqlClearUserMaxPriorityInput, GqlDeleteJobInput, GqlForceJobPriorityInput,
     GqlManualRetryJobInput, GqlRunnerTypeInput, GqlSetRunnerTypeDispatchModeInput,
@@ -23,12 +23,17 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: GqlCancelJobInput,
     ) -> Result<MutationResult> {
-        let actor = administrator(ctx)?;
         let state = ctx.data::<EdgeState>()?;
-        admin::cancel(&state.jobs, actor, input.id, input.job_id)
-            .await
-            .map_err(|error| async_graphql::Error::from(of_service(error)))?;
-        Ok(MutationResult::ok())
+        if principal(ctx)?.guard_platform_administrator().is_ok() {
+            return acknowledged(
+                admin::cancel(&state.jobs, administrator(ctx)?, input.id, input.job_id).await,
+            );
+        }
+        let (principal, user) = job_user(ctx)?;
+        acknowledged(
+            crate::app::own_jobs::cancel(&state.jobs, &principal, user, input.id, input.job_id)
+                .await,
+        )
     }
 
     async fn jobs_manual_retry_job(

@@ -8,6 +8,25 @@ The version in [`Cargo.toml`](Cargo.toml) is the source of truth; release
 headings are plain `## x.y.z` (the `0.0.0-dev` placeholder maps to
 `## Unreleased`).
 
+## 0.12.0 - 2026-11-17
+
+### Added
+
+- `JobsError::NotJobUser` (`not_job_user`): the Job does not run for the
+  caller.
+- `PrincipalFacts::acting_as(user_id)`, `guard_job_runs_for_caller` and
+  `guard_cancels_job`, and `domain::access::guard_runs_for`. A Job runs for a
+  user when that user is its `triggered_by`.
+- `CancelRequester::User(KnownUser)`: the cancel of the user a Job runs for.
+- `Job::guard_cancel_by(&PrincipalFacts)`.
+
+### Changed
+
+- `Job::can_cancel` takes the caller's `PrincipalFacts`. `Job::affordances`
+  blocks `manual_retry` and `delete` with `not_platform_administrator` for
+  anyone who is not an administrator.
+- `CancelRequester::guard_may_cancel` takes the Job's `triggered_by`.
+
 ## 0.11.0 - 2026-11-04
 
 ### Removed
