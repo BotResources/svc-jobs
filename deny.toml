@@ -68,6 +68,24 @@ ignore = [
     # Tools: as for rsa, cargo audit needs this ignore and cargo deny warns
     # `advisory-not-detected` for it. Mirrored in .github/workflows/ci.yml.
     { id = "RUSTSEC-2026-0459" },
+    # RUSTSEC-2026-0543 — chrono (unmaintained). An "unmaintained" notice, not
+    # a vulnerability: no flaw in the code is reported.
+    #
+    # Why: chrono 0.4.45 is in the build graph through the whole stack —
+    # async-graphql, sqlx-core / sqlx-postgres, the br-rust-common crates
+    # (br-core-events, br-core-integration, br-util-observability,
+    # br-util-scope-declaration) and this workspace's own crates (bc-jobs,
+    # contract-jobs, svc-jobs). `cargo tree -i chrono` lists them (checked
+    # 2026-11-17). No version to bump to exists, and leaving chrono means
+    # moving those upstream crates first.
+    #
+    # Upstream status (checked 2026-11-17): no maintained chrono release. Retire
+    # this ignore when chrono is maintained again or when the stack (sqlx,
+    # async-graphql, br-rust-common) moves off it.
+    #
+    # Tools: cargo deny fails on it; cargo audit only warns on unmaintained
+    # crates, so ci.yml needs no mirror.
+    { id = "RUSTSEC-2026-0543" },
 ]
 
 [licenses]
