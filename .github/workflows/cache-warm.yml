@@ -22,7 +22,7 @@ jobs:
     name: warm the e2e build cache on main
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
